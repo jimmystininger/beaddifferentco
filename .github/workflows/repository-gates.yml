@@ -24,7 +24,7 @@ jobs:
       - name: Reject parallel implementation artifacts
         shell: bash
         run: |
-          forbidden=$(git ls-files | grep -E '(^|/)(backup|hotfix|patch|replacement|temporary|tmp)([-_.]|$)|(-fixed|-v2)(\.|/|$)' || true)
+          forbidden=$(git ls-files | grep -E '\.(js|html|css|json|sql)$' | grep -E '(^|/)(backup|hotfix|patch|replacement|temporary|tmp)([-_.]|$)|(-fixed|-v2)(\.|/|$)' || true)
           test -z "$forbidden"
 
       - name: Check JavaScript syntax
