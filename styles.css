@@ -16,9 +16,9 @@
 .brand img{width:453px;max-width:100%;height:auto}
 .brand img{content:url('logo-user-transparent.png?v=1')}
 .account-link{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px}
-.account-icon{display:block;position:relative;width:20px;height:20px;border:1.8px solid #111;border-radius:50% 50% 45% 45%;margin-top:9px}
-.account-icon:before{content:'';position:absolute;left:5px;top:-10px;width:7px;height:7px;border:1.8px solid #111;border-radius:50%;background:#fffdfb}
-.account-icon:after{content:'';position:absolute;left:-2px;right:-2px;bottom:-1.8px;height:9px;border:1.8px solid #111;border-bottom:0;border-radius:10px 10px 0 0;background:#fffdfb}
+.account-icon{display:block;position:relative;width:24px;height:25px;margin-top:7px}
+.account-icon:before{content:'';position:absolute;left:7px;top:0;width:10px;height:10px;border:2px solid #111;border-radius:50%;background:#fffdfb}
+.account-icon:after{content:'';position:absolute;left:1px;right:1px;bottom:0;height:13px;border:2px solid #111;border-bottom:0;border-radius:14px 14px 0 0;background:#fffdfb}
 .social-links{display:flex!important;flex-direction:row!important;align-items:center;gap:18px!important}
 .social-links a{display:inline-flex;align-items:center;justify-content:center;color:#fff}
 .social-links svg{display:block;width:22px;height:22px}
