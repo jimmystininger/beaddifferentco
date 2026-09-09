@@ -1,0 +1,40 @@
+name: Repository Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  safeguards:
+    name: Governance and syntax safeguards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require canonical governance
+        shell: bash
+        run: test -f AGENTS.md
+
+      - name: Reject parallel implementation artifacts
+        shell: bash
+        run: |
+          forbidden=$(git ls-files | grep -E '\.(js|html|css|json|sql)$' | grep -E '(^|/)(backup|hotfix|patch|replacement|temporary|tmp)([-_.]|$)|(-fixed|-v2)(\.|/|$)' || true)
+          test -z "$forbidden"
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find . -type f -name '*.js' -not -path './.git/*' -print0)
+
+      - name: Check whitespace errors
+        run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"

@@ -1,6 +1,6 @@
 const page=document.body.dataset.page||'Page';
 document.title=`${page} | Bead Different Co.`;
-const categoryLabels={'shop-all':'All','beadable-products':'Beadable Products','beadable-pen-blanks':'Beadable Pen Blanks','mixes-bundles-kits':'Mixes, Bundles & Kits','spacers-accessories':'Spacers/Accessories','acrylic-flatbacks':'Acrylic Flatbacks','rhinestone-beads':'Rhinestone Beads','focal-beads':'Focal Beads','silicone-solid-color':'Silicone Solid Color','silicone-printed-style':'Silicone Printed Style','10-12mm-acrylic-beads':'10/12mm Acrylic Beads','16mm-acrylic-beads':'16mm Acrylic Beads','20mm-acrylic-beads':'20mm Acrylic Beads','cup-charms':'Cup Charms','completed-pens-keychains':'Completed Pens/Keychains','charms-dangles':'Charms/Dangles','clearance-section':'Clearance Section'};
+const categoryLabels={'shop-all':'All','beadable-products':'Beadable Products','beadable-pen-blanks':'Beadable Pen Blanks','mixes-bundles-kits':'Mixes, Bundles & Kits','spacers-accessories':'Spacers/Accessories','acrylic-flatbacks':'Acrylic Flatbacks','rhinestone-beads':'Rhinestone Beads','focal-beads':'Focal Beads','silicone':'Silicone','acrylic':'Acrylic','10-12mm-acrylic-beads':'10/12mm Acrylic Beads','16mm-acrylic-beads':'16mm Acrylic Beads','20mm-acrylic-beads':'20mm Acrylic Beads','cup-charms':'Cup Charms','completed-pens-keychains':'Completed Pens/Keychains','charms-dangles':'Charms/Dangles','clearance-section':'Clearance Section'};
 const legacyCategory={'Shop All':['shop-all'],'Acrylic Beads':['10-12mm-acrylic-beads','16mm-acrylic-beads','20mm-acrylic-beads'],'Silicone Beads':['silicone-solid-color','silicone-printed-style'],'Rhinestones':['rhinestone-beads'],'Flatbacks':['acrylic-flatbacks'],'Pen Supplies':['beadable-pen-blanks'],'Mixes & Kits':['mixes-bundles-kits'],'Clearance':['clearance-section'],'Focal Beads':['focal-beads']};
 const main=document.querySelector('main');
 main.classList.remove('blank-page');
@@ -34,12 +34,15 @@ catalogReady.then(()=>{
     document.querySelector('#store-empty').hidden=products.length>0;
     return;
   }
-  const category=requestedCategory? [requestedCategory] : (legacyCategory[page]||null);
+  const category=requestedCategory==='silicone'?['silicone-solid-color','silicone-printed-style']:requestedCategory==='acrylic'?['10-12mm-acrylic-beads','16mm-acrylic-beads','20mm-acrylic-beads']:(requestedCategory? [requestedCategory] : (legacyCategory[page]||null));
   if(category){
     const products=visibleCatalog().filter((item)=>category.includes('shop-all')||category.includes(item.category));
     const heading=requestedCategory?(categoryLabels[requestedCategory]||page):(page==='Acrylic Beads'?'Acrylic Beads':page);
-    main.innerHTML=`<section class="store-page"><h1>${heading}</h1><div class="product-grid" id="page-products"></div><div class="pagination" id="page-pagination" aria-label="Product pages"></div></section>`;
-    renderPaginatedProducts(products,document.querySelector('#page-products'),document.querySelector('#page-pagination'));return;
+    const style=new URLSearchParams(location.search).get('style');
+    const categoryFilters=requestedCategory==='silicone'?`<nav class="category-filters" aria-label="Silicone styles"><a class="${style?'':'active'}" href="category.html?category=silicone">All Silicone</a><a class="${style==='solid'?'active':''}" href="category.html?category=silicone&style=solid">Solid Color</a><a class="${style==='printed'?'active':''}" href="category.html?category=silicone&style=printed">Printed Style</a></nav>`:requestedCategory==='acrylic'?`<nav class="category-filters" aria-label="Acrylic bead sizes"><a class="${style?'':'active'}" href="category.html?category=acrylic">All Acrylic</a><a class="${style==='10-12mm'?'active':''}" href="category.html?category=acrylic&style=10-12mm">10/12mm</a><a class="${style==='16mm'?'active':''}" href="category.html?category=acrylic&style=16mm">16mm</a><a class="${style==='20mm'?'active':''}" href="category.html?category=acrylic&style=20mm">20mm</a></nav>`:'';
+    const filteredProducts=requestedCategory==='silicone'?(style==='solid'?products.filter((item)=>item.category==='silicone-solid-color'):style==='printed'?products.filter((item)=>item.category==='silicone-printed-style'):products):requestedCategory==='acrylic'?(style==='10-12mm'?products.filter((item)=>item.category==='10-12mm-acrylic-beads'):style==='16mm'?products.filter((item)=>item.category==='16mm-acrylic-beads'):style==='20mm'?products.filter((item)=>item.category==='20mm-acrylic-beads'):products):products;
+    main.innerHTML=`<section class="store-page"><h1>${heading}</h1>${categoryFilters}<div class="product-grid" id="page-products"></div><div class="pagination" id="page-pagination" aria-label="Product pages"></div></section>`;
+    renderPaginatedProducts(filteredProducts,document.querySelector('#page-products'),document.querySelector('#page-pagination'));return;
   }
   const heading=document.querySelector('#page-title');if(heading)heading.textContent=page;
 });
