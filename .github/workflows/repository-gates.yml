@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Check out candidate
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Require canonical governance
         shell: bash
