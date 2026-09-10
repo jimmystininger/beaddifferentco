@@ -14,6 +14,22 @@ window.catalogReady=catalogReady;
 const findProduct=(id)=>catalog.find((item)=>item.id===id);
 let searchCatalog=(query)=>{const needle=String(query||'').trim().toLowerCase();if(!needle)return catalog;return catalog.filter((item)=>item.searchText.toLowerCase().includes(needle));};
 window.searchCatalog=searchCatalog;
+const badgeCatalogReady=catalogReady.then(async()=>{if(!window.beadSupabase)return;const ids=catalog.map((item)=>item.externalId).filter(Boolean);if(!ids.length)return;const {data}=await window.beadSupabase.from('products').select('external_id,estimated_cost,low_stock_threshold,badges').in('external_id',ids);(data||[]).forEach((record)=>{const item=catalog.find((entry)=>entry.externalId===record.external_id);if(item){item.estimatedCost=Number(record.estimated_cost)||0;item.lowStockThreshold=Number(record.low_stock_threshold)||0;item.badges=Array.isArray(record.badges)?record.badges:[];}});});
+const baseSearchCatalogWithBadges=searchCatalog;
+searchCatalog=(query)=>{const needle=String(query||'').trim().toLowerCase();if(!needle)return visibleCatalog();return visibleCatalog().filter((item)=>`${item.searchText} ${(item.badges||[]).join(' ')}`.toLowerCase().includes(needle));};
+window.searchCatalog=searchCatalog;
+const baseRenderProductCardsWithBadges=renderProductCards;
+renderProductCards=(list,target,options={})=>{baseRenderProductCardsWithBadges(list,target,options);target?.querySelectorAll('.product-card').forEach((card,index)=>{const badges=list[index]?.badges||[];if(!badges.length)return;const badgeRow=document.createElement('div');badgeRow.className='product-badges';badgeRow.innerHTML=badges.map((badge)=>`<span class="product-badge product-badge-${String(badge).toLowerCase().replace(/[^a-z0-9]+/g,'-')}">${escapeProductText(badge)}</span>`).join('');card.querySelector('.product-actions')?.before(badgeRow);});};
+async function cloudStoreUser(){if(!window.beadSupabase)return null;const {data}=await window.beadSupabase.auth.getUser();return data?.user||null;}
+async function resolveProductId(id){const item=findProduct(id);if(item?.databaseId)return item.databaseId;const {data}=await window.beadSupabase.from('products').select('id').eq('external_id',id).maybeSingle();return data?.id||id;}
+async function persistCloudCart(){const user=await cloudStoreUser();if(!user)return;const items=bagItems();await window.beadSupabase.from('customer_carts').upsert({user_id:user.id,updated_at:new Date().toISOString()},{onConflict:'user_id'});await window.beadSupabase.from('customer_cart_items').delete().eq('cart_user_id',user.id);if(items.length)await window.beadSupabase.from('customer_cart_items').insert(await Promise.all(items.map(async(item)=>({cart_user_id:user.id,product_id:await resolveProductId(item.id),quantity:item.quantity,selected_options:item.selectedOptions||{},updated_at:new Date().toISOString()}))));}
+async function persistCloudFavorite(id,active){const user=await cloudStoreUser();if(!user)return;const productId=await resolveProductId(id);if(active)await window.beadSupabase.from('customer_favorites').upsert({user_id:user.id,product_id:productId},{onConflict:'user_id,product_id'});else await window.beadSupabase.from('customer_favorites').delete().eq('user_id',user.id).eq('product_id',productId);}
+async function syncCloudStore(){const user=await cloudStoreUser();if(!user)return;const [cartResult,favoriteResult]=await Promise.all([window.beadSupabase.from('customer_cart_items').select('product_id,quantity,selected_options,products(external_id)').eq('cart_user_id',user.id),window.beadSupabase.from('customer_favorites').select('product_id,products(external_id)').eq('user_id',user.id)]);const localBag=bagItems();const cloudBag=(cartResult.data||[]).map((item)=>({id:item.products?.external_id||item.product_id,quantity:Number(item.quantity)||1,selectedOptions:item.selected_options||{}}));if(cloudBag.length||!localBag.length)writeStore(storeKeys.bag,cloudBag);else await persistCloudCart();writeStore(storeKeys.wishlist,(favoriteResult.data||[]).map((item)=>item.products?.external_id||item.product_id));updateBagCount();window.dispatchEvent(new Event('bead-store-synced'));}
+const baseAddToBag=addToBag;addToBag=(id)=>{const result=baseAddToBag(id);if(result)persistCloudCart();return result;};
+const baseRemoveFromBag=removeFromBag;removeFromBag=(id)=>{baseRemoveFromBag(id);persistCloudCart();};
+const baseToggleWishlist=toggleWishlist;toggleWishlist=(id)=>{const active=baseToggleWishlist(id);persistCloudFavorite(id,active);return active;};
+if(window.beadSupabase){window.beadSupabase.auth.onAuthStateChange(()=>{setTimeout(syncCloudStore,0);});setTimeout(syncCloudStore,0);}
+window.customerStore={sync:syncCloudStore};
 const bagItems=()=>readStore(storeKeys.bag);
 const wishlistItems=()=>readStore(storeKeys.wishlist);
 const isInBag=(id)=>bagItems().some((item)=>item.id===id);
@@ -46,3 +62,4 @@ window.isProductVisible=isProductVisible;
 window.visibleCatalog=visibleCatalog;
 searchCatalog=(query)=>{const needle=String(query||'').trim().toLowerCase();if(!needle)return visibleCatalog();return visibleCatalog().filter((item)=>item.searchText.toLowerCase().includes(needle));};
 window.searchCatalog=searchCatalog;
+window.badgeCatalogReady=badgeCatalogReady;
