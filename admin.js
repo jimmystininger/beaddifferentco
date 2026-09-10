@@ -42,3 +42,5 @@ const inventoryTab=document.createElement('button');inventoryTab.className='admi
 const baseRenderTabWithInventory=renderTab;renderTab=()=>{if(activeTab==='inventory')return renderInventoryTools();return baseRenderTabWithInventory();};
 const baseInventoryReport=renderInventoryTools;
 renderInventoryTools=async()=>{await baseInventoryReport();};
+const baseItemFormWithOutOfStock=itemForm;
+itemForm=(id=null)=>{baseItemFormWithOutOfStock(id);const fieldset=panel.querySelector('.admin-badge-picker');if(fieldset&&!fieldset.querySelector('[value="Out of Stock"]'))fieldset.insertAdjacentHTML('beforeend','<label><input type="checkbox" name="badges" value="Out of Stock"> Out of Stock</label>');};
