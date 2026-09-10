@@ -13,8 +13,8 @@
 .announcement-item{text-align:center;white-space:nowrap}
 .announcement-heart{margin:0 18px!important}
 .announcement{padding:9px 20%}
-.brand img{width:453px;max-width:100%;height:auto}
-.brand img{content:url('logo-user-transparent.png?v=1')}
+.brand img{width:300px;max-width:100%;height:auto}
+.brand img{content:url('logo-clean-transparent.png?v=1')}
 .account-link{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px}
 .account-icon{display:block;position:relative;width:24px;height:25px;margin-top:7px}
 .account-icon:before{content:'';position:absolute;left:7px;top:0;width:10px;height:10px;border:2px solid #111;border-radius:50%;background:#fffdfb}
