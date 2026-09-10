@@ -75,6 +75,7 @@
 .product-page-rating{display:none!important}
 .product-badges{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.product-badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;background:#f3d1df;color:#261d25;font-size:.72rem;font-weight:700;line-height:1}.product-badge-acrylic{background:#dcecff}.product-badge-silicone{background:#dff4e7}.product-badge-rhinestones{background:#eee0ff}.product-badge-on-sale{background:#ffd39b}.product-badge-clearance{background:#ffc2c2}.product-badge-low-stock{background:#ffb36b}.product-page-badges{max-width:520px}.admin-badge-picker{display:flex;flex-wrap:wrap;gap:8px;border:1px solid #ddd;padding:12px}.admin-badge-picker legend{font-weight:700}.admin-badge-picker label{background:#f7eef2;border-radius:999px;padding:6px 9px;font-size:.82rem}.admin-email-link{margin-left:8px}
 .product-badge-out-of-stock{background:#d8d8d8;color:#555}
+.product-page-video{display:block;width:100%;max-height:520px;margin-top:14px;border-radius:12px;background:#111}
 [hidden]{display:none !important}
 .store-nav-select{display:none}
 @media(max-width:700px){
