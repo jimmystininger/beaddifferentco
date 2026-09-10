@@ -13,4 +13,3 @@ insert into public.categories (slug, name, sort_order) values
   ('charms-dangles', 'Charms & Dangles', 120),
   ('clearance-section', 'Clearance', 130)
 on conflict (slug) do update set name = excluded.name, sort_order = excluded.sort_order, updated_at = timezone('utc', now());
-

@@ -12,4 +12,3 @@ create index order_items_order_idx on public.order_items(order_id);
 create index order_items_product_idx on public.order_items(product_id);
 create index member_notes_member_idx on public.member_notes(member_id);
 create index member_notes_author_idx on public.member_notes(author_id);
-

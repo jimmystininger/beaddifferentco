@@ -163,4 +163,3 @@ alter table public.promo_codes enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.member_notes enable row level security;
-
