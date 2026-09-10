@@ -35,7 +35,7 @@ This repository-governance adoption is a `Product Change`. Its authorized scope 
 | Tests and safeguards | No canonical test suite exists | Required checks are syntax checks and affected-flow verification until a test owner is added |
 | CI | GitHub Actions after repository setup | Not configured in this local folder |
 | Deployment | No deployment configuration exists | Local/static preview only |
-| Database and schema | No database or schema exists | Browser `localStorage` prototype only |
+| Database and schema | `supabase/migrations/*.sql` | Supabase project `zejcuqhihbfpuwsjvmhc`; migrations are immutable ordered history |
 | Project status | `README.md` | Minimal project status only |
 
 If two owners conflict, stop and reconcile the conflict before editing. Do not invent a third source of truth.
@@ -61,7 +61,8 @@ If two owners conflict, stop and reconcile the conflict before editing. Do not i
 - Governance checks must come from trusted canonical logic, not candidate code that can replace its own judge.
 - Do not claim a branch, release, deployment, migration, or feature is complete unless it is verified in the real affected flow.
 - Clearly report anything partial, unverified, local-only, preview-only, or blocked.
-- The current profile, waitlist, review, and admin prototypes use browser `localStorage`; they are not production authentication, authorization, payment, or database controls.
+- Supabase Auth, RLS, and the tables in `supabase/migrations/*.sql` are the backend source of truth. The current storefront still has localStorage fallbacks for some catalog, waitlist, review, promo, and order behavior; those fallbacks are not production database controls.
+- The frontend may contain only the Supabase project URL and publishable key. Never place a service-role key in browser code.
 
 ## Required Verification
 

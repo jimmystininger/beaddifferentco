@@ -1,0 +1,15 @@
+create index products_category_slug_idx on public.products(category_slug);
+create index products_visible_added_at_idx on public.products(visible, added_at desc);
+create index product_images_product_sort_idx on public.product_images(product_id, sort_order);
+create index product_options_product_sort_idx on public.product_options(product_id, sort_order);
+create index product_option_values_option_idx on public.product_option_values(option_id, sort_order);
+create index waitlist_entries_user_idx on public.waitlist_entries(user_id);
+create index waitlist_entries_product_status_idx on public.waitlist_entries(product_id, status);
+create index reviews_user_idx on public.reviews(user_id);
+create index reviews_product_status_idx on public.reviews(product_id, status);
+create index orders_user_created_idx on public.orders(user_id, created_at desc);
+create index order_items_order_idx on public.order_items(order_id);
+create index order_items_product_idx on public.order_items(product_id);
+create index member_notes_member_idx on public.member_notes(member_id);
+create index member_notes_author_idx on public.member_notes(author_id);
+

@@ -8,7 +8,7 @@ if(footerRoot){footerRoot.innerHTML=`<section class="trust"><img class="trust-st
 const footerBrand=footerRoot.querySelector('.footer-brand');
 if(footerBrand){footerBrand.innerHTML='<img class="footer-logo" src="footer-logo.png" alt="Bead Different Co.">';}
 const footerLogo=document.querySelector('#site-footer .footer-logo');
-if(footerLogo){footerLogo.src='logo-user-footer.png?v=1';}
+if(footerLogo){footerLogo.src='logo-user-transparent.png?v=1';}
 document.addEventListener('click',(event)=>{const link=event.target.closest('a[data-filter]');if(!link)return;const route=routes[link.dataset.filter];if(route){event.preventDefault();window.location.href=route;}});
 const canonicalCategories=[['shop-all','Shop All'],['beadable-products','Beadable Products'],['beadable-pen-blanks','Beadable Pen Blanks'],['mixes-bundles-kits','Mixes, Bundles & Kits'],['spacers-accessories','Spacers/Accessories'],['acrylic-flatbacks','Acrylic Flatbacks'],['rhinestone-beads','Rhinestone Beads'],['focal-beads','Focal Beads'],['silicone','Silicone'],['acrylic','Acrylic'],['cup-charms','Cup Charms'],['completed-pens-keychains','Completed Pens/Keychains'],['charms-dangles','Charms/Dangles'],['clearance-section','Clearance Section']];
 window.storeCategories=canonicalCategories;
