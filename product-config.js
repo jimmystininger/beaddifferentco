@@ -1,10 +1,23 @@
 window.productStoreConfig={
   shippingFrom:'Ohio',
+  shippingOriginPostalCode:'',
+  shippingOriginCity:'',
+  shippingOriginState:'',
   processingDays:3,
   shippingDays:5,
+  freeShippingThreshold:35,
+  shippingCarrier:'manual',
+  shippingBoxes:[],
   waitlistDisabled:JSON.parse(localStorage.getItem('beadDifferentWaitlistDisabled')||'{}'),
   options:{}
 };
+
+try{
+  const savedConfig=JSON.parse(localStorage.getItem('beadDifferentProductConfig')||'{}');
+  Object.assign(window.productStoreConfig,savedConfig);
+}catch(error){
+  localStorage.removeItem('beadDifferentProductConfig');
+}
 
 window.productStoreConfig.estimateArrival=function(zip){
   const start=new Date();
