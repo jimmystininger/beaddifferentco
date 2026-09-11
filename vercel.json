@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/vendor/supabase.min.js", "destination": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js" },
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/admin/:path*", "destination": "/admin.html" }
   ]
