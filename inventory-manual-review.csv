@@ -1,0 +1,51 @@
+review_type,source,identifier,detail,current_value,recommended_action
+Negative inventory,QuickBooks / canonical inventory,ACC-DISC-SLV-1PK,Quantity on hand is negative,-50,Confirm physical count and correct inventory before selling or replenishing
+Negative inventory,QuickBooks / canonical inventory,ACC-GEM-SLV-10MM-1PK,Quantity on hand is negative,-10,Confirm physical count and correct inventory before selling or replenishing
+Negative inventory,QuickBooks / canonical inventory,BLK-KEY-CLR-MIX-9PK,Quantity on hand is negative,-1,Confirm physical count and correct inventory before selling or replenishing
+Negative inventory,QuickBooks / canonical inventory,FOC-OCC-RDLGYTCH-1PK,Quantity on hand is negative,-1,Confirm physical count and correct inventory before selling or replenishing
+Unmatched Etsy SKU,Etsy export,90S-BUNDLE-ASSMBLD,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,90S-BUNDLE-LOOSE,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-CRCHT-LTBLU-10PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-CRCHT-LTBLU-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-CRCHT-PNK-10PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-CRCHT-PNK-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-FRRY-DKGRN-10PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-FRRY-DKGRN-25PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACC-FRRY-DKGRN-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,ACR-SCCRLMIX-20MM-10PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,BLK-KEY-MAT-SET-1PC,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,BLK-MKC-MINI-DKBLU-1PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,BLK-MKC-MINI-DKBLU-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,CLEARANCE-DCTRSCRB-PSTLBLU,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,FLB-MOODY-1PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,FLB-MOODY-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,FOC-SEMI-MIX,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,FOC-XMS-3D-REDGNME-1PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,FOC-XMS-3D-REDGNME-5PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,PEN-PRT-PURMRBL-1PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,RHNST-16MM-2TONE-MIX-7PK,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Unmatched Etsy SKU,Etsy export,RHNST-WHT-20MM-5,No QuickBooks SKU or recognized base SKU match,Not imported into conversion mapping,Assign the correct internal inventory SKU and deduction quantity
+Duplicate QuickBooks SKU,QuickBooks export,ACC-SPLSH-PNKORG-10PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,BEAD-BNDL-SNFLWR-30PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,CLEARANCE-16MM-UVYEL-20PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,CLEARANCE-DCTRSCRB-MNTGRN,Source contains duplicate SKU rows,3 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FLB-IDCARDS-1PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FLB-TRKY-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FOC-FAM-WIFEY-GRN-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FOC-FOD-REDTOST-5PK,Source contains duplicate SKU rows,3 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FOC-HOL-PTGLDRNBW-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FOC-HOL-TEALTRCK-1PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,FOC-SPT-HCKYPLYR-1PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-CHR-GLD-1PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-CHR-LTPNK-1PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-SOL-METGRN-10PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-SOL-METGRN-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-SOL-METPNK-10PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,PEN-SOL-METPNK-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,RHNST-SFTBLL-2PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Duplicate QuickBooks SKU,QuickBooks export,SIL15-PRNT-LTNGB-5PK,Source contains duplicate SKU rows,2 source rows,Confirm the correct source row and consolidate QuickBooks data
+Missing QuickBooks field,QuickBooks export,Price,Price is blank in source rows,1044 rows,Fill price where the SKU is intended for sale
+Missing QuickBooks field,QuickBooks export,Preferred Vendor,Preferred vendor is blank in source rows,6575 rows,Add vendor where purchasing or replenishment tracking needs it
+Missing QuickBooks field,QuickBooks export,Category,Category is blank in source rows,5306 rows,Assign a category where reporting or storefront grouping needs it
+Missing QuickBooks field,QuickBooks export,Reorder Point,Reorder point is blank in source rows,4029 rows,Set a reorder point where low-stock alerts should be active
+Zero inventory review,QuickBooks / canonical inventory,All canonical SKUs,On-hand quantity is zero,4052 SKUs,Confirm whether each zero quantity is intentional before activating or replenishing

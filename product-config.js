@@ -6,6 +6,7 @@ window.productStoreConfig={
   processingDays:3,
   shippingDays:5,
   freeShippingThreshold:35,
+  msrpMarkupPercent:100,
   shippingCarrier:'manual',
   shippingBoxes:[],
   waitlistDisabled:JSON.parse(localStorage.getItem('beadDifferentWaitlistDisabled')||'{}'),
