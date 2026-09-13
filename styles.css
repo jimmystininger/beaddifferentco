@@ -245,7 +245,7 @@ body[data-page="Admin"] .inventory-recipe-component>div{display:grid;gap:4px}
 body[data-page="Admin"] .inventory-recipe-component>div span{color:#666;font-size:12px}
 body[data-page="Admin"] .inventory-deduction-preview{padding:11px 12px;border-left:4px solid #8b4261;background:#fff8fa;color:#4c3d43;font-size:13px;line-height:1.45}
 @media(max-width:700px){body[data-page="Admin"] .inventory-component-picker,body[data-page="Admin"] .inventory-recipe-component{grid-template-columns:1fr}body[data-page="Admin"] .inventory-step-heading{flex-wrap:wrap}body[data-page="Admin"] .inventory-step-heading>button{margin-left:40px}}
-:root{--site-button-color:#050505;--site-button-text-color:#ffffff;--site-banner-color:#e482a4;--site-header-text-color:#111111;--site-cart-badge-color:#e482a4;--site-page-background-color:#fffdfb;--site-accent-background-color:#fff1f5;--site-page-background-image:none}
+:root{--site-button-color:#050505;--site-button-text-color:#ffffff;--site-banner-color:#e482a4;--site-header-text-color:#111111;--site-cart-badge-color:#e482a4;--site-page-background-color:#fffdfb;--site-accent-background-color:#fff1f5;--site-footer-background-color:#111111;--site-footer-header-text-color:#f185aa;--site-footer-button-color:#f185aa;--site-footer-text-color:#ffffff;--site-page-background-image:none}
 body[data-theme-ready]:not([data-page="Admin"]){background-color:var(--site-page-background-color);background-image:var(--site-page-background-image);background-position:center;background-size:cover;background-attachment:fixed}
 body:not([data-theme-ready]) .announcement{visibility:hidden}
 body[data-theme-ready]:not([data-page="Admin"]) .announcement{background:var(--site-banner-color);color:var(--site-header-text-color)}
@@ -257,6 +257,10 @@ body[data-theme-ready]:not([data-page="Admin"]) .header,body[data-theme-ready]:n
  body[data-theme-ready]:not([data-page="Admin"]) .product-page-actions .wishlist-button.active{background:var(--site-button-color);color:var(--site-button-text-color)}
  body[data-theme-ready]:not([data-page="Admin"]) .product-page-shipping .shipping-change-zip{color:var(--site-banner-color)}
 body[data-theme-ready]:not([data-page="Admin"]) .bag i{background:var(--site-cart-badge-color);color:var(--site-button-text-color)}
+body[data-theme-ready]:not([data-page="Admin"]) .footer{background:var(--site-footer-background-color);color:var(--site-footer-text-color)}
+body[data-theme-ready]:not([data-page="Admin"]) .footer b{color:var(--site-footer-header-text-color)}
+body[data-theme-ready]:not([data-page="Admin"]) .footer span{color:var(--site-footer-text-color)}
+body[data-theme-ready]:not([data-page="Admin"]) .footer button{background:var(--site-footer-button-color);color:var(--site-button-text-color)}
 body[data-page="Admin"] .admin-theme-settings{max-width:1040px;margin-top:24px}
 body[data-page="Admin"] .admin-theme-presets{display:grid;grid-template-columns:minmax(220px,1fr) minmax(180px,240px) max-content max-content max-content;gap:12px;align-items:end}
 body[data-page="Admin"] .admin-theme-presets label,body[data-page="Admin"] .admin-theme-colors label{display:grid;gap:7px;min-width:0}
