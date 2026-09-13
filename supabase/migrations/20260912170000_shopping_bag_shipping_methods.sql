@@ -235,5 +235,3 @@ $$;
 
 revoke all on function public.lookup_test_promo(text) from public, anon, authenticated;
 grant execute on function public.lookup_test_promo(text) to authenticated;
-
-
