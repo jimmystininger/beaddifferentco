@@ -40,8 +40,23 @@
 .story-scribble em{font-style:italic}.story-scribble b{display:block;color:#e482a4;font:32px Arial;margin-top:12px}
 @media(max-width:900px){.story-section{grid-template-columns:1fr}.story-photo{min-height:360px}.story-copy{min-height:330px}.story-overlay{width:52%}}
 .story-bar{position:relative;width:100%;display:flex;justify-content:center;line-height:0;overflow:hidden;background:#fff}
-.story-bar>img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain;object-position:center}
-.story-bar-link{position:absolute;inset:0;border-radius:0}
+.story-bar-media{position:relative;z-index:0;width:100%;background:center/cover no-repeat}
+.story-bar-media img{display:block;width:100%;max-width:100%;height:auto;object-fit:contain;object-position:center}
+.story-bar-copy{display:none;position:absolute;inset:0;z-index:1;align-items:stretch;justify-content:space-between;line-height:1.2;pointer-events:none}
+.story-bar[data-story-custom] .story-bar-media{min-height:clamp(300px,35vw,520px);background-position:center;background-size:cover}
+.story-bar[data-story-custom] .story-bar-media img{visibility:hidden}
+.story-bar[data-story-custom] .story-bar-copy{display:flex}
+.story-bar-panel{display:flex;flex:0 0 24%;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:28px;text-align:center;background:color-mix(in srgb,var(--site-accent-background-color) 88%,transparent);font-weight:700}
+.story-bar-panel strong{font:700 clamp(12px,1.3vw,20px)/1.1 Arial,sans-serif;letter-spacing:.22em}
+.story-bar-panel span{font:italic clamp(22px,3.4vw,56px)/.95 "Brush Script MT","Segoe Print",cursive}
+.story-bar-panel b{font:700 clamp(10px,1vw,14px)/1 Arial,sans-serif;letter-spacing:.12em}
+.story-bar-panel-right{background:color-mix(in srgb,var(--site-banner-color) 82%,transparent);color:var(--site-header-text-color)}
+.story-bar-panel-right span{font-size:clamp(24px,3.5vw,58px)}
+.story-bar-panel-right b{font-size:clamp(24px,3vw,46px)}
+.story-bar-center-copy{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:32px 7%;text-align:center;color:var(--site-header-text-color)}
+.story-bar-center-copy p{max-width:560px;margin:0;font:clamp(14px,1.4vw,22px)/1.45 Arial,sans-serif}
+.story-bar-center-copy span{font:italic clamp(22px,3vw,48px)/1 "Brush Script MT","Segoe Print",cursive}
+.story-bar-link{position:absolute;inset:0;z-index:2;border-radius:0}
 .story-slogan{position:absolute;right:2%;top:18%;width:18%;height:64%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font:italic 58px/.95 "Brush Script MT","Segoe Print",cursive;color:#111;transform:rotate(-7deg)}
 .store-page{padding:28px 6%;min-height:560px}.store-page h1{font:italic 44px/.95 cursive;margin:0 0 34px}.store-page .product-grid{max-width:1100px}.product-actions{display:flex;align-items:center;gap:10px}.product-actions button{border:0;background:#f185aa;border-radius:15px;padding:8px 17px;font-weight:700;font-size:11px;cursor:pointer}.product-actions .wishlist-button{background:transparent;border:1px solid #111;border-radius:50%;font-size:18px;line-height:22px;padding:0;width:29px;height:29px}.product-actions .wishlist-button.active{background:#111;color:#fff}.store-empty{color:#777}.store-empty[hidden]{display:none}.store-nav{overflow-x:auto;scrollbar-width:none;flex-wrap:nowrap}.store-nav::-webkit-scrollbar{display:none}.store-nav a{flex:0 0 auto}
 .store-nav{justify-content:flex-start;gap:34px;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;touch-action:pan-x}.store-nav a{scroll-snap-align:start}.category-grid{display:flex;overflow-x:auto;gap:18px;padding:0 2px 12px;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:none}.category-grid::-webkit-scrollbar{display:none}.category-grid a{flex:0 0 clamp(150px,12vw,205px);scroll-snap-align:start}
