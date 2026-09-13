@@ -35,28 +35,42 @@ const loadStorefrontBundleComponents=async()=>{
 };
 async function loadCartCatalog(){
   const client=await ensureSupabaseClient();
-  if(!client){catalog=[];return catalog;}
+  if(!client){catalog=[];window.storeCatalogError=new Error('The live shopping bag could not be connected.');window.storeCartCatalogState='error';return catalog;}
   let storedBag=[];
   try{storedBag=JSON.parse(localStorage.getItem(storeKeys.bag)||'[]');}catch(error){}
   let ids=[...new Set(storedBag.map((entry)=>String(entry?.id||'').trim()).filter(Boolean))];
-  if(!ids.length){
+  const productFields='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges';
+  const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const loadRows=async(productIds)=>{
+    const externalIds=productIds.filter((id)=>!uuidPattern.test(id));
+    const databaseIds=productIds.filter((id)=>uuidPattern.test(id));
+    const requests=[];
+    if(externalIds.length)requests.push(client.from('products').select(productFields).in('external_id',externalIds));
+    if(databaseIds.length)requests.push(client.from('products').select(productFields).in('id',databaseIds));
+    if(!requests.length)return{data:[],error:null};
+    const results=await Promise.all(requests.map((request)=>withStoreTimeout(request,'Cart products request')));
+    const failed=results.find((result)=>result.error);
+    if(failed)return{data:[],error:failed.error};
+    return{data:[...new Map(results.flatMap((result)=>result.data||[]).map((row)=>[row.id,row])).values()],error:null};
+  };
+  let rowsResult=await loadRows(ids);
+  if((rowsResult.error||!rowsResult.data.length)){
     const user=await cloudStoreUser();
     if(user){
       const cartResult=await withStoreTimeout(client.from('customer_cart_items').select('product_id,products(external_id)').eq('cart_user_id',user.id),'Cart lines request');
-      if(!cartResult.error)ids=[...new Set((cartResult.data||[]).map((entry)=>String(entry.products?.external_id||entry.product_id||'').trim()).filter(Boolean))];
+      if(!cartResult.error){
+        ids=[...new Set([...ids,...(cartResult.data||[]).map((entry)=>String(entry.products?.external_id||entry.product_id||'').trim()).filter(Boolean)])];
+        rowsResult=await loadRows(ids);
+      }else if(rowsResult.error)rowsResult={data:[],error:cartResult.error};
     }
   }
-  if(!ids.length){catalog=[];return catalog;}
-  const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const results=await Promise.all(ids.map((id)=>{
-    const column=uuidPattern.test(id)?'id':'external_id';
-    return withStoreTimeout(client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges').eq(column,id).eq('visible',true).maybeSingle(),'Cart product request');
-  }));
-  const rows=results.filter((result)=>!result.error&&result.data).map((result)=>result.data);
-  if(!rows.length){catalog=[];return catalog;}
+  if(rowsResult.error){catalog=[];window.storeCatalogError=rowsResult.error;window.storeCartCatalogState='error';return catalog;}
+  const rows=rowsResult.data||[];
+  if(!rows.length){catalog=[];window.storeCartCatalogState='empty';return catalog;}
   const imageResult=await fetchStoreBatches(rows.map((item)=>item.id),(batch)=>client.from('product_images').select('product_id,url,alt_text,sort_order,media_type').in('product_id',batch).order('sort_order'));
   const imagesByProduct=new Map();(imageResult.data||[]).forEach((image)=>{const images=imagesByProduct.get(image.product_id)||[];images.push(image);imagesByProduct.set(image.product_id,images);});
   catalog=rows.map((item)=>{const media=imagesByProduct.get(item.id)||[];return{...item,id:item.external_id||item.id,databaseId:item.id,externalId:item.external_id,seoTitle:item.seo_title||item.name,searchText:item.search_text||item.seo_title||item.name,category:item.subcategory_slug||item.category_slug,image:media.find((entry)=>entry.media_type!=='video')?.url||'product-mix.jpg',images:media.filter((entry)=>entry.media_type!=='video').map((entry)=>entry.url),media:media.map((entry)=>({url:entry.url,type:entry.media_type||'image'})),options:[],price:Number(item.price)||0,promoPrice:null,displayPrice:Number(item.price)||0,promoDiscountPercent:0,promoSkus:[],addedAt:item.added_at,waitlist:item.waitlist_enabled,description:item.description||'',itemDetails:item.item_details||'',shippingDetails:item.shipping_details||'',etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,quantity:Number(item.quantity)||0,lowStockThreshold:Number(item.low_stock_threshold)||0,badges:Array.isArray(item.badges)?item.badges:[]};});
+  window.storeCartCatalogState='ready';
   return catalog;
 }
 const bagHasItems=()=>{if(document.body.dataset.page!=='Shopping Bag')return true;try{return JSON.parse(localStorage.getItem('beadDifferentBag')||'[]').some((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);}catch(error){return false;}};
