@@ -19,6 +19,16 @@ const numberValue = (value: unknown, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const providerError = async (response: Response) => {
+  const body = await response.text();
+  try {
+    const parsed = JSON.parse(body);
+    return textValue(parsed.error_description || parsed.message || parsed.error || parsed.title, 180);
+  } catch {
+    return textValue(body, 180);
+  }
+};
+
 const upsAddress = (address: Record<string, unknown>, includeName = false) => {
   const addressLine = textValue(address.addressLine, 100);
   const result: Record<string, unknown> = {
@@ -47,6 +57,76 @@ const getUpsToken = async (baseUrl: string, clientId: string, clientSecret: stri
   return textValue(result.access_token, 4000) || null;
 };
 
+const getUspsToken = async (baseUrl: string, clientId: string, clientSecret: string) => {
+  const response = await fetch(`${baseUrl}/oauth2/v3/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" }),
+  });
+  if (!response.ok) return { token: null, error: await providerError(response) };
+  try {
+    const result = await response.json();
+    return { token: textValue(result.access_token, 4000) || null, error: "" };
+  } catch {
+    return { token: null, error: "USPS returned an invalid authentication response." };
+  }
+};
+
+const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, unknown>, acceptanceDate: unknown) => {
+  const originPostalCode = textValue(from.postalCode, 10);
+  const destinationPostalCode = textValue(to.postalCode, 10);
+  const acceptedDate = textValue(acceptanceDate, 10);
+  if (!validPostalCode(originPostalCode) || !validPostalCode(destinationPostalCode) || !/^\d{4}-\d{2}-\d{2}$/.test(acceptedDate)) {
+    return json({ error: "Valid origin, destination, and acceptance date are required." }, 400);
+  }
+
+  const clientId = Deno.env.get("USPS_CLIENT_ID") || "";
+  const clientSecret = Deno.env.get("USPS_CLIENT_SECRET") || "";
+  if (!clientId || !clientSecret) return json({ error: "USPS Service Standards are not configured." }, 503);
+
+  const baseUrl = Deno.env.get("USPS_ENVIRONMENT") === "tem"
+    ? "https://apis-tem.usps.com"
+    : "https://apis.usps.com";
+  const tokenResult = await getUspsToken(baseUrl, clientId, clientSecret);
+  if (!tokenResult.token) return json({ error: `USPS authentication failed${tokenResult.error ? `: ${tokenResult.error}` : "."}` }, 502);
+
+  const params = new URLSearchParams({
+    originZIPCode: originPostalCode,
+    destinationZIPCode: destinationPostalCode,
+    acceptanceDate: acceptedDate,
+    mailClass: "USPS_GROUND_ADVANTAGE",
+  });
+  const response = await fetch(`${baseUrl}/service-standards/v3/estimates?${params.toString()}`, {
+    headers: { Accept: "application/json", Authorization: `Bearer ${tokenResult.token}` },
+  });
+  const responseBody = await response.text();
+  let result: unknown;
+  try {
+    result = JSON.parse(responseBody);
+  } catch {
+    result = null;
+  }
+  if (!response.ok) {
+    const detail = result && typeof result === "object"
+      ? textValue((result as Record<string, unknown>).error_description || (result as Record<string, unknown>).message || (result as Record<string, unknown>).error || (result as Record<string, unknown>).title, 180)
+      : textValue(responseBody, 180);
+    return json({ error: `USPS could not return a service estimate${detail ? `: ${detail}` : "."}` }, 502);
+  }
+  if (!Array.isArray(result) || !result.length) return json({ error: "USPS could not return a service estimate: empty response." }, 502);
+  const estimate = result[0] as Record<string, unknown>;
+  const delivery = (estimate.delivery || {}) as Record<string, unknown>;
+  const scheduledDeliveryDate = textValue(delivery.scheduledDeliveryDateTime, 30).slice(0, 10);
+  return json({
+    provider: "usps",
+    rates: [{
+      serviceCode: "USPS_GROUND_ADVANTAGE",
+      serviceName: "USPS Ground Advantage",
+      serviceDays: numberValue(estimate.serviceStandard),
+      scheduledDeliveryDate,
+    }],
+  });
+};
+
 const serviceName = (code: string) => ({
   "01": "UPS Next Day Air",
   "02": "UPS Second Day Air",
@@ -67,6 +147,9 @@ Deno.serve(async (request) => {
     const from = body?.from || {};
     const to = body?.to || {};
     const packageInfo = body?.package || {};
+    if (String(body?.provider || body?.carrier || "").toLowerCase() === "usps") {
+      return await uspsEstimate(from, to, body?.acceptanceDate);
+    }
     if (!validPostalCode(from.postalCode) || !validPostalCode(to.postalCode)) {
       return json({ error: "Valid origin and destination ZIP codes are required." }, 400);
     }

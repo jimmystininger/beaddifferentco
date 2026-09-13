@@ -1,4 +1,5 @@
 window.beadSupabaseUrl=window.beadSupabaseUrl||'https://zejcuqhihbfpuwsjvmhc.supabase.co';
 window.beadSupabasePublishableKey=window.beadSupabasePublishableKey||'sb_publishable_f_xtefICK9H7dD7jJghxJQ_7vcEjR-N';
-window.beadSupabase=window.beadSupabase||window.supabase?.createClient(window.beadSupabaseUrl,window.beadSupabasePublishableKey);
-window.beadSupabaseReady=window.beadSupabaseReady||Promise.resolve(window.beadSupabase);
+const loadSupabaseScript=(source)=>new Promise((resolve)=>{const script=document.createElement('script');script.src=source;script.onload=()=>resolve(true);script.onerror=()=>resolve(false);document.head.append(script);});
+const loadCanonicalSupabaseLibrary=()=>{if(window.supabase?.createClient)return Promise.resolve(true);return loadSupabaseScript('/vendor/supabase.min.js').then((loaded)=>loaded||loadSupabaseScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.min.js')).then((loaded)=>{if(!loaded||!window.supabase?.createClient)throw new Error('Supabase client library failed to load.');return true;});};
+window.beadSupabaseReady=window.beadSupabaseReady||loadCanonicalSupabaseLibrary().then(()=>{window.beadSupabase=window.beadSupabase||window.supabase.createClient(window.beadSupabaseUrl,window.beadSupabasePublishableKey);if(!window.beadSupabase)throw new Error('Supabase client could not be created.');return window.beadSupabase;});

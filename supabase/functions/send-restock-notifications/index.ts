@@ -1,10 +1,11 @@
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const resendApiKey = Deno.env.get('RESEND_API_KEY') || '';
-const restockEmailFrom = Deno.env.get('RESTOCK_EMAIL_FROM') || '';
+const restockEmailFrom = Deno.env.get('EMAIL_FROM') || Deno.env.get('RESTOCK_EMAIL_FROM') || '';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character));
+const brandedHtml = (title: string, content: string) => `<!doctype html><html><body style="margin:0;background:#f7f3f1;color:#241e1d;font-family:Arial,sans-serif"><div style="max-width:600px;margin:0 auto;padding:32px 20px"><div style="background:#ffffff;border:1px solid #e4deda;border-radius:14px;padding:32px"><p style="margin:0 0 18px;color:#8b4261;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase">BEAD DIFFERENT CO.</p><h1 style="margin:0 0 22px;font-family:Georgia,serif;font-size:28px;line-height:1.15;color:#241e1d">${escapeHtml(title)}</h1>${content}<p style="margin:28px 0 0;color:#756d6a;font-size:13px">Bead Different Co.</p></div></div></body></html>`;
 
 async function supabaseRequest(path: string, init: RequestInit = {}) {
   return fetch(`${supabaseUrl}/rest/v1/${path}`, {
@@ -63,12 +64,12 @@ Deno.serve(async (request) => {
     const skuName = entry.inventory_skus?.name || entry.inventory_skus?.sku || 'your selected option';
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `restock/${notification.id}` },
       body: JSON.stringify({
         from: restockEmailFrom,
         to: [email],
         subject: `${productName} is back in stock`,
-        html: `<p>Hello${entry.profiles?.full_name ? ` ${escapeHtml(entry.profiles.full_name)}` : ''},</p><p>The selected option <strong>${escapeHtml(skuName)}</strong> for <strong>${escapeHtml(productName)}</strong> has new inventory available.</p><p>Your waitlist request is for ${Number(entry.requested_quantity) || 1} item${Number(entry.requested_quantity) === 1 ? '' : 's'}. Visit the product page to place your order.</p><p>Bead Different Co.</p>`
+        html: brandedHtml(`${productName} is back in stock`, `<p>Hello${entry.profiles?.full_name ? ` ${escapeHtml(entry.profiles.full_name)}` : ''},</p><p>The selected option <strong>${escapeHtml(skuName)}</strong> for <strong>${escapeHtml(productName)}</strong> has new inventory available.</p><p>Your waitlist request is for ${Number(entry.requested_quantity) || 1} item${Number(entry.requested_quantity) === 1 ? '' : 's'}. Visit the product page to place your order.</p>`)
       })
     });
     if (!response.ok) {
