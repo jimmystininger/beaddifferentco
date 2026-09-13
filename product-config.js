@@ -4,9 +4,10 @@ window.productStoreConfig={
   shippingOriginCity:'',
   shippingOriginState:'',
   processingDays:3,
-  shippingDays:5,
   freeShippingThreshold:35,
   msrpMarkupPercent:100,
+  rewardThreshold:35,
+  rewardDiscountPercent:5,
   shippingCarrier:'manual',
   shippingBoxes:[],
   waitlistDisabled:JSON.parse(localStorage.getItem('beadDifferentWaitlistDisabled')||'{}'),
@@ -20,13 +21,19 @@ try{
   localStorage.removeItem('beadDifferentProductConfig');
 }
 
-window.productStoreConfig.estimateArrival=function(zip){
-  const start=new Date();
-  let days=Number(this.processingDays)+Number(this.shippingDays);
-  if(!/^\d{5}(-\d{4})?$/.test(String(zip||'')))return '';
-  while(days>0){
-    start.setDate(start.getDate()+1);
-    if(![0,6].includes(start.getDay()))days-=1;
+const loadStorefrontShippingSettings=async()=>{
+  if(window.siteSettingsReady){
+    const value=await window.siteSettingsReady;
+    if(value)Object.assign(window.productStoreConfig,{...value,processingDays:Math.max(0,Number(value.processingDays)||0)});
+    return window.productStoreConfig;
   }
-  return start.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  const client=window.beadSupabase;
+  if(!client?.rpc)return window.productStoreConfig;
+  try{
+    const result=await client.rpc('get_storefront_shipping_settings');
+    if(!result.error&&result.data)Object.assign(window.productStoreConfig,{...result.data,processingDays:Math.max(0,Number(result.data.processingDays)||0)});
+  }catch(error){}
+  return window.productStoreConfig;
 };
+
+window.shippingSettingsReady=loadStorefrontShippingSettings();

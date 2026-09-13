@@ -18,6 +18,19 @@ set role = 'admin', updated_at = timezone('utc', now())
 where lower(email) = lower('owner@example.com');
 ```
 
-The admin page checks both `role = 'admin'` and `status = 'active'`. Catalog, inventory visibility, waitlist requests, review moderation, and promotions use Supabase when configured. Orders and member notes remain prototype-only until checkout and customer messaging are connected to their backend workflows. Email drafts and `mailto:` launchers are available now; actual delivery is intentionally deferred until the Resend integration is authorized and configured.
+The admin page checks both `role = 'admin'` and `status = 'active'`. Catalog, inventory visibility, waitlist requests, review moderation, and promotions use Supabase when configured. Admin direct emails, campaigns, order updates, and restock notifications are sent through the `send-store-email` or `send-restock-notifications` Edge Functions, with Resend credentials kept in Supabase secrets. Supabase Auth signup confirmations and password recovery messages use the project's Resend-backed Send Email Hook.
+
+### Resend email setup
+
+Set these Supabase Edge Function secrets without committing them to the repository:
+
+- `RESEND_API_KEY`: the Resend API key.
+- `EMAIL_FROM`: a sender such as `Bead Different Co. <hello@mail.beaddifferentco.com>` on the verified Resend domain.
+
+Deploy the email functions after changing their source: `supabase functions deploy send-store-email`, `supabase functions deploy send-restock-notifications`, `supabase functions deploy send-order-email`, and `supabase functions deploy send-auth-email`. Order confirmations, status/tracking updates, restock notices, admin direct emails, and campaigns use the Resend API. In Supabase Authentication settings, configure the Send Email Hook URL as `https://zejcuqhihbfpuwsjvmhc.supabase.co/functions/v1/send-auth-email`, generate the hook secret there, and set that same value as `SEND_EMAIL_HOOK_SECRET` alongside `RESEND_API_KEY` and `EMAIL_FROM`; this makes signup and password-recovery templates use the Resend API too. Until that hook is enabled, Auth confirmation and recovery messages continue using the custom SMTP connection to Resend (`smtp.resend.com`, port `465` or `587`, username `resend`, and the Resend API key as the password). Do not put either API key in browser code.
+
+Automatic signup confirmation, password recovery, order confirmation, order/tracking updates, and restock emails use the built-in branded HTML templates in the Edge Functions. Direct member emails and saved campaigns intentionally keep the administrator's typed subject and message.
+
+Campaign drafts support all subscribers and member opt-ins, member opt-ins only, non-member subscribers only, or waitlisted customers. When a newsletter subscriber email matches a registered profile, the database links the records by email and activates that member's marketing opt-in. Declining marketing opt-in removes the matching footer-subscriber record as well.
 
 Product records also support admin-managed estimated cost, low-stock thresholds, and searchable badge labels. The admin inventory section supports stock additions, a low-stock print view, and a spreadsheet-ready CSV export; sales totals remain dependent on populated order data.
