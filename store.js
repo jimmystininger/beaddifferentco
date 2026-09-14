@@ -4,7 +4,6 @@ let storeControls={salesFrozen:false,etsyImportsFrozen:false};
 let storefrontBestSellerIds=new Set();
 window.storefrontBestSellerIds=storefrontBestSellerIds;
 window.storeControls=storeControls;
-const categoryOptions=['beadable-products','beadable-pen-blanks','mixes-bundles-kits','spacers-accessories','acrylic-flatbacks','rhinestone-beads','focal-beads','silicone-solid-color','silicone-printed-style','10-12mm-acrylic-beads','16mm-acrylic-beads','20mm-acrylic-beads','cup-charms','completed-pens-keychains','charms-dangles','clearance-section'];
 const storeKeys={bag:'beadDifferentBag',wishlist:'beadDifferentWishlist',cartOwner:'beadDifferentCartOwner',cartId:'beadDifferentCartId',cartToken:'beadDifferentCartToken',cartDirty:'beadDifferentCartDirty',promo:'beadDifferentCartPromo'};
 const normalizeCartOptions=(options)=>{const values=Array.isArray(options)?options:(options&&typeof options==='object'?[options]:[]);return values.map((option)=>{if(typeof option==='string')return{label:option};return{label:String(option?.label||'').trim(),sku:String(option?.sku||'').trim(),inventorySku:String(option?.inventorySku||'').trim(),inventoryUnits:Math.max(1,Number(option?.inventoryUnits)||1)};}).filter((option)=>option.label||option.sku||option.inventorySku);};
 const readStore=(key)=>JSON.parse(localStorage.getItem(key)||'[]');
@@ -12,7 +11,6 @@ const writeStore=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 const readCartPromo=()=>String(localStorage.getItem(storeKeys.promo)||'').trim();
 const writeCartPromo=(code)=>{const normalized=String(code||'').trim();if(normalized)localStorage.setItem(storeKeys.promo,normalized);else localStorage.removeItem(storeKeys.promo);};
 function parseCsv(text){const rows=[];let row=[],cell='',quoted=false;for(let index=0;index<text.length;index+=1){const char=text[index],next=text[index+1];if(char==='"'&&quoted&&next==='"'){cell+='"';index+=1;}else if(char==='"'){quoted=!quoted;}else if(char===','&&!quoted){row.push(cell);cell='';}else if((char==='\n'||char==='\r')&&!quoted){if(char==='\r'&&next==='\n')index+=1;row.push(cell);if(row.some((value)=>value!==''))rows.push(row);row=[];cell='';}else cell+=char;}if(cell||row.length){row.push(cell);rows.push(row);}const headers=rows.shift().map((header)=>header.replace(/^\uFEFF/,''));return rows.map((values)=>Object.fromEntries(headers.map((header,index)=>[header,values[index]||''])));}
-function categoryFor(row){const titleTags=`${row.TITLE} ${row.TAGS}`.toLowerCase();if(/^(crayon beaded pen|snowman beaded pen|st\. patrick.?s day beadable pen set)/.test(titleTags))return'beadable-pen-blanks';if(titleTags.includes('clearance'))return'clearance-section';if(/completed.*(pen|keychain)|finished.*(pen|keychain)/.test(titleTags))return'completed-pens-keychains';if(/cup accessories, cup charm,/.test(titleTags))return'cup-charms';if((titleTags.includes('charm')||titleTags.includes('dangle'))&&!titleTags.includes('cup charm'))return'charms-dangles';if(titleTags.includes('focal'))return'focal-beads';if(titleTags.includes('flatback'))return'acrylic-flatbacks';if(titleTags.includes('rhinestone'))return'rhinestone-beads';if((titleTags.includes('spacer')||titleTags.includes('accessor'))&&!titleTags.includes('cup charm')&&!titleTags.includes('cup accessor'))return'spacers-accessories';if(titleTags.includes('mix')||titleTags.includes('bundle')||titleTags.includes('kit'))return'mixes-bundles-kits';if(/beadable.*pen.*blank|beaded.*pen.*blank|pen.*blank/.test(titleTags))return'beadable-pen-blanks';if(/10\s*(\/|or)\s*12\s*mm|10mm|12mm/.test(titleTags)&&titleTags.includes('acrylic'))return'10-12mm-acrylic-beads';if(/16\s*mm/.test(titleTags)&&titleTags.includes('acrylic'))return'16mm-acrylic-beads';if(/20\s*mm/.test(titleTags)&&titleTags.includes('acrylic'))return'20mm-acrylic-beads';if(titleTags.includes('silicone'))return(/print|paw|letter|face|pattern|design|swirl/.test(titleTags)?'silicone-printed-style':'silicone-solid-color');return'uncategorized';}
 async function ensureSupabaseClient(){if(window.beadSupabase)return window.beadSupabase;if(window.beadSupabaseReady)return window.beadSupabaseReady;const loadScript=(source)=>new Promise((resolve)=>{const script=document.createElement('script');script.src=source;script.onload=resolve;script.onerror=()=>resolve();document.head.append(script);});const librarySource='/vendor/supabase.min.js';window.beadSupabaseReady=(window.supabase?Promise.resolve():loadScript(librarySource)).then(()=>window.beadSupabase?window.beadSupabase:loadScript('supabase-client.js').then(()=>window.beadSupabase||window.supabase?.createClient(window.beadSupabaseUrl,window.beadSupabasePublishableKey)));return window.beadSupabaseReady;}
 async function loadStoreControls(){const client=await ensureSupabaseClient();if(!client)return storeControls;const result=await withStoreTimeout(client.from('storefront_store_controls').select('sales_frozen,etsy_imports_frozen').maybeSingle(),'Store controls request');if(!result.error&&result.data){storeControls.salesFrozen=result.data.sales_frozen===true;storeControls.etsyImportsFrozen=result.data.etsy_imports_frozen===true;}return storeControls;}async function loadPublicRewardSettings(){const client=await ensureSupabaseClient();if(!client||!window.productStoreConfig)return window.productStoreConfig;const result=await withStoreTimeout(client.rpc('get_storefront_reward_settings'),'Reward settings request');if(!result.error&&result.data){window.productStoreConfig.rewardThreshold=Math.max(0.01,Number(result.data.threshold)||35);window.productStoreConfig.rewardDiscountPercent=Math.min(100,Math.max(0.01,Number(result.data.discountPercent)||5));}return window.productStoreConfig;}
 const storeRequestTimeoutMs=12000;const withStoreTimeout=(request,label)=>Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out.')),storeRequestTimeoutMs))]);const fetchStorePages=async(buildQuery,pageSize=1000)=>{const rows=[];for(let page=0;;page+=1){const result=await withStoreTimeout(buildQuery().range(page*pageSize,page*pageSize+pageSize-1),'Store data request');if(result.error)return result;rows.push(...(result.data||[]));if((result.data||[]).length<pageSize)return{data:rows,error:null};}};
@@ -23,26 +21,16 @@ const storefrontCategoryRequest=()=>{
   const query=new URLSearchParams(location.search);
   const requested=query.get('category')||'';
   const style=query.get('style')||'';
+  const filterKey=query.get('filterKey')||'';
+  const filterValues=(query.get('filterValues')||'').split(',').map((value)=>value.trim()).filter(Boolean);
   const page=document.body.dataset.page||'';
-  const legacy={
-    'Shop All':[],
-    'Acrylic Beads':['10-12mm-acrylic-beads','16mm-acrylic-beads','20mm-acrylic-beads'],
-    'Silicone Beads':['silicone-solid-color','silicone-printed-style'],
-    Rhinestones:['rhinestone-beads'],
-    Flatbacks:['acrylic-flatbacks'],
-    'Pen Supplies':['beadable-pen-blanks'],
-    'Mixes & Kits':['mixes-bundles-kits'],
-    Clearance:['clearance-section'],
-    'Focal Beads':['focal-beads']
-  };
-  let categorySlugs=requested==='silicone'?['silicone-solid-color','silicone-printed-style']:requested==='acrylic'?['10-12mm-acrylic-beads','16mm-acrylic-beads','20mm-acrylic-beads']:requested&&requested!=='shop-all'&&requested!=='new-arrivals'?[requested]:legacy[page];
-  if(requested==='silicone'&&style==='solid')categorySlugs=['silicone-solid-color'];
-  if(requested==='silicone'&&style==='printed')categorySlugs=['silicone-printed-style'];
-  if(requested==='acrylic'&&style==='10-12mm')categorySlugs=['10-12mm-acrylic-beads'];
-  if(requested==='acrylic'&&style==='16mm')categorySlugs=['16mm-acrylic-beads'];
-  if(requested==='acrylic'&&style==='20mm')categorySlugs=['20mm-acrylic-beads'];
+  const categorySlugs=requested&&requested!=='shop-all'&&requested!=='new-arrivals'?[requested]:[];
+  let selectedFilterKey=filterKey||null;
+  let selectedFilterValues=filterValues;
+  if(requested==='silicone'&&style){selectedFilterKey='style';selectedFilterValues=[style];}
+  if(requested==='acrylic'&&style){selectedFilterKey='size';selectedFilterValues=[style];}
   const recentSince=(requested==='new-arrivals'||page==='New Arrivals')?new Date(Date.now()-30*24*60*60*1000).toISOString():null;
-  return{categorySlugs:Array.isArray(categorySlugs)?categorySlugs:[],recentSince};
+  return{categorySlugs:Array.isArray(categorySlugs)?categorySlugs:[],recentSince,filterKey:selectedFilterKey,filterValues:selectedFilterValues};
 };
 const storefrontListingPage=()=>document.body.dataset.categoryLayout==='true'||['Category','Shop All','New Arrivals','Acrylic Beads','Silicone Beads','Rhinestones','Flatbacks','Pen Supplies','Mixes & Kits','Clearance','Focal Beads'].includes(document.body.dataset.page||'');
 const storefrontCategoryListing={page:1,pageSize:24,total:0,request:storefrontCategoryRequest()};
@@ -83,7 +71,9 @@ async function loadStorefrontCategoryPage(pageNumber=1){
     category_slugs:storefrontCategoryListing.request.categorySlugs,
     page_size:storefrontCategoryListing.pageSize,
     page_offset:(page-1)*storefrontCategoryListing.pageSize,
-    recent_since:storefrontCategoryListing.request.recentSince
+    recent_since:storefrontCategoryListing.request.recentSince,
+    filter_key:storefrontCategoryListing.request.filterKey,
+    filter_values:storefrontCategoryListing.request.filterValues
   }),'Category products request');
   if(result.error){catalog=[];window.storeCatalogError=result.error;return catalog;}
   const rows=result.data||[];
@@ -98,6 +88,17 @@ async function loadStorefrontCategoryPage(pageNumber=1){
   };
   return catalog;
 }
+async function loadStorefrontCategoryFilters(categorySlug){
+  const client=await ensureSupabaseClient();
+  if(!client||!categorySlug)return[];
+  const result=await withStoreTimeout(client.rpc('get_storefront_category_filters',{p_category_slug:categorySlug}),'Category filters request');
+  if(result.error){window.storefrontCategoryFiltersError=result.error;return[];}
+  const filters=Array.isArray(result.data)?result.data:[];
+  window.storefrontCategoryFilters=filters;
+  window.dispatchEvent(new CustomEvent('bead-category-filters-ready',{detail:{categorySlug,filters}}));
+  return filters;
+}
+window.loadStorefrontCategoryFilters=loadStorefrontCategoryFilters;
 async function loadCatalog(){
   const client=await ensureSupabaseClient();
   if(!client){catalog=[];window.storeCatalogError=new Error('The live store catalog could not be connected.');return catalog;}
@@ -176,7 +177,8 @@ async function loadCartCatalog(additionalIds=[]){
     const uuidValues=values.filter((value)=>uuidPattern.test(value));
     const valueRequests=[
       client.from('product_option_values').select('id,option_id').in('sku',values),
-      client.from('product_option_values').select('id,option_id').in('inventory_sku',values)
+      client.from('product_option_values').select('id,option_id').in('inventory_sku',values),
+      client.from('product_option_values').select('id,option_id,inventory_sku_id').in('inventory_sku_id',uuidValues)
     ];
     if(uuidValues.length)valueRequests.push(client.from('product_option_values').select('id,option_id').in('id',uuidValues));
     const valueResults=await Promise.all(valueRequests.map((request)=>withStoreTimeout(request,'Cart SKU resolution request')));
@@ -208,7 +210,7 @@ async function loadCartCatalog(additionalIds=[]){
   return catalog;
 }
 const bagHasItems=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentBag')||'[]').some((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);}catch(error){return false;}};
-const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{void Promise.all([loadStoreControls(),loadPublicRewardSettings(),loadStorefrontBestSellers(),applyCanonicalInventory(),loadStorefrontBundleComponents()]).catch((error)=>{window.storeCatalogAncillaryError=error;});return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
+const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{const ancillary=document.body.dataset.page==='Shopping Bag'?Promise.all([loadStoreControls(),loadPublicRewardSettings(),loadStorefrontBestSellers(),applyCanonicalInventory(),loadStorefrontBundleComponents()]):Promise.all([loadStoreControls(),loadPublicRewardSettings(),loadStorefrontBestSellers()]);void ancillary.catch((error)=>{window.storeCatalogAncillaryError=error;});return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
 window.catalogReady=catalogReady;window.storeCatalog=()=>catalog;
 const productIdentifierMatches=(item,needle)=>{const normalizedNeedle=String(needle||'').trim().toLowerCase();return [item.id,item.externalId,item.databaseId,item.sku].filter(Boolean).some((value)=>String(value).trim().toLowerCase()===normalizedNeedle)||(item.options||[]).some((option)=>(option.values||[]).some((value)=>typeof value==='object'&&[value.sku,value.inventorySku].filter(Boolean).some((identifier)=>String(identifier).trim().toLowerCase()===normalizedNeedle)));};
 const findProduct=(id)=>{const needle=String(id||'').trim();if(!needle)return null;return catalog.find((item)=>productIdentifierMatches(item,needle))||null;};
@@ -245,8 +247,9 @@ async function syncCloudStore(){
   }
   const cloudBag=cloudItems.map((item)=>{
     const product=findProduct(item.product_id);
-    return{id:product?.databaseId||product?.id||item.product_id,quantity:Number(item.quantity)||1,selectedOptions:normalizeCartOptions(item.selected_options)};
-  });
+    if(!product)return null;
+    return{id:product.databaseId||product.id,quantity:Number(item.quantity)||1,selectedOptions:normalizeCartOptions(item.selected_options)};
+  }).filter(Boolean);
   const localBagToMerge=!cartOwner&&!cartDirty&&localBag.length?localBag:[];
   const mergedBag=cartDirty&&localBag.length?mergeCartLines(localBag):mergeCartLines([...cloudBag,...localBagToMerge]);
   writeStore(storeKeys.bag,mergedBag);
@@ -266,13 +269,13 @@ const initializeCloudStoreSync=async()=>{
   await queueStoreSync(()=>syncCloudStore());
 };
 window.customerStoreReady=initializeCloudStoreSync();
-function clearLocalCart(){localStorage.removeItem(storeKeys.cartOwner);localStorage.removeItem(storeKeys.cartId);if(typeof updateBagCount==='function')updateBagCount();window.dispatchEvent(new Event('bead-cart-changed'));}
+function clearLocalCart(){localStorage.removeItem(storeKeys.cartOwner);if(typeof updateBagCount==='function')updateBagCount();window.dispatchEvent(new Event('bead-cart-changed'));}
 window.customerStore={sync:syncCloudStore,clearForSignOut:clearLocalCart};
 const bagItems=()=>{const items=readStore(storeKeys.bag);const normalized=items.map((item)=>({...item,selectedOptions:normalizeCartOptions(item.selectedOptions)}));if(JSON.stringify(items)!==JSON.stringify(normalized))writeStore(storeKeys.bag,normalized);return normalized;};
 const wishlistItems=()=>readStore(storeKeys.wishlist);
 const cartOptionsMatch=(first,second)=>JSON.stringify(normalizeCartOptions(first))===JSON.stringify(normalizeCartOptions(second));
 const isInBag=(id,selectedOptions=null)=>bagItems().some((item)=>item.id===id&&(selectedOptions===null||cartOptionsMatch(item.selectedOptions,selectedOptions)));
-const validBagItems=()=>bagItems().filter((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);const resolvedBagItems=()=>{const entries=validBagItems();return catalog.length?entries.filter((entry)=>findProduct(entry.id)):entries;};const normalizeBagProductIds=()=>{const entries=bagItems();let changed=false;const normalized=entries.map((entry)=>{const item=findProduct(entry.id);if(!item||item.id===entry.id)return entry;changed=true;return{...entry,id:item.id};});if(changed)writeStore(storeKeys.bag,normalized);return normalized;};const pruneBagItems=()=>{const items=bagItems();const valid=validBagItems();if(valid.length!==items.length)writeStore(storeKeys.bag,valid);return valid;};function updateBagCount(){const entries=resolvedBagItems();const count=entries.reduce((total,item)=>total+Math.max(0,Number(item.quantity)||0),0);document.querySelectorAll('#bag-count,.bag i').forEach((element)=>{element.textContent=count;});}catalogReady.then(()=>{if(!window.storeCatalogError&&catalog.length){normalizeBagProductIds();pruneBagItems();}updateBagCount();if(window.beadSupabase)queueStoreSync(()=>syncCloudStore());});
+const validBagItems=()=>bagItems().filter((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);const resolvedBagItems=()=>{const entries=validBagItems();return catalog.length?entries.filter((entry)=>findProduct(entry.id)):entries;};const normalizeBagProductIds=()=>{const entries=bagItems();let changed=false;const normalized=entries.map((entry)=>{const item=findProduct(entry.id);if(!item||item.id===entry.id)return entry;changed=true;return{...entry,id:item.id};});if(changed)writeStore(storeKeys.bag,normalized);return normalized;};const pruneBagItems=()=>{const items=bagItems();const valid=validBagItems();if(valid.length!==items.length)writeStore(storeKeys.bag,valid);return valid;};function updateBagCount(){const entries=resolvedBagItems();const count=entries.reduce((total,item)=>total+Math.max(0,Number(item.quantity)||0),0);document.querySelectorAll('#bag-count,.bag i').forEach((element)=>{element.textContent=count;});}catalogReady.then(()=>{if(!window.storeCatalogError){normalizeBagProductIds();pruneBagItems();}updateBagCount();if(window.beadSupabase)queueStoreSync(()=>syncCloudStore());});
 const shippingWeightToOz=(value,unit)=>{const amount=Number(value)||0;return unit==='lb'?amount*16:unit==='g'?amount/28.349523125:unit==='kg'?amount*35.27396195:amount;};
 const shippingCartOption=(item,entry)=>{const selected=normalizeCartOptions(entry?.selectedOptions);const currentValues=(item?.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object');const stored=selected.find((option)=>option.inventorySku||option.sku)||selected[0]||null;if(!stored)return null;const current=currentValues.find((value)=>[value.inventorySku,value.sku,value.label].filter(Boolean).some((identifier)=>String(identifier).trim().toLowerCase()===String(stored.inventorySku||stored.sku||stored.label||'').trim().toLowerCase()));return current||stored;};
 const defaultShippingBox={name:'Smallest USPS parcel',maxWeightOz:70,lengthIn:6,widthIn:4,heightIn:1,fallbackRate:0};
@@ -339,13 +342,17 @@ async function loadProductCatalogMetadata(){
 }
 async function loadCartProductOptions(){
   if(document.body.dataset.page!=='Shopping Bag'||!window.beadSupabase||!catalog.length)return catalog;
-  const ids=catalog.map((item)=>item.databaseId).filter(Boolean);
-  const result=await fetchStoreBatches(ids,(batch)=>window.beadSupabase.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,label,price_delta,sku,inventory_sku,inventory_units,quantity,low_stock_threshold,image_url,unit_type,sort_order)').in('product_id',batch).order('sort_order')).catch(()=>({data:[]}));
+  const ids=[...new Set(catalog.map((item)=>item.databaseId).filter(Boolean))];
+  if(!ids.length)return catalog;
+  const result=await fetchStoreBatches(ids,(batch)=>window.beadSupabase.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,label,price_delta,sku,inventory_sku,inventory_units,quantity,low_stock_threshold,image_url,unit_type,sort_order)').in('product_id',batch).order('sort_order'));
+  if(result.error){window.storeCartOptionsError=result.error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error:result.error}}));return catalog;}
+  window.storeCartOptionsError=null;
   catalog.forEach((item)=>{item.options=(result.data||[]).filter((option)=>option.product_id===item.databaseId).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.label,price:Number(item.price||0)+Number(value.price_delta||0),sku:value.sku||'',inventorySku:value.inventory_sku||'',inventoryUnits:Number(value.inventory_units)||1,imageUrl:value.image_url||'',unitType:value.unit_type||'Each',quantity:value.quantity===null?null:Number(value.quantity)||0,lowStockThreshold:Number(value.low_stock_threshold)||0}))}));});
+  window.dispatchEvent(new Event('bead-catalog-options-ready'));
   return catalog;
 }
 const normalizeCatalogPromoFields=()=>{catalog.forEach((item)=>{item.promoPrice=item.promo_price===null||item.promo_price===undefined?null:Number(item.promo_price);item.promoStartsAt=item.promo_starts_at||null;item.promoEndsAt=item.promo_ends_at||null;item.promoDiscountPercent=Number(item.promo_discount_percent)||0;item.promoSkus=Array.isArray(item.promo_skus)?item.promo_skus:[];});return catalog;};
-window.catalogMetadataReady=catalogReady.then(async()=>{normalizeCatalogPromoFields();await loadProductCatalogMetadata();await loadCartProductOptions();normalizeCatalogPromoFields();return catalog;});
+window.catalogMetadataReady=catalogReady.then(async()=>{normalizeCatalogPromoFields();await loadProductCatalogMetadata();await loadCartProductOptions();normalizeCatalogPromoFields();return catalog;}).catch((error)=>{window.storeCartOptionsError=error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error}}));return catalog;});
 window.renderPaginatedProducts=renderPaginatedProducts;
 const storeCartLineKey=(entry)=>{const options=normalizeCartOptions(entry?.selectedOptions);return `${entry?.id||''}:${JSON.stringify(options)}`;};
 const mergeCartLines=(items)=>{const merged=new Map();items.forEach((item)=>{if(!item||!String(item.id||'').trim())return;const selectedOptions=normalizeCartOptions(item.selectedOptions);const lineKey=storeCartLineKey({...item,selectedOptions});const existing=merged.get(lineKey);if(existing)existing.quantity+=Math.max(1,Number(item.quantity)||1);else merged.set(lineKey,{id:item.id,quantity:Math.max(1,Number(item.quantity)||1),selectedOptions});});return[...merged.values()];};
@@ -366,26 +373,14 @@ window.visibleCatalog=visibleCatalog;
 window.badgeCatalogReady=badgeCatalogReady;
 const skuInventory=(item)=>{const values=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&value.sku);return values.length?values.map((value)=>({quantity:Number(value.quantity)||0,threshold:Number(value.lowStockThreshold)||0})): [{quantity:Number(item.quantity)||0,threshold:Number(item.lowStockThreshold)||0}];};
 const storefrontInventoryStatus=(item)=>{const inventory=skuInventory(item);const hasStock=inventory.some((value)=>value.quantity>0);const hasLowStock=inventory.some((value)=>value.quantity>0&&value.threshold>0&&value.quantity<=value.threshold);return hasStock?(hasLowStock?'Low Stock':'In Stock'):'Out of Stock';};
-const storefrontStatusBadges=(item)=>[storefrontInventoryStatus(item)];
+const storefrontStatusBadges=(item)=>{const status=storefrontInventoryStatus(item);return status==='In Stock'?[]:[status];};
 const storefrontPromoActive=(item)=>{const percent=Number(item.promoDiscountPercent??item.promo_discount_percent)||0;const promoPrice=Number(item.promoPrice??item.promo_price);const hasPromoPrice=Number.isFinite(promoPrice)&&promoPrice>0&&promoPrice<Number(item.price||0);const starts=item.promoStartsAt||item.promo_starts_at;const ends=item.promoEndsAt||item.promo_ends_at;const startsAt=starts?Date.parse(starts):NaN;const endsAt=ends?Date.parse(ends):NaN;return (percent>0||hasPromoPrice)&&(!Number.isNaN(startsAt)&&startsAt>Date.now()?false:true)&&(!Number.isNaN(endsAt)&&endsAt<Date.now()?false:true);};
 const storefrontPromoForSku=(item,originalPrice,sku='')=>{const basePrice=Math.max(0,Number(originalPrice)||0);const percent=Math.min(100,Math.max(0,Number(item.promoDiscountPercent??item.promo_discount_percent)||0));const fixedPrice=Number(item.promoPrice??item.promo_price);const promoSkus=Array.isArray(item.promoSkus)?item.promoSkus:(Array.isArray(item.promo_skus)?item.promo_skus:[]);const normalizedSku=String(sku||'').trim().toLowerCase();const appliesToSku=!promoSkus.length||promoSkus.some((value)=>String(value||'').trim().toLowerCase()===normalizedSku);const starts=item.promoStartsAt||item.promo_starts_at;const ends=item.promoEndsAt||item.promo_ends_at;const startsAt=starts?Date.parse(starts):NaN;const endsAt=ends?Date.parse(ends):NaN;const hasDiscount=percent>0||Number.isFinite(fixedPrice)&&fixedPrice>0&&fixedPrice<basePrice;const active=appliesToSku&&hasDiscount&&(!Number.isNaN(startsAt)&&startsAt>Date.now()?false:true)&&(!Number.isNaN(endsAt)&&endsAt<Date.now()?false:true);if(!active)return{originalPrice:basePrice,price:basePrice,discounted:false};const price=Number.isFinite(fixedPrice)&&fixedPrice>0&&fixedPrice<basePrice?fixedPrice:basePrice*(1-percent/100);return{originalPrice:basePrice,price:Math.max(0,Math.min(basePrice,price)),discounted:price<basePrice};};
 window.storefrontPromoForSku=storefrontPromoForSku;
+const storefrontPromoDetails=(item,originalPrice,sku='')=>{const pricing=storefrontPromoForSku(item,originalPrice,sku);if(!pricing.discounted)return'';const formatDate=(value)=>{const time=Date.parse(value||'');return Number.isFinite(time)?new Date(time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';};const percent=Math.min(100,Math.max(0,Number(item.promoDiscountPercent??item.promo_discount_percent)||0));const starts=formatDate(item.promoStartsAt||item.promo_starts_at);const ends=formatDate(item.promoEndsAt||item.promo_ends_at);return[percent>0?`${percent}% off`:'Sale',starts?`Starts ${starts}`:'',ends?`Ends ${ends}`:''].filter(Boolean).join(' · ');};
+window.storefrontPromoDetails=storefrontPromoDetails;
 const storefrontBrowseBadges=(item)=>[...new Set([...(item.badges||[])].filter((badge)=>['Single Bead','Multi-Pack','Single Bead & Multi-Pack','Fits on Beadable Pen','Clearance'].includes(badge)).concat(storefrontPromoActive(item)?['On Sale']:[],storefrontBestSellerIds.has(item.externalId||item.id)?['Best Seller']:[],storefrontStatusBadges(item).filter((badge)=>badge!=='In Stock')))];
 window.storefrontStatusBadges=storefrontStatusBadges;
 window.storefrontInventoryStatus=storefrontInventoryStatus;
-const productCardPricing=(item)=>{const variants=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&String(value.sku||value.inventorySku||'').trim()&&Number.isFinite(Number(value.price)));if(!variants.length){const price=Number(item.displayPrice??item.price);return {multiple:false,label:Number.isFinite(price)?`$${price.toFixed(2)}`:''};}const lowest=variants.reduce((current,value)=>Number(value.price)<Number(current.price)?value:current,variants[0]);const price=Number(lowest.price);const unit=String(lowest.unitType||item.unitType||'Each').trim()||'Each';return {multiple:variants.length>1,label:`${variants.length>1?'Prices starting at ':''}$${price.toFixed(2)} / ${unit}`};};
-function renderProductCards(list,target,options={}){if(!target)return;const wished=wishlistItems();target.replaceChildren(...list.map((item)=>{const pricing=productCardPricing(item);const hasMultipleSkus=pricing.multiple;const inBag=!hasMultipleSkus&&isInBag(item.id);const badges=storefrontBrowseBadges(item);const topBadges=badges.filter((badge)=>['Single Bead','Multi-Pack','Single Bead & Multi-Pack','Fits on Beadable Pen','Best Seller'].includes(badge));const inventoryBadges=badges.filter((badge)=>['On Sale','Clearance','Low Stock','Out of Stock','In Stock'].includes(badge));const badgeSpan=(badge)=>`<span class="product-badge product-badge-${badge.toLowerCase().replace(/[^a-z0-9]+/g,'-')}">${escapeProductText(badge)}</span>`;const badgeMarkup=badges.length?`<div class="product-badges product-card-badges">${topBadges.length?`<div class="product-badge-row product-badge-row-top">${topBadges.map(badgeSpan).join('')}</div>`:''}${inventoryBadges.length?`<div class="product-badge-row product-badge-row-bottom">${inventoryBadges.map(badgeSpan).join('')}</div>`:''}</div>`:'';const imageMarkup=item.image?`<img loading="lazy" class="product-card-image" src="${escapeProductText(item.image)}" alt="${escapeProductText(item.name)}">`:'<div class="product-card-image product-card-image-placeholder" aria-hidden="true"></div>';const card=document.createElement('article');card.className='product-card';card.dataset.seoTitle=item.seoTitle;card.dataset.searchText=item.searchText;card.innerHTML=`<a class="product-card-link" href="product.html?id=${encodeURIComponent(item.id)}">${badgeMarkup}<div class="product-card-image-wrap">${imageMarkup}</div><h3>${escapeProductText(item.name)}</h3></a><strong>${pricing.label}</strong><div class="product-actions"><button type="button" class="cart-toggle${inBag?' in-cart':''}" data-cart-toggle="${item.id}" data-choose-options="${hasMultipleSkus?'true':'false'}">${hasMultipleSkus?'Choose Options':inBag?'Remove from Cart':'Add to Cart'}</button><button type="button" class="wishlist-button${wished.includes(item.id)?' active':''}" data-wishlist="${item.id}" aria-label="${wished.includes(item.id)?'Remove from':'Add to'} wishlist">♡</button>${options.cart?`<button type="button" class="remove-cart" data-remove="${item.id}">Remove</button>`:''}</div>`;return card;}));target.querySelectorAll('[data-cart-toggle]').forEach((button)=>button.addEventListener('click',()=>{if(button.dataset.chooseOptions==='true'){window.location.href='product.html?id='+encodeURIComponent(button.dataset.cartToggle);return;}if(isInBag(button.dataset.cartToggle)){removeFromBag(button.dataset.cartToggle);button.textContent='Add to Cart';button.classList.remove('in-cart');}else{addToBag(button.dataset.cartToggle);button.textContent='Remove from Cart';button.classList.add('in-cart');}}));target.querySelectorAll('[data-remove]').forEach((button)=>button.addEventListener('click',()=>{removeFromBag(button.dataset.remove);button.closest('.product-card').remove();}));target.querySelectorAll('[data-wishlist]').forEach((button)=>button.addEventListener('click',()=>{button.classList.toggle('active',toggleWishlist(button.dataset.wishlist));}));};
-
-const originalSyncCloudStore=syncCloudStore;
-syncCloudStore=async()=>{
-  const result=await originalSyncCloudStore();
-  if(document.body.dataset.page==='Shopping Bag'&&window.beadSupabase){
-    await loadCartCatalog();
-    await loadProductCatalogMetadata();
-    await loadCartProductOptions();
-    await applyCanonicalInventory();
-    updateBagCount();
-    window.dispatchEvent(new Event('bead-store-synced'));
-  }
-  return result;
-};
+const productCardPricing=(item)=>{const variants=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&String(value.sku||value.inventorySku||'').trim()&&Number.isFinite(Number(value.price)));const lowest=variants.reduce((current,value)=>Number(value.price)<Number(current.price)?value:current,variants[0]);const basePrice=Number(lowest?.price??item.displayPrice??item.price);const sku=lowest?.sku||lowest?.inventorySku||item.sku||item.promoSkus?.[0]||'';const promo=storefrontPromoForSku(item,basePrice,sku);const unit=String(lowest?.unitType||item.unitType||'Each').trim()||'Each';const multiple=variants.length>1||(!variants.length&&!item.sku);const prefix=multiple?'Starting at ':'';const original=`$${basePrice.toFixed(2)} / ${unit}`;const current=`$${promo.price.toFixed(2)} / ${unit}`;const prefixMarkup=prefix?`<span class="product-card-price-prefix">${prefix}</span>`:'';return {multiple,label:promo.discounted?`${prefixMarkup}<span class="product-card-price-original"><s class="product-card-original-price">${original}</s></span><span class="product-card-price-current product-card-promo-price">${current}</span>`:`${prefixMarkup}<span class="product-card-price-current">${current}</span>`};};
+function renderProductCards(list,target,options={}){if(!target)return;const wished=wishlistItems();target.replaceChildren(...list.map((item)=>{const pricing=productCardPricing(item);const hasMultipleSkus=pricing.multiple;const inBag=!hasMultipleSkus&&isInBag(item.id);const badges=storefrontBrowseBadges(item);const topBadges=badges.filter((badge)=>['Single Bead','Multi-Pack','Single Bead & Multi-Pack','Fits on Beadable Pen','Best Seller'].includes(badge));const bottomBadges=badges.filter((badge)=>['On Sale','Clearance','Low Stock','Out of Stock'].includes(badge));const badgeSpan=(badge)=>`<span class="product-badge product-badge-${badge.toLowerCase().replace(/[^a-z0-9]+/g,'-')}">${escapeProductText(badge)}</span>`;const topMarkup=topBadges.length?`<div class="product-badges product-card-badges product-card-badges-top">${topBadges.map(badgeSpan).join('')}</div>`:'';const bottomMarkup=bottomBadges.length?`<div class="product-badges product-card-badges product-card-badges-bottom">${bottomBadges.map(badgeSpan).join('')}</div>`:'';const imageMarkup=item.image?`<img loading="lazy" class="product-card-image" src="${escapeProductText(item.image)}" alt="${escapeProductText(item.name)}">`:'<div class="product-card-image product-card-image-placeholder" aria-hidden="true"></div>';const card=document.createElement('article');card.className='product-card';card.dataset.seoTitle=item.seoTitle;card.dataset.searchText=item.searchText;card.innerHTML=`<a class="product-card-link" href="product.html?id=${encodeURIComponent(item.id)}"><div class="product-card-image-wrap">${topMarkup}${imageMarkup}${bottomMarkup}</div><h3>${escapeProductText(item.name)}</h3></a><strong>${pricing.label}</strong><div class="product-actions"><button type="button" class="cart-toggle${inBag?' in-cart':''}" data-cart-toggle="${item.id}" data-choose-options="${hasMultipleSkus?'true':'false'}">${hasMultipleSkus?'Choose Options':inBag?'Remove from Cart':'Add to Cart'}</button><button type="button" class="wishlist-button${wished.includes(item.id)?' active':''}" data-wishlist="${item.id}" aria-label="${wished.includes(item.id)?'Remove from':'Add to'} wishlist">♡</button>${options.cart?`<button type="button" class="remove-cart" data-remove="${item.id}">Remove</button>`:''}</div>`;return card;}));target.querySelectorAll('[data-cart-toggle]').forEach((button)=>button.addEventListener('click',()=>{if(button.dataset.chooseOptions==='true'){window.location.href='product.html?id='+encodeURIComponent(button.dataset.cartToggle);return;}if(isInBag(button.dataset.cartToggle)){removeFromBag(button.dataset.cartToggle);button.textContent='Add to Cart';button.classList.remove('in-cart');}else{addToBag(button.dataset.cartToggle);button.textContent='Remove from Cart';button.classList.add('in-cart');}}));target.querySelectorAll('[data-remove]').forEach((button)=>button.addEventListener('click',()=>{removeFromBag(button.dataset.remove);button.closest('.product-card').remove();}));target.querySelectorAll('[data-wishlist]').forEach((button)=>button.addEventListener('click',()=>{button.classList.toggle('active',toggleWishlist(button.dataset.wishlist));}));};
