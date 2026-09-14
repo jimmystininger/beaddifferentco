@@ -1,15 +1,15 @@
 window.productStoreConfig={
   shippingFrom:'Ohio',
-  shippingOriginPostalCode:'',
+  shippingOriginPostalCode:'43147',
   shippingOriginCity:'',
-  shippingOriginState:'',
+  shippingOriginState:'OH',
   processingDays:3,
   freeShippingThreshold:35,
   msrpMarkupPercent:100,
   rewardThreshold:35,
   rewardDiscountPercent:5,
-  shippingCarrier:'manual',
-  shippingBoxes:[],
+  shippingCarrier:'usps',
+  shippingBoxes:[{name:'Smallest USPS parcel',maxWeightOz:70,lengthIn:6,widthIn:4,heightIn:1}],
   waitlistDisabled:JSON.parse(localStorage.getItem('beadDifferentWaitlistDisabled')||'{}'),
   options:{}
 };

@@ -72,12 +72,20 @@ const getUspsToken = async (baseUrl: string, clientId: string, clientSecret: str
   }
 };
 
-const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, unknown>, acceptanceDate: unknown) => {
+const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, unknown>, packageInfo: Record<string, unknown>, acceptanceDate: unknown) => {
   const originPostalCode = textValue(from.postalCode, 10);
   const destinationPostalCode = textValue(to.postalCode, 10);
   const acceptedDate = textValue(acceptanceDate, 10);
   if (!validPostalCode(originPostalCode) || !validPostalCode(destinationPostalCode) || !/^\d{4}-\d{2}-\d{2}$/.test(acceptedDate)) {
     return json({ error: "Valid origin, destination, and acceptance date are required." }, 400);
+  }
+
+  const weight = numberValue(packageInfo.weightOz);
+  const length = numberValue(packageInfo.lengthIn);
+  const width = numberValue(packageInfo.widthIn);
+  const height = numberValue(packageInfo.heightIn);
+  if (weight <= 0 || length <= 0 || width <= 0 || height <= 0) {
+    return json({ error: "A positive package weight and dimensions are required for USPS postage." }, 400);
   }
 
   const clientId = Deno.env.get("USPS_CLIENT_ID") || "";
@@ -90,41 +98,64 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
   const tokenResult = await getUspsToken(baseUrl, clientId, clientSecret);
   if (!tokenResult.token) return json({ error: `USPS authentication failed${tokenResult.error ? `: ${tokenResult.error}` : "."}` }, 502);
 
-  const params = new URLSearchParams({
-    originZIPCode: originPostalCode,
-    destinationZIPCode: destinationPostalCode,
-    acceptanceDate: acceptedDate,
-    mailClass: "USPS_GROUND_ADVANTAGE",
-  });
-  const response = await fetch(`${baseUrl}/service-standards/v3/estimates?${params.toString()}`, {
-    headers: { Accept: "application/json", Authorization: `Bearer ${tokenResult.token}` },
-  });
-  const responseBody = await response.text();
-  let result: unknown;
+  const authorization = { Accept: "application/json", Authorization: `Bearer ${tokenResult.token}` };
+  const requestPrice = async (mailClass: string, serviceName: string) => {
+    const response = await fetch(`${baseUrl}/prices/v3/base-rates/search`, {
+      method: "POST",
+      headers: { ...authorization, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        originZIPCode: originPostalCode,
+        destinationZIPCode: destinationPostalCode,
+        weight,
+        length,
+        width,
+        height,
+        mailClass,
+        processingCategory: "MACHINABLE",
+        destinationEntryFacilityType: "NONE",
+        rateIndicator: "SP",
+        priceType: "RETAIL",
+        mailingDate: acceptedDate,
+      }),
+    });
+    const body = await response.text();
+    let result: Record<string, unknown> = {};
+    try { result = JSON.parse(body); } catch { result = {}; }
+    if (!response.ok) {
+      const detail = textValue(result.error_description || result.message || result.error || result.title || body, 180);
+      throw new Error(`${serviceName} postage failed${detail ? `: ${detail}` : "."}`);
+    }
+    const rates = Array.isArray(result.rates) ? result.rates as Record<string, unknown>[] : [];
+    const rate = rates.find((entry) => Number.isFinite(Number(entry.price))) || null;
+    if (!rate) throw new Error(`${serviceName} postage failed: USPS returned no eligible rate.`);
+    return { serviceCode: mailClass, serviceName, amount: numberValue(rate.price), priceType: textValue(rate.priceType, 40) || "RETAIL" };
+  };
+  const requestDelivery = async (mailClass: string) => {
+    const params = new URLSearchParams({ originZIPCode: originPostalCode, destinationZIPCode: destinationPostalCode, acceptanceDate: acceptedDate, mailClass });
+    const response = await fetch(`${baseUrl}/service-standards/v3/estimates?${params.toString()}`, { headers: authorization });
+    const body = await response.text();
+    let result: unknown;
+    try { result = JSON.parse(body); } catch { result = null; }
+    if (!response.ok || !Array.isArray(result) || !result.length) {
+      const detail = result && typeof result === "object"
+        ? textValue((result as Record<string, unknown>).error_description || (result as Record<string, unknown>).message || (result as Record<string, unknown>).error || (result as Record<string, unknown>).title, 180)
+        : textValue(body, 180);
+      throw new Error(`${mailClass} delivery estimate failed${detail ? `: ${detail}` : "."}`);
+    }
+    const estimate = result[0] as Record<string, unknown>;
+    const delivery = (estimate.delivery || {}) as Record<string, unknown>;
+    return { serviceDays: numberValue(estimate.serviceStandard), scheduledDeliveryDate: textValue(delivery.scheduledDeliveryDateTime, 30).slice(0, 10) };
+  };
   try {
-    result = JSON.parse(responseBody);
-  } catch {
-    result = null;
+    const services = [
+      ["USPS_GROUND_ADVANTAGE", "USPS Ground Advantage"],
+      ["PRIORITY_MAIL", "USPS Priority Mail"],
+    ] as const;
+    const rates = await Promise.all(services.map(async ([serviceCode, serviceName]) => ({ ...await requestPrice(serviceCode, serviceName), ...await requestDelivery(serviceCode) })));
+    return json({ provider: "usps", rates });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "USPS shipping quote failed." }, 502);
   }
-  if (!response.ok) {
-    const detail = result && typeof result === "object"
-      ? textValue((result as Record<string, unknown>).error_description || (result as Record<string, unknown>).message || (result as Record<string, unknown>).error || (result as Record<string, unknown>).title, 180)
-      : textValue(responseBody, 180);
-    return json({ error: `USPS could not return a service estimate${detail ? `: ${detail}` : "."}` }, 502);
-  }
-  if (!Array.isArray(result) || !result.length) return json({ error: "USPS could not return a service estimate: empty response." }, 502);
-  const estimate = result[0] as Record<string, unknown>;
-  const delivery = (estimate.delivery || {}) as Record<string, unknown>;
-  const scheduledDeliveryDate = textValue(delivery.scheduledDeliveryDateTime, 30).slice(0, 10);
-  return json({
-    provider: "usps",
-    rates: [{
-      serviceCode: "USPS_GROUND_ADVANTAGE",
-      serviceName: "USPS Ground Advantage",
-      serviceDays: numberValue(estimate.serviceStandard),
-      scheduledDeliveryDate,
-    }],
-  });
 };
 
 const serviceName = (code: string) => ({
@@ -148,7 +179,7 @@ Deno.serve(async (request) => {
     const to = body?.to || {};
     const packageInfo = body?.package || {};
     if (String(body?.provider || body?.carrier || "").toLowerCase() === "usps") {
-      return await uspsEstimate(from, to, body?.acceptanceDate);
+      return await uspsEstimate(from, to, packageInfo, body?.acceptanceDate);
     }
     if (!validPostalCode(from.postalCode) || !validPostalCode(to.postalCode)) {
       return json({ error: "Valid origin and destination ZIP codes are required." }, 400);
