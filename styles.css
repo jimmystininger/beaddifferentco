@@ -682,3 +682,7 @@ body[data-page="Admin"] .admin-recipe-component-summary small{display:block;marg
 .badge-out-of-stock{background:#444!important;color:#fff!important}
 .admin-badge-option-clearance{background:#fff!important;color:#111!important}
 .admin-badge-option-clearance .badge-clearance{background:#e64c5f!important;color:#fff!important}
+.homepage-promo-banner{display:flex;align-items:center;justify-content:center;gap:18px;padding:12px 24px;background:var(--site-banner-color,#e482a4);color:var(--site-header-text-color,#111);text-align:center;font-size:14px;letter-spacing:.4px}
+.homepage-promo-banner strong{font-size:16px}
+.homepage-promo-banner span{font-weight:700}
+@media(max-width:560px){.homepage-promo-banner{flex-direction:column;gap:3px;padding:10px 16px;font-size:12px}.homepage-promo-banner strong{font-size:14px}}

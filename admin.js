@@ -2,22 +2,50 @@ async function renderPromos(){
   const cloud=Boolean(window.beadSupabase);
   const readLocal=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentPromos')||'[]');}catch(error){return[];}};
   const saveLocal=(promos)=>localStorage.setItem('beadDifferentPromos',JSON.stringify(promos));
-  const loadCloud=async()=>{const result=await cloudAdmin().from('promo_codes').select('id,code,discount_type,value,mode,active,starts_at,ends_at,created_at').order('created_at',{ascending:false});if(result.error)throw result.error;return result.data||[];};
+  const loadCloud=async()=>{const result=await cloudAdmin().from('promo_codes').select('id,title,code,discount_type,value,mode,active,starts_at,ends_at,show_homepage_banner,created_at').order('created_at',{ascending:false});if(result.error)throw result.error;return result.data||[];};
   let promos=cloud?await loadCloud():readLocal();
+  const discountLabel=(promo)=>promo.discount_type==='percent'||promo.type==='percent'?`${Number(promo.value||0)}% off`:`$${Number(promo.value||0).toFixed(2)} off`;
+  const endLabel=(value)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});};
+  const draftBody=(promo)=>{const discount=discountLabel(promo);const end=endLabel(promo.ends_at);const access=promo.mode==='manual'&&promo.code?`Use code ${promo.code} at checkout.`:'Your discount will be applied automatically at checkout.';const shopUrl=new URL('shop-all.html',window.location.href).href;return `${promo.title||'Special offer'} is now live!\n\nEnjoy ${discount} on your next order.${end?` This offer ends ${end}.`:''}\n\n${access}\n\nShop now: ${shopUrl}`;};
   const draw=()=>{
-    panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">MARKETING</p><h2>Promo codes</h2><p>Create automatic promotions or codes customers enter at checkout.</p></div></div><form class="admin-form promo-form"><div class="admin-form-grid"><label>Code<input name="code" required placeholder="WELCOME10"></label><label>Discount type<select name="discount_type"><option value="percent">Percent</option><option value="fixed">Fixed amount</option></select></label></div><div class="admin-form-grid"><label>Value<input name="value" type="number" min="0" step="0.01" required></label><label>Mode<select name="mode"><option value="manual">Customer enters code</option><option value="auto">Apply automatically</option></select></label></div><div class="admin-form-grid"><label>Starts<input name="starts_at" type="datetime-local"></label><label>Ends<input name="ends_at" type="datetime-local"></label></div><button class="cta">Add promo</button><p data-promo-status role="status"></p></form><div class="admin-list promo-list">${promos.map((promo,index)=>`<article><div><strong>${adminSafe(promo.code||'Automatic promotion')} · ${promo.discount_type==='percent'||promo.type==='percent'?`${Number(promo.value||0)}% off`:`$${Number(promo.value||0).toFixed(2)} off`}</strong><span>${promo.mode==='auto'?'Automatic':'Code required'} · ${promo.active===false?'Inactive':'Active'}</span></div><div><button type="button" data-toggle-promo="${index}">${promo.active===false?'Activate':'Deactivate'}</button><button type="button" data-delete-promo="${index}">Delete</button></div></article>`).join('')||'<div class="admin-empty">No promo codes yet.</div>'}</div>`;
+    panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">MARKETING</p><h2>Promo codes</h2><p>Create automatic promotions or codes customers enter at checkout.</p></div></div><form class="admin-form promo-form"><div class="admin-form-grid"><label>Promotion title<input name="title" required placeholder="Fall Sale"></label><label>Code<input name="code" placeholder="WELCOME10"></label></div><div class="admin-form-grid"><label>Discount type<select name="discount_type"><option value="percent">Percent</option><option value="fixed">Fixed amount</option></select></label><label>Value<input name="value" type="number" min="0" step="0.01" required></label></div><div class="admin-form-grid"><label>Mode<select name="mode"><option value="manual">Customer enters code</option><option value="auto">Apply automatically</option></select></label><label>Starts<input name="starts_at" type="datetime-local"></label></div><div class="admin-form-grid"><label>Ends<input name="ends_at" type="datetime-local"></label><label><span><input name="show_homepage_banner" type="checkbox"> Show a sale banner on the homepage</span></label></div><label><span><input name="create_email_draft" type="checkbox"> Prepare an email draft for all subscribers and member opt-ins</span></label><button class="cta">Add promo</button><p data-promo-status role="status"></p></form><div class="admin-list promo-list">${promos.map((promo,index)=>`<article><div><strong>${adminSafe(promo.title||promo.code||'Promotion')} · ${adminSafe(discountLabel(promo))}</strong><span>${promo.code?`Code ${adminSafe(promo.code)} · `:''}${promo.mode==='auto'?'Automatic':'Code required'} · ${promo.active===false?'Inactive':'Active'}${promo.show_homepage_banner?' · Homepage banner on':''}</span></div><div><button type="button" data-toggle-promo="${index}">${promo.active===false?'Activate':'Deactivate'}</button><button type="button" data-toggle-promo-banner="${index}">${promo.show_homepage_banner?'Hide homepage banner':'Show homepage banner'}</button><button type="button" data-delete-promo="${index}">Delete</button></div></article>`).join('')||'<div class="admin-empty">No promo codes yet.</div>'}</div>`;
     const form=panel.querySelector('form');
     form.addEventListener('submit',async(event)=>{
       event.preventDefault();
       const fields=Object.fromEntries(new FormData(form));
       const status=form.querySelector('[data-promo-status]');
+      const title=String(fields.title||'').trim();
+      const code=String(fields.code||'').trim().toUpperCase();
       const value=Number(fields.value);
-      if(!fields.code.trim()||!Number.isFinite(value)||value<0){status.textContent='Enter a code and a non-negative value.';return;}
-      const promo={code:fields.code.trim().toUpperCase(),discount_type:fields.discount_type,value,mode:fields.mode,active:true,starts_at:fields.starts_at?new Date(fields.starts_at).toISOString():null,ends_at:fields.ends_at?new Date(fields.ends_at).toISOString():null};
+      if(!title||!Number.isFinite(value)||value<0){status.textContent='Enter a promotion title and a non-negative value.';return;}
+      if(fields.mode==='manual'&&!code){status.textContent='Enter a code for a promotion customers enter at checkout.';return;}
+      const promo={title,code:code||null,discount_type:fields.discount_type,value,mode:fields.mode,active:true,starts_at:fields.starts_at?new Date(fields.starts_at).toISOString():null,ends_at:fields.ends_at?new Date(fields.ends_at).toISOString():null,show_homepage_banner:fields.show_homepage_banner==='on'};
       status.textContent='Saving promo…';
-      try{if(cloud){const result=await cloudAdmin().from('promo_codes').insert(promo);if(result.error)throw result.error;promos=await loadCloud();}else{promos.push(promo);saveLocal(promos);}draw();}catch(error){status.textContent=`Promo was not saved: ${error.message||'Unknown error.'}`;}
+      try{
+        let campaignError='';
+        if(cloud){
+          const result=await cloudAdmin().from('promo_codes').insert(promo).select('id,title,code,discount_type,value,mode,active,starts_at,ends_at,show_homepage_banner,created_at').single();
+          if(result.error)throw result.error;
+          if(fields.create_email_draft==='on'){
+            try{
+              const {data:{user}}=await window.beadSupabase.auth.getUser();
+              if(!user?.id)throw new Error('Your admin session has expired. Sign in again.');
+              const campaign=await cloudAdmin().from('email_campaigns').insert({author_id:user.id,subject:`${title} — ${discountLabel(promo)}`,body:draftBody(promo),audience:'all_subscribers_optins',status:'draft'});
+              if(campaign.error)throw campaign.error;
+            }catch(error){campaignError=error.message||'Unknown error.';}
+          }
+          promos=await loadCloud();
+        }else{
+          promos.push(promo);
+          saveLocal(promos);
+          if(fields.create_email_draft==='on')campaignError='Email drafts require the connected store database.';
+        }
+        draw();
+        if(campaignError)panel.querySelector('[data-promo-status]').textContent=`Promo saved, but the email draft was not created: ${campaignError}`;
+      }catch(error){status.textContent=`Promo was not saved: ${error.message||'Unknown error.'}`;}
     });
     panel.querySelectorAll('[data-toggle-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromo)];if(!promo)return;const active=promo.active===false;if(cloud){const result=await cloudAdmin().from('promo_codes').update({active}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not updated: ${result.error.message}`));return;}promos=await loadCloud();}else{promo.active=active;saveLocal(promos);}draw();}));
+    panel.querySelectorAll('[data-toggle-promo-banner]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromoBanner)];if(!promo)return;const show=promo.show_homepage_banner!==true;if(cloud){const result=await cloudAdmin().from('promo_codes').update({show_homepage_banner:show}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo banner was not updated: ${result.error.message}`));return;}promos=await loadCloud();}else{promo.show_homepage_banner=show;saveLocal(promos);}draw();}));
     panel.querySelectorAll('[data-delete-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.deletePromo)];if(!promo)return;if(cloud){const result=await cloudAdmin().from('promo_codes').delete().eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not deleted: ${result.error.message}`));return;}promos=await loadCloud();}else{promos.splice(Number(button.dataset.deletePromo),1);saveLocal(promos);}draw();}));
   };
   draw();
