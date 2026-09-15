@@ -191,6 +191,31 @@ async function sendOrderUpdate(orderId: string) {
   return sendToMany([String(email)], `Order ${orderShortId} update from Bead Different Co.`, body, `order-update/${order.id}/${order.status}/${order.tracking_number || "none"}`, html);
 }
 
+async function sendContactResponse(contactId: string, responseBody: string) {
+  const response = await supabaseRequest(`contact_messages?id=eq.${encodeURIComponent(contactId)}&select=id,email,name,subject,status`);
+  if (!response.ok) throw new Error("Unable to load the contact message.");
+  const messages = await response.json();
+  const message = messages[0];
+  const email = String(message?.email || "").trim().toLowerCase();
+  if (!message) throw new Error("Contact message not found.");
+  if (!emailPattern.test(email)) throw new Error("The contact message does not have a valid reply email.");
+  const body = textValue(responseBody, 10000);
+  if (!body) throw new Error("A reply message is required.");
+  const subject = message.subject ? `Re: ${textValue(message.subject, 160)}` : "Reply from Bead Different Co.";
+  const greeting = message.name ? `Hello ${textValue(message.name, 160)},` : "Hello,";
+  const fullBody = `${greeting}\n\n${body}\n\nThank you,\nBead Different Co.`;
+  const html = brandedHtml(subject, `<p>${escapeHtml(greeting)}</p><div style="padding:18px 20px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:12px;font-size:16px;line-height:1.7">${textToHtml(body)}</div>`);
+  const result = await sendToMany([email], subject, fullBody, `contact-response/${message.id}/${crypto.randomUUID()}`, html);
+  if (result.failures.length) throw new Error(result.failures[0]);
+  const update = await supabaseRequest(`contact_messages?id=eq.${encodeURIComponent(message.id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ admin_response: body, status: "responded", responded_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+  });
+  if (!update.ok) throw new Error("The reply was sent, but the contact message could not be updated.");
+  return { sent: 1, contactId: message.id };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
@@ -220,6 +245,12 @@ Deno.serve(async (request) => {
       const orderId = textValue(payload.orderId, 80);
       if (!orderId) return json({ error: "Order id is required." }, 400);
       return json(await sendOrderUpdate(orderId));
+    }
+    if (action === "contact_response") {
+      const contactId = textValue(payload.contactId, 80);
+      const body = textValue(payload.body, 10000);
+      if (!contactId || !body) return json({ error: "Contact message id and reply are required." }, 400);
+      return json(await sendContactResponse(contactId, body));
     }
     return json({ error: "Unsupported email action." }, 400);
   } catch (error) {

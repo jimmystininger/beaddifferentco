@@ -33,7 +33,33 @@ const ensureHeaderSupabase=()=>{if(window.beadSupabaseReady)return window.beadSu
 window.siteSettingsReady=(async()=>{try{await cloudCategoriesReady;const client=window.beadSupabase;if(!client)return null;const {data,error}=await client.rpc('get_storefront_shipping_settings');if(error)return null;const value=data||{};const config=window.productStoreConfig||{};Object.assign(config,value);window.productStoreConfig=config;window.updateAnnouncementBar({freeShippingThreshold:value.freeShippingThreshold,smallBusiness:value.smallBusinessMessage,bigCreativity:value.bigCreativityMessage});window.siteShippingSettings={shippingPolicy:value.shippingPolicy||''};const policy=document.querySelector('[data-shipping-policy]');if(policy)policy.innerHTML=window.sanitizeRichText(window.siteShippingSettings.shippingPolicy||'Shipping options and delivery estimates are shown at checkout. Please contact us if your order arrives with a problem so we can help.');return value;}catch(error){return null;}})();
 const canonicalShippingPolicyFallback='Shipping options and delivery estimates are shown at checkout. Please contact us if your order arrives with a problem so we can help.';
 window.canonicalShippingPolicy=()=>{if(window.siteShippingSettings?.shippingPolicy)return window.siteShippingSettings.shippingPolicy;try{const settings=JSON.parse(localStorage.getItem('beadDifferentAdminData')||'{}').settings||{};if(settings.shippingPolicy)return settings.shippingPolicy;}catch(error){}return canonicalShippingPolicyFallback;};
-window.renderCanonicalShippingPolicies=()=>{document.querySelectorAll('[data-shipping-policy]').forEach((element)=>{element.innerHTML=window.sanitizeRichText(window.canonicalShippingPolicy());});};
+window.renderCanonicalShippingPolicies=()=>{document.querySelectorAll('[data-shipping-policy]').forEach((element)=>{element.innerHTML=window.sanitizeRichText(window.canonicalShippingPolicy());const link=document.createElement('a');link.className='full-shipping-policy-link';link.href='shipping-returns.html';link.textContent='View the full Shipping & Returns policy';element.append(document.createElement('br'),link);});};
+const shippingPolicyObserver=new MutationObserver(()=>{const policyElements=[...document.querySelectorAll('[data-shipping-policy]')];if(policyElements.some((element)=>!element.querySelector('.full-shipping-policy-link')))window.renderCanonicalShippingPolicies();});
+shippingPolicyObserver.observe(document.body,{childList:true,subtree:true});
 window.siteSettingsReady.then(()=>window.renderCanonicalShippingPolicies());
 window.siteSettingsReady.then((value)=>window.applyStoreTheme(value?.theme,value?.heroUrl,value?.categoryPhotos,value?.logoUrl,value?.storyUrl,value?.pageBackgroundImageUrl,value?.footerLogoUrl));
 window.addEventListener('bead-categories-ready',()=>{const selected=new URLSearchParams(location.search).get('category')||'';document.querySelectorAll('.store-nav a[data-category-slug]').forEach((link)=>{if(link.dataset.categorySlug===selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});});
+
+const safeExternalUrl=(value)=>{const raw=String(value||'').trim();if(!raw)return'';try{const parsed=new URL(raw,window.location.href);return ['http:','https:'].includes(parsed.protocol)?parsed.href.replace(/["\\)]/g,''):'';}catch(error){return'';}};
+window.applyStoreContent=(source={})=>{
+  const value=source&&typeof source==='object'?source:{};
+  const links=value.socialLinks&&typeof value.socialLinks==='object'?value.socialLinks:{};
+  const platforms=['facebook','instagram','tiktok','pinterest','youtube'];
+  document.querySelectorAll('.social-links a').forEach((anchor,index)=>{
+    const platform=anchor.getAttribute('aria-label')?.toLowerCase()||platforms[index]||'';
+    const url=safeExternalUrl(links[platform]);
+    anchor.hidden=!url;
+    if(url){anchor.href=url;anchor.target='_blank';anchor.rel='noreferrer';}
+  });
+  document.querySelectorAll('[data-contact-email]').forEach((element)=>{
+    const email=String(value.contactEmail||'').trim();
+    element.textContent=email;
+    element.hidden=!email;
+    if(email)element.href=`mailto:${encodeURIComponent(email)}`;
+  });
+};
+window.siteSettingsReady.then((value)=>{
+  let source=value||{};
+  if(!Object.keys(source).length){try{source=JSON.parse(localStorage.getItem('beadDifferentProductConfig')||'{}');}catch(error){source={};}}
+  window.applyStoreContent(source);
+});

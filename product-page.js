@@ -133,15 +133,65 @@ async function hydrateProductReviews(item){
   if(!section)return;
   let reviews=[];
   if(window.beadSupabase&&item.databaseId){
-    const result=await window.beadSupabase.from('reviews').select('rating,body,verified_purchase,created_at').eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false}).range(0,9);
+    const result=await window.beadSupabase.from('reviews').select('rating,body,verified_purchase,created_at').eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false});
     if(result.error)return;
     reviews=result.data||[];
   }else if(window.reviewTools){
     reviews=window.reviewTools.read().filter((review)=>review.productId===item.id&&review.status==='approved');
   }
+  const ratingFor=(review)=>Math.max(0,Math.min(5,Math.round(Number(review.rating)||0)));
+  const starsFor=(review)=>'★'.repeat(ratingFor(review))+'☆'.repeat(5-ratingFor(review));
+  const dateFor=(review)=>{const date=new Date(review.created_at||review.createdAt||'');return Number.isNaN(date.getTime())?'Date unavailable':date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});};
+  const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
   const average=reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0;
-  section.innerHTML=`<h2>Reviews${reviews.length?` · ${average.toFixed(1)}/5`:''}</h2>${reviews.map((review)=>`<article class="product-review"><strong>${'★'.repeat(Number(review.rating)||0)}${'☆'.repeat(5-(Number(review.rating)||0))}</strong><p>${productPageEscape(review.body)}</p><small>${review.verified_purchase?'Verified purchase · ':''}${new Date(review.created_at||Date.now()).toLocaleDateString()}</small></article>`).join('')||'<p>No approved reviews yet.</p>'}`;
+  if(!reviews.length){section.innerHTML='<h2>Reviews</h2><p>No approved reviews yet.</p>';return;}
+  const reviewCount=`${reviews.length} review${reviews.length===1?'':'s'}`;
+  section.innerHTML=`<div class="product-review-summary"><button type="button" class="product-review-summary-trigger" aria-haspopup="dialog"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span><span><strong>${average.toFixed(1)}/5</strong> · ${reviewCount}</span><span class="product-review-summary-link">Read reviews →</span></button></div><div class="product-review-list"><h2>Reviews · ${average.toFixed(1)}/5</h2>${reviews.map(reviewMarkup).join('')}</div>`;
+  const dialog=document.createElement('dialog');
+  dialog.className='product-reviews-dialog';
+  dialog.setAttribute('aria-labelledby','product-reviews-dialog-title');
+  dialog.innerHTML=`<button type="button" class="product-reviews-dialog-close" data-close-product-reviews aria-label="Close reviews">×</button><div class="product-reviews-dialog-content"><p class="kicker">CUSTOMER FEEDBACK</p><h2 id="product-reviews-dialog-title">Reviews · ${average.toFixed(1)}/5</h2><p class="product-reviews-dialog-summary"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span> ${reviewCount}</p><div class="product-review-dialog-list">${reviews.map(reviewMarkup).join('')}</div></div>`;
+  section.append(dialog);
+  const closeDialog=()=>typeof dialog.close==='function'?dialog.close():dialog.removeAttribute('open');
+  section.querySelector('.product-review-summary-trigger').addEventListener('click',()=>{if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');});
+  dialog.querySelector('[data-close-product-reviews]').addEventListener('click',closeDialog);
+  dialog.addEventListener('click',(event)=>{if(event.target===dialog)closeDialog();});
 }
+
+function applyProductSaleContext(item){
+  const params=new URLSearchParams(location.search);
+  if(params.get('sale')!=='1')return;
+  const main=document.querySelector('.product-detail-page');
+  if(!main||main.dataset.saleContextReady)return;
+  main.dataset.saleContextReady='true';
+  const normalize=(value)=>String(value||'').trim().toLowerCase();
+  const eligible=(value)=>{const sku=String(value?.sku||value?.inventorySku||'').trim();return sku&&window.storefrontPromoForSku?.(item,Number(value?.price??item.price)||0,sku)?.discounted===true;};
+  main.querySelectorAll('[data-option-index]').forEach((select,index)=>{
+    const option=item.options?.[index];
+    [...select.options].forEach((choice)=>{
+      if(!choice.value)return;
+      const value=(option?.values||[]).find((candidate)=>typeof candidate==='object'&&String(candidate.label||'')===choice.value);
+      if(value&&!eligible(value))choice.remove();
+    });
+  });
+  const compactColor=main.querySelector('[data-compact-color]');
+  const compactPack=main.querySelector('[data-compact-pack]');
+  const compactSpecial=main.querySelector('[data-compact-special]');
+  const compactValues=(item.options?.length===1?(item.options[0].values||[]):[]).filter((value)=>typeof value==='object'&&String(value.sku||value.inventorySku||'').trim());
+  const compactEntries=compactValues.map((value)=>{const sku=String(value.sku||value.inventorySku||'').trim();const match=sku.match(/-(\d+)PK$/i);const label=String(value.label||sku);return{value,sku,colorKey:sku.replace(/-(\d+)PK$/i,'').toUpperCase(),colorLabel:label.replace(/\s*[-–—]?\s*\(?\d+\s*(?:pack|pk)\)?\s*$/i,'').trim()||label,packCount:match?Number(match[1]):0};});
+  const eligibleCompact=compactEntries.filter((entry)=>eligible(entry.value));
+  if(compactColor&&eligibleCompact.length){[...compactColor.options].forEach((choice)=>{if(choice.value&&!eligibleCompact.some((entry)=>entry.colorKey===choice.value))choice.remove();});}
+  if(compactSpecial){[...compactSpecial.options].forEach((choice)=>{if(choice.value&&!eligibleCompact.some((entry)=>entry.sku===choice.value))choice.remove();});}
+  const syncCompactSaleOptions=()=>{if(!compactPack||!compactColor)return;const color=compactColor.value;[...compactPack.options].forEach((choice)=>{if(!choice.value)return;choice.disabled=!eligibleCompact.some((entry)=>entry.colorKey===color&&entry.packCount===Number(choice.value));});if(compactPack.selectedOptions[0]?.disabled)compactPack.value='';};
+  compactColor?.addEventListener('change',syncCompactSaleOptions);syncCompactSaleOptions();
+  const requestedSku=normalize(params.get('sku'));
+  if(!requestedSku)return;
+  if(compactColor&&compactPack){const entry=eligibleCompact.find((candidate)=>normalize(candidate.sku)===requestedSku);if(entry){if(entry.packCount===0&&compactSpecial){compactSpecial.value=entry.sku;compactColor.value='';compactPack.value='';compactSpecial.dispatchEvent(new Event('change'));}else{if(compactSpecial)compactSpecial.value='';compactColor.value=entry.colorKey;syncCompactSaleOptions();compactPack.value=String(entry.packCount);compactColor.dispatchEvent(new Event('change'));compactPack.value=String(entry.packCount);}}}
+  else{main.querySelectorAll('[data-option-index]').forEach((select,index)=>{const value=(item.options?.[index]?.values||[]).find((candidate)=>typeof candidate==='object'&&normalize(candidate.sku||candidate.inventorySku)===requestedSku);if(value)select.value=value.label;});main.querySelector('[data-option-index]')?.dispatchEvent(new Event('change'));}
+}
+
+const productSaleContextObserver=new MutationObserver(()=>{const itemId=new URLSearchParams(location.search).get('id');const item=typeof findProduct==='function'?findProduct(itemId):null;if(item)applyProductSaleContext(item);});
+productSaleContextObserver.observe(document.querySelector('main'),{childList:true});
 
 catalogReady.then(async()=>{
   const productId=new URLSearchParams(location.search).get('id');
