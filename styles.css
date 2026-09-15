@@ -646,3 +646,4 @@ body[data-page="Admin"] .admin-default-hero-form>img[hidden]{display:none}
 body[data-page="Admin"] .admin-default-hero-form>.admin-actions{grid-column:1;grid-row:2;display:flex;flex-wrap:wrap;gap:10px;margin:0}
 body[data-page="Admin"] .admin-default-hero-form>p{grid-column:1;grid-row:3;margin:0}
 @media(max-width:700px){body[data-page="Admin"] .admin-default-hero-form{grid-template-columns:1fr}body[data-page="Admin"] .admin-default-hero-form>label,body[data-page="Admin"] .admin-default-hero-form>img,body[data-page="Admin"] .admin-default-hero-form>.admin-actions,body[data-page="Admin"] .admin-default-hero-form>p{grid-column:1;grid-row:auto}body[data-page="Admin"] .admin-default-hero-form>img{max-width:320px}}
+body:not([data-theme-ready="true"]) .hero,body:not([data-theme-ready="true"]) .story-bar{visibility:hidden}
