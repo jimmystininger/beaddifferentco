@@ -521,7 +521,7 @@ body[data-page="Admin"] .admin-sku-filter-editor{grid-column:1 / -1;margin:0;pad
 .product-page-media>.product-page-badges .product-badge{position:static!important;inset:auto!important;transform:none!important;display:inline-flex;flex:0 1 auto;align-items:center;max-width:100%;min-width:0;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;line-height:1.2}
 .product-card-image-wrap .product-card-image{display:block;width:100%;height:auto;aspect-ratio:1/1;object-fit:cover}
 .product-page-stock-status-in-stock{display:none!important}
-.product-badge:not(.product-badge-on-sale):not(.product-badge-clearance):not(.product-badge-low-stock):not(.product-badge-out-of-stock){background:var(--site-banner-color,#e482a4)!important;color:var(--site-header-text-color,#111)!important}
+.product-badge:not(.product-badge-on-sale):not(.product-badge-clearance):not(.product-badge-low-stock):not(.product-badge-out-of-stock):not(.badge-on-sale):not(.badge-clearance):not(.badge-low-stock):not(.badge-out-of-stock){background:var(--site-banner-color,#e482a4)!important;color:var(--site-header-text-color,#111)!important}
 .admin-badge-option:not(.admin-badge-option-on-sale):not(.admin-badge-option-clearance):not(.admin-badge-option-low-stock):not(.admin-badge-option-out-of-stock) .product-badge{background:var(--site-banner-color,#e482a4)!important;color:var(--site-header-text-color,#111)!important}
 .category-filter{display:inline-flex;align-items:center;gap:7px}
 .admin-category-filter-add{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:stretch}
@@ -647,3 +647,38 @@ body[data-page="Admin"] .admin-default-hero-form>.admin-actions{grid-column:1;gr
 body[data-page="Admin"] .admin-default-hero-form>p{grid-column:1;grid-row:3;margin:0}
 @media(max-width:700px){body[data-page="Admin"] .admin-default-hero-form{grid-template-columns:1fr}body[data-page="Admin"] .admin-default-hero-form>label,body[data-page="Admin"] .admin-default-hero-form>img,body[data-page="Admin"] .admin-default-hero-form>.admin-actions,body[data-page="Admin"] .admin-default-hero-form>p{grid-column:1;grid-row:auto}body[data-page="Admin"] .admin-default-hero-form>img{max-width:320px}}
 body:not([data-theme-ready="true"]) .hero,body:not([data-theme-ready="true"]) .story-bar{visibility:hidden}
+.admin-sku-picker{display:grid;grid-template-columns:minmax(0,1fr) 30px;gap:5px;align-items:stretch}.admin-sku-picker input{width:100%!important;min-width:0!important}.admin-sku-help{width:30px!important;min-width:30px!important;padding:0!important;border-radius:50%;font-size:14px!important;font-weight:700;line-height:1}.admin-sku-suggestions{position:relative;z-index:30;display:grid;gap:2px;grid-column:1 / -1;max-height:220px;overflow-y:auto;margin-top:3px;padding:4px;border:1px solid #bbb;border-radius:6px;background:var(--site-page-background-color,#fffdfb);box-shadow:0 5px 14px rgb(0 0 0 / 18%)}.admin-sku-suggestions[hidden]{display:none}.admin-sku-suggestion{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px;width:100%;padding:7px 8px;border:0;border-radius:4px;background:transparent;text-align:left;font-size:12px;cursor:pointer}.admin-sku-suggestion:hover,.admin-sku-suggestion:focus-visible{background:var(--site-accent-background-color,#f8e9ee)}.admin-sku-suggestion span{overflow:hidden;color:#666;text-overflow:ellipsis;white-space:nowrap}.admin-sku-suggestion-status{padding:7px 8px;color:#666;font-size:12px}
+.admin-stat-grid{grid-template-columns:repeat(5,1fr)}.admin-manual-allocation-list{align-items:stretch}.admin-manual-allocation{display:block}.admin-manual-allocation .admin-heading{margin-bottom:16px}.admin-manual-allocation h4{margin:0;font-size:18px}.admin-manual-child-row{display:grid;grid-template-columns:minmax(220px,1fr) 140px auto;gap:12px;align-items:end;padding:12px 0;border-top:1px solid #eee}.admin-manual-child-row label{display:grid;gap:7px;font-weight:700;font-size:14px}.admin-manual-child-row select,.admin-manual-child-row input{font:inherit;border:1px solid #aaa;border-radius:5px;padding:11px;background:#fff}.admin-manual-child-row button{border:1px solid #aaa;background:#fff;border-radius:22px;padding:10px 16px;cursor:pointer}.admin-manual-allocation .admin-actions{margin-top:12px;align-items:center}.admin-manual-allocation .admin-actions span{color:#666;font-size:13px}
+@media(max-width:1100px){.admin-stat-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:800px){.admin-stat-grid{grid-template-columns:1fr 1fr}.admin-manual-child-row{grid-template-columns:1fr}.admin-manual-child-row button{justify-self:start}}
+.product-options-compact{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
+.product-options:has(.product-options-compact){width:100%}
+.product-options-compact .product-option{width:auto;max-width:100%;margin:0}
+.product-options-compact .product-option select{width:100%;min-width:0;max-width:100%}
+.product-options-compact .product-option-special{grid-column:1 / -1}
+.product-options-compact .product-option-availability{grid-column:1 / -1;margin:0;color:var(--site-general-text-color,#666);font-size:.92em}
+@media(max-width:700px){.product-options-compact{grid-template-columns:1fr}.product-options-compact .product-option-special,.product-options-compact .product-option-availability{grid-column:auto}}
+body[data-page="Admin"] .admin-badge-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:start}
+body[data-page="Admin"] .admin-badge-picker>legend{grid-column:1 / -1}
+body[data-page="Admin"] .admin-badge-group{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;padding:12px;border:1px solid var(--site-border-color,#ddd);border-radius:10px;background:var(--site-accent-background-color,#fff8fa)}
+body[data-page="Admin"] .admin-badge-group h4{flex:0 0 100%;margin:0 0 2px}
+body[data-page="Admin"] .admin-badge-option{display:inline-flex!important;width:max-content!important;max-width:100%;min-width:0!important;align-items:center!important;gap:5px!important;padding:0!important;background:transparent!important}
+body[data-page="Admin"] .admin-badge-option .product-badge{display:inline-flex;width:auto;max-width:100%;white-space:nowrap}
+body[data-page="Admin"] .admin-badge-option input{width:auto!important;min-width:16px;flex:0 0 auto;margin:0}
+body[data-page="Admin"] .admin-badge-group-inventory-status .admin-badge-option{display:inline-flex!important}
+body[data-page="Admin"] .admin-recipe-component-summary{grid-column:1 / -1;padding:10px 12px;border:1px solid color-mix(in srgb,var(--site-header-text-color,#111) 16%,var(--site-page-background-color,#fff) 84%);border-radius:8px;background:var(--site-accent-background-color,#fff8fa);color:var(--site-header-text-color,#111)}
+body[data-page="Admin"] .admin-recipe-component-summary strong{display:block;margin-bottom:6px;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+body[data-page="Admin"] .admin-recipe-component-summary ul{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+body[data-page="Admin"] .admin-recipe-component-summary li{display:flex;justify-content:space-between;gap:12px;min-width:0}
+body[data-page="Admin"] .admin-recipe-component-summary code{font-size:11px;overflow-wrap:anywhere}
+body[data-page="Admin"] .admin-recipe-component-summary small{display:block;margin-top:7px;color:color-mix(in srgb,var(--site-header-text-color,#111) 65%,var(--site-page-background-color,#fff) 35%)}
+.product-badge-on-sale,.admin-badge-option-on-sale .product-badge{background:#f6b544!important;color:#3b2200!important}
+.product-badge-clearance,.admin-badge-option-clearance .product-badge{background:#e64c5f!important;color:#fff!important}
+.product-badge-low-stock,.admin-badge-option-low-stock .product-badge{background:#ee8c2f!important;color:#2f1600!important}
+.product-badge-out-of-stock,.admin-badge-option-out-of-stock .product-badge{background:#444!important;color:#fff!important}
+.badge-on-sale{background:#f6b544!important;color:#3b2200!important}
+.badge-clearance{background:#e64c5f!important;color:#fff!important}
+.badge-low-stock{background:#ee8c2f!important;color:#2f1600!important}
+.badge-out-of-stock{background:#444!important;color:#fff!important}
+.admin-badge-option-clearance{background:#fff!important;color:#111!important}
+.admin-badge-option-clearance .badge-clearance{background:#e64c5f!important;color:#fff!important}
