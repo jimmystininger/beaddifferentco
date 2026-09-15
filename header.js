@@ -36,3 +36,4 @@ window.canonicalShippingPolicy=()=>{if(window.siteShippingSettings?.shippingPoli
 window.renderCanonicalShippingPolicies=()=>{document.querySelectorAll('[data-shipping-policy]').forEach((element)=>{element.innerHTML=window.sanitizeRichText(window.canonicalShippingPolicy());});};
 window.siteSettingsReady.then(()=>window.renderCanonicalShippingPolicies());
 window.siteSettingsReady.then((value)=>window.applyStoreTheme(value?.theme,value?.heroUrl,value?.categoryPhotos,value?.logoUrl,value?.storyUrl,value?.pageBackgroundImageUrl,value?.footerLogoUrl));
+window.addEventListener('bead-categories-ready',()=>{const selected=new URLSearchParams(location.search).get('category')||'';document.querySelectorAll('.store-nav a[data-category-slug]').forEach((link)=>{if(link.dataset.categorySlug===selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});});

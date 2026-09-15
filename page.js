@@ -122,9 +122,14 @@ const syncCheckoutAccountField=(form)=>{
   const existing=form.querySelector('.checkout-customer-email');
   if(account){
     existing?.remove();
-    const note=form.querySelector('.checkout-signin-note');
-    if(note)note.textContent=`Signed in as ${account.email||account.name||'your account'}. Guest checkout is also available.`;
+    form.querySelector('.checkout-signin-note')?.remove();
     return account;
+  }
+  let note=form.querySelector('.checkout-signin-note');
+  if(!note){
+    note=document.createElement('p');
+    note.className='checkout-signin-note';
+    form.querySelector('.checkout-shipping h3')?.after(note);
   }
   if(!existing){
     const wrapper=document.createElement('label');
@@ -132,8 +137,7 @@ const syncCheckoutAccountField=(form)=>{
     wrapper.innerHTML='Email for order updates<input name="customer_email" type="email" autocomplete="email" required placeholder="you@example.com">';
     form.querySelector('.checkout-signin-note')?.after(wrapper);
   }
-  const note=form.querySelector('.checkout-signin-note');
-  if(note)note.innerHTML='Sign in to track orders and save your address. Guest checkout is available; order updates are sent by email. <a href="account.html">Sign in</a>.';
+  note.innerHTML='Sign in to track orders and save your address. Guest checkout is available; order updates are sent by email. <a href="account.html">Sign in</a>.';
   return null;
 };
 
