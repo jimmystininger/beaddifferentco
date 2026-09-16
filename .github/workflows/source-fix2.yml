@@ -1,0 +1,13 @@
+name: Source fix runner test
+
+"on":
+  push:
+    branches:
+      - fix/etsy-historical-source-handler
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo source-fix-runner-ok
