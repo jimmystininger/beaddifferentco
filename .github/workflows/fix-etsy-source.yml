@@ -1,0 +1,115 @@
+name: Apply Etsy historical source fix
+
+on:
+  push:
+    branches:
+      - fix/etsy-historical-source-handler
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Replace obsolete historical handler at the source
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import subprocess
+
+          admin = Path('admin.js')
+          text = admin.read_text(encoding='utf-8')
+          pattern = r"  const importThreeYears=async\(\)=>\{.*?\};\n  const importAllReviews"
+          replacement = r'''  const importThreeYears=async()=>{
+    if(!window.confirm('Import every Etsy order from the last three years? Already staged historical date windows will be skipped. Inventory, recipes, and Etsy Flags will NOT be changed by this historical import.'))return;
+    setImportButtons(true);
+    let stagedLines=0,stagedBatches=0,skippedWindows=0;
+    const day=86400,end=Math.floor(Date.now()/1000),start=Math.floor(new Date(new Date().setFullYear(new Date().getFullYear()-3)).getTime()/1000);
+    const historical=async(body)=>{
+      const r=await client.functions.invoke('etsy-historical',{body:{action:'preview_orders',...body}});
+      if(r.data?.error)throw new Error(r.data.error);
+      if(r.error){
+        let detail='';
+        try{
+          const context=r.error.context;
+          if(context){
+            const response=typeof context.clone==='function'?context.clone():context;
+            const bodyText=typeof response.text==='function'?await response.text():'';
+            if(bodyText){try{detail=JSON.parse(bodyText)?.error||bodyText;}catch(_){detail=bodyText;}}
+          }
+        }catch(_){ }
+        throw new Error(detail||r.error.message||'Unable to reach the historical Etsy importer.');
+      }
+      if(!r.data)throw new Error('Historical Etsy importer returned no data.');
+      return r.data;
+    };
+    const loadStagedWindows=async()=>{
+      const result=await client.from('etsy_import_batches').select('payload').eq('kind','orders').not('staged_at','is',null);
+      if(result.error)throw result.error;
+      const windows=new Set();
+      (result.data||[]).forEach(row=>{
+        const payload=row?.payload;
+        if(payload?.historical!==true)return;
+        const window=payload?.historical_window;
+        if(!window)return;
+        const min=Number(window.min_created),max=Number(window.max_created);
+        if(Number.isFinite(min)&&Number.isFinite(max)&&max>min)windows.add(min+':'+max);
+      });
+      return windows;
+    };
+    try{
+      const stagedWindows=await loadStagedWindows();
+      const processWindow=async(min,max)=>{
+        const key=min+':'+max;
+        if(stagedWindows.has(key)){skippedWindows++;return;}
+        const probe=await historical({min_created:min,max_created:max,offset:0,probe:true});
+        const count=Number(probe.total_receipts)||0;
+        if(!count)return;
+        if(count>11975){const mid=Math.floor((min+max)/2);await processWindow(min,mid);await processWindow(mid,max);return;}
+        let offset=0;
+        while(true){
+          status.textContent='Staging Etsy history: '+new Date(min*1000).toLocaleDateString()+'–'+new Date(max*1000).toLocaleDateString()+' · '+(offset+1)+'+';
+          const preview=await historical({min_created:min,max_created:max,offset});
+          if(!preview.receipts)break;
+          stagedBatches++;stagedLines+=Number(preview.sales)||0;
+          if(!preview.has_more)break;
+          offset=preview.next_offset;
+        }
+        stagedWindows.add(key);
+      };
+      let cursor=start;const windowSize=30*day;
+      while(cursor<end){const max=Math.min(end,cursor+windowSize);await processWindow(cursor,max);cursor=max;}
+      status.textContent='Historical Etsy staging finished: '+stagedLines+' new sale lines in '+stagedBatches+' staged batches. Skipped '+skippedWindows+' already-staged windows. Nothing has been applied to inventory.';
+    }catch(error){
+      status.textContent=(error.message||'Historical import stopped.')+' Staged so far: '+stagedLines+' sale lines in '+stagedBatches+' batches. Skipped '+skippedWindows+' already-staged windows.';
+    }finally{setImportButtons(false);}
+  };
+  const importAllReviews'''
+          new_text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('Could not find the obsolete importThreeYears source handler.')
+          admin.write_text(new_text, encoding='utf-8')
+
+          html = Path('admin.html')
+          html_text = html.read_text(encoding='utf-8')
+          html_text, html_count = re.subn(r'\s*<script[^>]+src=["\']/admin-etsy-historical-v3\.js[^>]*></script>', '', html_text, count=1)
+          if html_count != 1:
+              raise SystemExit('Could not find the obsolete historical script include.')
+          html.write_text(html_text, encoding='utf-8')
+
+          Path('admin-etsy-historical-v3.js').unlink(missing_ok=False)
+
+      - name: Commit source fix and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add admin.js admin.html admin-etsy-historical-v3.js
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: make Etsy historical import staging-only at source"
+          git push origin HEAD:fix/etsy-historical-source-handler
