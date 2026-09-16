@@ -34,3 +34,11 @@ Automatic signup confirmation, password recovery, order confirmation, order/trac
 Campaign drafts support all subscribers and member opt-ins, member opt-ins only, non-member subscribers only, or waitlisted customers. When a newsletter subscriber email matches a registered profile, the database links the records by email and activates that member's marketing opt-in. Declining marketing opt-in removes the matching footer-subscriber record as well.
 
 Product records also support admin-managed estimated cost, low-stock thresholds, and searchable badge labels. The admin inventory section supports stock additions, a low-stock print view, and a spreadsheet-ready CSV export; sales totals remain dependent on populated order data.
+
+### Etsy connection
+
+The `etsy-connect` Edge Function provides administrator-only OAuth start, status, verification and disconnect actions. Its GET callback uses expiring, single-use state and PKCE, so deploy it with `verify_jwt=false`; POST actions independently validate the user's Supabase session and active admin profile. Set `ETSY_API_KEY` (Etsy keystring) and `ETSY_SHARED_SECRET` in Edge Function secrets. Never put them in browser code.
+
+Register `https://zejcuqhihbfpuwsjvmhc.supabase.co/functions/v1/etsy-connect/callback` exactly as the redirect URI in Etsy. After the frontend is released, use **Store Control → Etsy connection → Connect Etsy**. The callback returns to the admin origin that initiated the connection. Access is read-only (`shops_r listings_r transactions_r`). Verification refreshes expired tokens and reads one receipt to check access; it does not import orders or change inventory.
+
+The OAuth tables have RLS enabled and all browser-role privileges revoked, intentionally with no browser policies. Only the backend service role can access tokens. Disconnect removes stored tokens and outstanding authorization attempts; Etsy-side authorization can also be revoked in the Etsy account. The backend and migration are deployed; the admin UI remains local pending release, and real OAuth consent/verification is still outstanding.

@@ -173,7 +173,7 @@ setInterval(()=>{void dispatchRestockNotifications();},15000);
 setTimeout(()=>{void dispatchRestockNotifications();},1000);
 const panel=document.querySelector('#admin-panel');
 const adminUrlParams=new URLSearchParams(location.search);
-let activeTab=adminUrlParams.has('member')?'members':adminUrlParams.has('inventory')?'inventory':(adminUrlParams.has('edit')||adminUrlParams.get('new')==='item'?'items':'overview');
+let activeTab=adminUrlParams.has('etsy')?'etsy':adminUrlParams.has('member')?'members':adminUrlParams.has('inventory')?'inventory':(adminUrlParams.has('edit')||adminUrlParams.get('new')==='item'?'items':'overview');
 let selectedMemberId=new URLSearchParams(location.search).get('member')||'';
 let memberCreatedAfter=null;let memberView='all';let memberPage=1;let orderView='unprocessed';let orderPage=1;const adminPageSize=25;let reviewView='new';let subscriberPage=1;let expensePage=1;
 function adminCatalog(){const data=adminData();const base=typeof catalog==='undefined'?[]:catalog.filter((item)=>!data.deletedProducts.includes(item.id));const custom=Object.entries(data.products).filter(([id])=>!catalog.some((item)=>item.id===id)&&!data.deletedProducts.includes(id)).map(([id,product])=>({id,name:product.name||id,price:Number(product.price)||0,quantity:Number(product.quantity)||0,description:product.description||'',category:product.category||'uncategorized',image:(product.photos||'').split(/\s*[,\r\n]\s*/)[0]||'product-mix.jpg'}));return [...base,...custom];}
@@ -950,9 +950,37 @@ const renderContactMessages=async()=>{
   panel.querySelectorAll('[data-contact-close]').forEach((button)=>button.addEventListener('click',async()=>{button.disabled=true;const update=await cloudAdmin().from('contact_messages').update({status:'closed',updated_at:new Date().toISOString()}).eq('id',button.dataset.contactClose);if(update.error){button.disabled=false;return;}await renderContactMessages();}));
 };
 const withAdminTimeout=(request,label)=>Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out. Check that the required Supabase migrations are applied.')),adminRequestTimeoutMs))]);
+async function renderEtsyConnection(){
+  const root=document.createElement('section');root.className='admin-card';
+  root.innerHTML='<p class="kicker">SHOP CONNECTION</p><h2>Etsy</h2><p>Connect your Etsy shop for read-only access to shop details, listings and orders. Automatic imports and inventory syncing are not enabled.</p><p data-etsy-status role="status">Checking connection…</p><p>Register this exact callback URL in your Etsy app settings:</p><p><code data-etsy-callback></code></p><div class="admin-actions"><button type="button" data-etsy-connect disabled>Connect Etsy</button><button type="button" data-etsy-verify hidden>Verify connection</button><button type="button" data-etsy-disconnect hidden>Disconnect</button></div><p class="inventory-help">The term “Etsy” is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.</p>';
+  panel.replaceChildren(root);
+  const status=root.querySelector('[data-etsy-status]'),connect=root.querySelector('[data-etsy-connect]'),verify=root.querySelector('[data-etsy-verify]'),disconnect=root.querySelector('[data-etsy-disconnect]');
+  const client=cloudAdmin();
+  root.querySelector('[data-etsy-callback]').textContent='https://zejcuqhihbfpuwsjvmhc.supabase.co/functions/v1/etsy-connect/callback';
+  const call=async(action)=>{
+    if(!client)throw new Error('Please sign in to your administrator account.');
+    const {data,error}=await client.functions.invoke('etsy-connect',{body:{action}});
+    if(error){let detail;try{detail=await error.context?.json();}catch(parseError){}throw new Error(detail?.error||'Unable to reach the Etsy connection service.');}
+    if(data?.error)throw new Error(data.error);
+    return data;
+  };
+  const display=(data)=>{
+    status.textContent=data.connected?'Connected to '+data.shop_name+' (shop '+data.shop_id+'). Last verified: '+new Date(data.verified_at).toLocaleString()+'.':'No Etsy shop connected.';
+    connect.textContent=data.connected?'Reconnect Etsy':'Connect Etsy';connect.disabled=false;
+    verify.hidden=disconnect.hidden=!data.connected;
+  };
+  const busy=(value)=>root.querySelectorAll('button').forEach((button)=>{button.disabled=value;});
+  const callbackResult=adminUrlParams.get('etsy');
+  const notices={connected:'Etsy authorization completed.',denied:'Etsy access was declined. You can try again.',failed:'Etsy authorization could not be completed. Check your app settings and reconnect.','wrong-shop':'That account owns a different shop. Disconnect the existing shop first if you intend to replace it.'};
+  try{display(await call('status'));if(notices[callbackResult])status.textContent=notices[callbackResult]+' '+status.textContent;}catch(error){status.textContent=error.message;}
+  connect.onclick=async()=>{busy(true);status.textContent='Opening Etsy authorization…';try{const result=await call('start');const url=new URL(result.authorize_url);if(url.origin!=='https://www.etsy.com'||url.pathname!=='/oauth/connect')throw new Error('Invalid Etsy authorization address.');window.location.assign(url.href);}catch(error){status.textContent=error.message;busy(false);}};
+  verify.onclick=async()=>{busy(true);status.textContent='Verifying access with Etsy…';try{display(await call('verify'));}catch(error){status.textContent=error.message;}finally{busy(false);}};
+  disconnect.onclick=async()=>{if(!window.confirm('Disconnect this Etsy shop? Stored connection tokens will be removed; existing imported data stays.'))return;busy(true);try{display(await call('disconnect'));}catch(error){status.textContent=error.message;}finally{busy(false);}};
+}
 function renderTab(){
   const renderers={
     overview:()=>renderOverview(),
+    etsy:()=>renderEtsyConnection(),
     categories:()=>renderCategories(),
     items:()=>withAdminTimeout(renderItems(),'Products request'),
     waitlist:()=>renderWaitlist(),

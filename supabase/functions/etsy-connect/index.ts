@@ -1,0 +1,141 @@
+// GET callback authenticates with single-use, expiring OAuth state + PKCE.
+// Every POST requires a validated Supabase user and an active admin profile.
+const projectUrl = Deno.env.get('SUPABASE_URL') || '';
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const etsyKey = Deno.env.get('ETSY_API_KEY') || '';
+const etsySecret = Deno.env.get('ETSY_SHARED_SECRET') || '';
+const callbackUrl = `${projectUrl}/functions/v1/etsy-connect/callback`;
+const scopes = 'shops_r listings_r transactions_r';
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
+const hash = async (value: string) => base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
+const network = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
+async function database(path: string, method = 'GET', body?: unknown) {
+  const response = await network(`${projectUrl}/rest/v1/${path}`, { method, headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json', Prefer: 'return=representation' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  if (!response.ok) throw new Error('Connection storage is unavailable.');
+  return response.status === 204 ? [] : response.json();
+}
+async function activeAdmin(id: string) {
+  const rows = await database(`profiles?id=eq.${encodeURIComponent(id)}&select=role,status`);
+  return rows[0]?.role === 'admin' && rows[0]?.status === 'active';
+}
+async function adminFor(request: Request) {
+  const authorization = request.headers.get('Authorization');
+  if (!authorization?.startsWith('Bearer ')) return null;
+  const response = await network(`${projectUrl}/auth/v1/user`, { headers: { apikey: serviceKey, Authorization: authorization } });
+  if (!response.ok) return null;
+  const user = await response.json();
+  return user.id && await activeAdmin(user.id) ? user.id : null;
+}
+function returnOrigin(value: string) {
+  const url = new URL(value);
+  if (url.origin !== value || !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)))) throw new Error('Open the admin on HTTPS or a local preview.');
+  return url.origin;
+}
+async function tokenRequest(body: URLSearchParams) {
+  const response = await network('https://api.etsy.com/v3/public/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  if (!response.ok) throw new Error('Etsy authorization expired or was rejected. Please reconnect.');
+  const token = await response.json();
+  if (typeof token.access_token !== 'string' || typeof token.refresh_token !== 'string' || !(Number(token.expires_in) > 0)) throw new Error('Etsy returned an invalid authorization response.');
+  return token;
+}
+async function etsy(path: string, accessToken: string) {
+  const response = await network(`https://api.etsy.com/v3/application/${path}`, { headers: { 'x-api-key': `${etsyKey}:${etsySecret}`, Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error(response.status === 429 ? 'Etsy is rate limiting requests. Try again shortly.' : 'Etsy could not verify this connection. Try reconnecting.');
+  return response.json();
+}
+async function refreshConnection(connection: Record<string, any>) {
+  if (Date.parse(connection.expires_at) > Date.now() + 90000) return connection;
+  const now = new Date().toISOString();
+  const lease = new Date(Date.now() + 60000).toISOString();
+  const locked = await database(`etsy_connections?id=eq.true&or=(refresh_lock_until.is.null,refresh_lock_until.lt.${now})`, 'PATCH', { refresh_lock_until: lease });
+  if (!locked.length) throw new Error('Another connection check is running. Try again shortly.');
+  try {
+    // Use the row read while taking the lock; another request may have refreshed it.
+    connection = locked[0];
+    if (Date.parse(connection.expires_at) > Date.now() + 90000) return connection;
+    const token = await tokenRequest(new URLSearchParams({ grant_type: 'refresh_token', client_id: etsyKey, refresh_token: connection.refresh_token }));
+    const changes = { access_token: token.access_token, refresh_token: token.refresh_token, expires_at: new Date(Date.now() + Number(token.expires_in) * 1000).toISOString() };
+    const updated = await database(`etsy_connections?id=eq.true&refresh_lock_until=eq.${encodeURIComponent(lease)}`, 'PATCH', changes);
+    if (!updated.length) throw new Error('The connection changed during verification. Try again.');
+    return updated[0];
+  } finally {
+    await database(`etsy_connections?id=eq.true&refresh_lock_until=eq.${encodeURIComponent(lease)}`, 'PATCH', { refresh_lock_until: null });
+  }
+}
+async function callback(request: Request) {
+  const url = new URL(request.url), state = url.searchParams.get('state') || '';
+  if (!/^[A-Za-z0-9_-]{43}$/.test(state)) return json({ error: 'Invalid or missing authorization state. Start again from Store Control.' }, 400);
+  // DELETE ... RETURNING atomically consumes the nonce, preventing callback replay.
+  const rows = await database(`etsy_oauth_states?state_hash=eq.${await hash(state)}&expires_at=gt.${new Date().toISOString()}`, 'DELETE');
+  const pending = rows[0];
+  if (!pending) return json({ error: 'Authorization expired or was already used. Start again from Store Control.' }, 400);
+  const redirect = (result: string) => new Response(null, { status: 303, headers: { Location: `${returnOrigin(pending.return_origin)}/admin.html?etsy=${result}`, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+  try {
+    if (!await activeAdmin(pending.admin_id)) return json({ error: 'Administrator access is required.' }, 403);
+    if (url.searchParams.has('error')) return redirect('denied');
+    const code = url.searchParams.get('code');
+    if (!code || code.length > 4096) return redirect('failed');
+    const token = await tokenRequest(new URLSearchParams({ grant_type: 'authorization_code', client_id: etsyKey, redirect_uri: callbackUrl, code, code_verifier: pending.code_verifier }));
+    const userId = token.access_token.split('.')[0];
+    if (!/^\d+$/.test(userId)) throw new Error('Invalid Etsy account.');
+    const granted = String(token.scope || scopes).split(' ');
+    if (scopes.split(' ').some(scope => !granted.includes(scope))) throw new Error('Required permissions were not granted.');
+    const shop = await etsy(`users/${userId}/shops`, token.access_token);
+    if (!shop.shop_id || String(shop.user_id) !== userId || !shop.shop_name) throw new Error('No owned Etsy shop found.');
+    // Verify the OAuth token itself, not just API-key access to a public shop.
+    await etsy(`shops/${shop.shop_id}/receipts?limit=1`, token.access_token);
+    const existing = (await database('etsy_connections?id=eq.true&select=shop_id'))[0];
+    if (existing && String(existing.shop_id) !== String(shop.shop_id)) return redirect('wrong-shop');
+    const row = { id: true, shop_id: shop.shop_id, shop_name: shop.shop_name, etsy_user_id: userId, access_token: token.access_token, refresh_token: token.refresh_token, expires_at: new Date(Date.now() + Number(token.expires_in) * 1000).toISOString(), scopes: granted.join(' '), connected_by: pending.admin_id, connected_at: new Date().toISOString(), verified_at: new Date().toISOString(), refresh_lock_until: null };
+    if (existing) await database('etsy_connections?id=eq.true', 'PATCH', row);
+    else await database('etsy_connections', 'POST', row);
+    return redirect('connected');
+  } catch {
+    // Never return provider responses, credentials, or authorization codes to the browser.
+    return redirect('failed');
+  }
+}
+Deno.serve(async (request: Request) => {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  try {
+    const missing = Object.entries({ SUPABASE_URL: projectUrl, SUPABASE_SERVICE_ROLE_KEY: serviceKey, ETSY_API_KEY: etsyKey, ETSY_SHARED_SECRET: etsySecret }).filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length) return json({ error: 'Missing backend secrets: ' + missing.join(', ') + '.' }, 503);
+    if (request.method === 'GET' && new URL(request.url).pathname.endsWith('/callback')) return await callback(request);
+    if (request.method !== 'POST') return json({ error: 'Use Connect Etsy in Store Control.' }, 405);
+    const adminId = await adminFor(request);
+    if (!adminId) return json({ error: 'An active administrator account is required.' }, 403);
+    const body = await request.json();
+    if (body.action === 'start') {
+      const origin = returnOrigin(String(request.headers.get('Origin') || ''));
+      const state = random(), verifier = random();
+      await database(`etsy_oauth_states?expires_at=lt.${new Date().toISOString()}`, 'DELETE');
+      await database(`etsy_oauth_states?admin_id=eq.${adminId}`, 'DELETE');
+      await database('etsy_oauth_states', 'POST', { state_hash: await hash(state), admin_id: adminId, code_verifier: verifier, return_origin: origin, expires_at: new Date(Date.now() + 600000).toISOString() });
+      const authorize = new URL('https://www.etsy.com/oauth/connect');
+      authorize.search = new URLSearchParams({ response_type: 'code', client_id: etsyKey, redirect_uri: callbackUrl, scope: scopes, state, code_challenge: await hash(verifier), code_challenge_method: 'S256' }).toString();
+      return json({ authorize_url: authorize.href });
+    }
+    if (body.action === 'disconnect') {
+      await database('etsy_oauth_states?state_hash=not.is.null', 'DELETE');
+      await database('etsy_connections?id=eq.true', 'DELETE');
+      return json({ connected: false });
+    }
+    if (!['status', 'verify'].includes(body.action)) return json({ error: 'Unknown connection action.' }, 400);
+    let connection = (await database('etsy_connections?id=eq.true'))[0];
+    if (!connection) return json({ connected: false, callback_url: callbackUrl });
+    if (body.action === 'verify') {
+      connection = await refreshConnection(connection);
+      await etsy(`shops/${connection.shop_id}/receipts?limit=1`, connection.access_token);
+      connection.verified_at = new Date().toISOString();
+      await database('etsy_connections?id=eq.true', 'PATCH', { verified_at: connection.verified_at });
+    }
+    return json({ connected: true, shop_id: connection.shop_id, shop_name: connection.shop_name, connected_at: connection.connected_at, verified_at: connection.verified_at, callback_url: callbackUrl });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const allowed = ['Connection storage is unavailable.', 'Open the admin on HTTPS or a local preview.', 'Etsy authorization expired or was rejected. Please reconnect.', 'Etsy could not verify this connection. Try reconnecting.', 'Etsy is rate limiting requests. Try again shortly.', 'Another connection check is running. Try again shortly.', 'The connection changed during verification. Try again.'];
+    return json({ error: allowed.includes(message) ? message : 'Unable to complete the Etsy connection request. Please try again.' }, 400);
+  }
+});
