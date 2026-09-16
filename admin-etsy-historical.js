@@ -7,7 +7,26 @@
     const status=document.querySelector('[data-import-status]');
     const client=cloudAdmin();
     if(!button||!client)return;
-    const historical=async(body)=>{const r=await client.functions.invoke('etsy-historical',{body:{action:'preview_orders',...body}});if(r.error){let detail;try{detail=await r.error.context?.json();}catch(_){}throw new Error(detail?.error||r.error.message||'Unable to reach the historical Etsy importer.');}if(r.data?.error)throw new Error(r.data.error);return r.data;};
+    const historical=async(body)=>{
+      const r=await client.functions.invoke('etsy-historical',{body:{action:'preview_orders',...body}});
+      if(r.data?.error)throw new Error(r.data.error);
+      if(r.error){
+        let detail='';
+        try{
+          const context=r.error.context;
+          if(context){
+            const response=typeof context.clone==='function'?context.clone():context;
+            const text=typeof response.text==='function'?await response.text():'';
+            if(text){
+              try{detail=JSON.parse(text)?.error||text;}catch(_){detail=text;}
+            }
+          }
+        }catch(_){ }
+        throw new Error(detail||r.error.message||'Unable to reach the historical Etsy importer.');
+      }
+      if(!r.data)throw new Error('Historical Etsy importer returned no data.');
+      return r.data;
+    };
     const applyStage=async(batchId)=>{const r=await client.rpc('apply_etsy_import_batch',{batch_id:batchId});if(r.error)throw r.error;return r.data||{};};
     const loadStagedWindows=async()=>{
       const {data,error}=await client.from('etsy_import_batches').select('payload').eq('kind','orders').not('staged_at','is',null);
