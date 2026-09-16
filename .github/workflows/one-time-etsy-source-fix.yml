@@ -49,9 +49,9 @@ jobs:
 
           html = Path('admin.html')
           h = html.read_text(encoding='utf-8')
-          h2, removed = re.subn(r'\s*<script[^>]+src=["\']/admin-etsy-historical-v3\.js\?[^"\']+["\'][^>]*></script>', '', h, count=1)
+          h2, removed = re.subn(r'\s*<script[^>]+src=["\']/admin-etsy-historical-v3\.js(?:\?[^"\']*)?["\'][^>]*></script>', '', h, count=1)
           if removed != 1:
-              raise SystemExit('Expected the v3 historical overlay script include; source was not changed.')
+              raise SystemExit('Expected exactly one v3 historical overlay script include; source was not changed.')
           html.write_text(h2, encoding='utf-8')
       - name: Remove failed overlay and this one-time workflow
         shell: bash
