@@ -19,7 +19,7 @@ Deno.serve(async(request)=>{
     const batches=await batchResponse.json(),batch=batches[0];
     if(!batch?.id)return json({error:'Historical Etsy batch was not found.'},404);
     const payload={...(batch.payload||{}),historical:true,import_mode:'historical_sales_only'};
-    const updateResponse=await fetch(`${projectUrl}/rest/v1/etsy_import_batches?id=eq.${encodeURIComponent(preview.batch_id)}`,{method:'PATCH',headers:{apikey:serviceKey,Authorization:`Bearer ${serviceKey}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({payload})});
+    const updateResponse=await fetch(`${projectUrl}/rest/v1/etsy_import_batches?id=eq.${encodeURIComponent(preview.batch_id)}`,{method:'PATCH',headers:{apikey:serviceKey,Authorization:`Bearer ${serviceKey}`,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({payload,expires_at:new Date(Date.now()+24*60*60*1000).toISOString(),applied_at:null,staged_at:null})});
     if(!updateResponse.ok)return json({error:'Unable to mark the historical Etsy batch.'},502);
     return json(preview);
   }catch(error){return json({error:error instanceof Error?error.message:'Historical Etsy import failed.'},500);}
