@@ -105,6 +105,13 @@ async function createImportBatch(adminId: string, kind: 'orders' | 'reviews', pa
   const rows = await database('etsy_import_batches', 'POST', { created_by: adminId, kind, payload, expires_at: new Date(Date.now() + 30 * 60000).toISOString() });
   return rows[0]?.id as string | undefined;
 }
+async function orderSyncStart() {
+  const latest = (await database('etsy_sale_lines?select=sale_date&order=sale_date.desc&limit=1'))[0];
+  const threeYearsAgo = Date.now() - 3 * 365 * 24 * 60 * 60 * 1000;
+  const overlapStart = latest?.sale_date ? Date.parse(latest.sale_date) - 30 * 24 * 60 * 60 * 1000 : threeYearsAgo;
+  const startedAt = Math.max(threeYearsAgo, Number.isFinite(overlapStart) ? overlapStart : threeYearsAgo);
+  return { min_created: Math.floor(startedAt / 1000), mode: latest?.sale_date ? 'incremental' : 'initial' };
+}
 function receiptStatus(receipt: Record<string, any>) {
   if (receipt.was_canceled === true || receipt.is_canceled === true) return 'cancelled';
   if (receipt.was_refunded === true || receipt.is_refunded === true) return 'refunded';
@@ -242,6 +249,7 @@ Deno.serve(async (request: Request) => {
     }
     if (body.action === 'preview_orders') return json(await previewOrders(adminId, Math.max(0, Math.floor(Number(body.offset) || 0)), Number(body.min_created)));
     if (body.action === 'preview_reviews') return json(await previewReviews(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
+    if (body.action === 'order_sync_start') return json(await orderSyncStart());
     if (!['status', 'verify'].includes(body.action)) return json({ error: 'Unknown connection action.' }, 400);
     let connection = (await database('etsy_connections?id=eq.true'))[0];
     if (!connection) return json({ connected: false, callback_url: callbackUrl });
