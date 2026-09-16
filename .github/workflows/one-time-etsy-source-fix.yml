@@ -7,7 +7,7 @@ on:
 
 jobs:
   fix-source:
-    if: github.event.pull_request.head.ref == 'fix/etsy-historical-source-handler' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.ref == 'temp/etsy-fix-workflow' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -52,14 +52,14 @@ jobs:
           if removed != 1:
               raise SystemExit('Expected the v3 historical overlay script include; source was not changed.')
           html.write_text(h2, encoding='utf-8')
-      - name: Remove failed overlay and temporary workflows
+      - name: Remove failed overlay and this one-time workflow
         shell: bash
         run: |
           rm -f admin-etsy-historical-v3.js
-          rm -f .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml
+          rm -f .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml .github/workflows/one-time-etsy-source-fix.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add admin.js admin.html admin-etsy-historical-v3.js .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml
+          git add admin.js admin.html admin-etsy-historical-v3.js .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml .github/workflows/one-time-etsy-source-fix.yml
           if git diff --cached --quiet; then
             echo "No source changes needed."
             exit 0
