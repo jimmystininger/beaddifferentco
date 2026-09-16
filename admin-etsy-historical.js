@@ -27,7 +27,6 @@
       if(!r.data)throw new Error('Historical Etsy importer returned no data.');
       return r.data;
     };
-    const applyStage=async(batchId)=>{const r=await client.rpc('apply_etsy_import_batch',{batch_id:batchId});if(r.error)throw r.error;return r.data||{};};
     const loadStagedWindows=async()=>{
       const {data,error}=await client.from('etsy_import_batches').select('payload').eq('kind','orders').not('staged_at','is',null);
       if(error)throw error;
@@ -61,7 +60,6 @@
             status.textContent='Staging Etsy history: '+new Date(min*1000).toLocaleDateString()+'–'+new Date(max*1000).toLocaleDateString()+' · '+(offset+1)+'+';
             const p=await historical({min_created:min,max_created:max,offset});
             if(!p.receipts)break;
-            await applyStage(p.batch_id);
             stagedBatches++;stagedLines+=Number(p.sales)||0;
             if(!p.has_more)break;
             offset=p.next_offset;
