@@ -65,6 +65,95 @@ async function refreshConnection(connection: Record<string, any>) {
     await database(`etsy_connections?id=eq.true&refresh_lock_until=eq.${encodeURIComponent(lease)}`, 'PATCH', { refresh_lock_until: null });
   }
 }
+const list = (value: unknown): Record<string, any>[] => Array.isArray(value) ? value.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object') : [];
+const money = (value: unknown) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') return Number.isFinite(Number(value)) ? Number(value) : 0;
+  if (!value || typeof value !== 'object') return 0;
+  const row = value as Record<string, any>, amount = Number(row.amount), divisor = Number(row.divisor);
+  return Number.isFinite(amount) ? amount / (Number.isFinite(divisor) && divisor > 0 ? divisor : 1) : 0;
+};
+const stamp = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? new Date(number * 1000).toISOString() : new Date().toISOString();
+};
+async function concurrent<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>) {
+  const output: R[] = []; let index = 0;
+  const worker = async () => { while (index < items.length) { const current = index++; output[current] = await task(items[current]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return output;
+}
+async function importConnection() {
+  const connection = (await database('etsy_connections?id=eq.true'))[0];
+  if (!connection) throw new Error('Connect Etsy before preparing an import.');
+  return refreshConnection(connection);
+}
+async function createImportBatch(adminId: string, kind: 'orders' | 'reviews', payload: Record<string, unknown>) {
+  const rows = await database('etsy_import_batches', 'POST', { created_by: adminId, kind, payload, expires_at: new Date(Date.now() + 30 * 60000).toISOString() });
+  return rows[0]?.id as string | undefined;
+}
+function receiptStatus(receipt: Record<string, any>) {
+  if (receipt.was_canceled === true || receipt.is_canceled === true) return 'cancelled';
+  if (receipt.was_refunded === true || receipt.is_refunded === true) return 'refunded';
+  const status = String(receipt.status || '').toLowerCase();
+  return ['paid', 'completed', 'refunded', 'returned', 'cancelled'].includes(status) ? status : 'paid';
+}
+async function previewOrders(adminId: string, offset: number) {
+  const connection = await importConnection();
+  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=25&offset=${offset}`, connection.access_token);
+  const receipts = list(page.results);
+  const mappingRows = await database('product_etsy_mappings?select=etsy_sku,inventory_sku&active=eq.true');
+  const inventoryByEtsySku = new Map(mappingRows.map((row: Record<string, any>) => [String(row.etsy_sku || '').trim().toLowerCase(), String(row.inventory_sku || '').trim()]));
+  const sales = (await concurrent(receipts, 4, async (receipt) => {
+    const receiptId = String(receipt.receipt_id || '');
+    const transactions = list(receipt.transactions).length ? list(receipt.transactions) : list(await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/transactions`, connection.access_token));
+    const payments = list(await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/payments`, connection.access_token));
+    const totalGross = transactions.reduce((sum, transaction) => sum + money(transaction.price) * Math.max(1, Number(transaction.quantity) || 1), 0);
+    const divisor = totalGross > 0 ? totalGross : Math.max(1, transactions.length);
+    const shipping = money(receipt.total_shipping_cost || receipt.total_shipping), tax = money(receipt.total_tax_cost || receipt.total_tax), discount = money(receipt.discount_amt || receipt.discount_amount);
+    const fees = payments.reduce((sum, payment) => sum + money(payment.amount_fees || payment.fee_amount), 0);
+    return transactions.map((transaction) => {
+      const quantity = Math.max(0, Number(transaction.quantity) || 0);
+      const gross = money(transaction.price) * quantity;
+      const share = totalGross > 0 ? gross / divisor : 1 / Math.max(1, transactions.length);
+      const sku = String(transaction.sku || transaction.listing_sku || '').trim() || `listing:${String(transaction.listing_id || 'unknown')}`;
+      const refunded = receiptStatus(receipt) === 'refunded' || receiptStatus(receipt) === 'cancelled' ? quantity : 0;
+      return {
+        external_order_id: receiptId,
+        external_line_id: String(transaction.transaction_id || `${receiptId}:${transaction.listing_id || sku}`),
+        etsy_sku: sku,
+        listing_id: transaction.listing_id || null,
+        title: String(transaction.title || transaction.product_data?.[0]?.property_name || 'Etsy item'),
+        sale_date: stamp(transaction.paid_timestamp || receipt.paid_timestamp || transaction.created_timestamp || receipt.create_timestamp),
+        status: receiptStatus(receipt), quantity, refunded_quantity: refunded,
+        gross_revenue: gross, discount_amount: discount * share, refund_amount: refunded ? Math.max(0, gross - discount * share) : 0,
+        shipping_revenue: shipping * share, sales_tax: tax * share, marketplace_fees: fees * share,
+        currency: String(receipt.currency_code || transaction.currency_code || 'USD'),
+        matched_inventory_sku: inventoryByEtsySku.get(sku.toLowerCase()) || null
+      };
+    });
+  })).flat();
+  const batchId = await createImportBatch(adminId, 'orders', { sales });
+  const total = (key: string) => sales.reduce((sum, sale) => sum + (Number(sale[key]) || 0), 0);
+  return { batch_id: batchId, next_offset: offset + receipts.length, has_more: receipts.length === 25, receipts: receipts.length, sales: sales.length, matched: sales.filter((sale) => sale.matched_inventory_sku).length, unmatched: sales.filter((sale) => !sale.matched_inventory_sku).length, totals: { revenue: total('gross_revenue'), discounts: total('discount_amount'), shipping: total('shipping_revenue'), tax: total('sales_tax'), fees: total('marketplace_fees'), refunds: total('refund_amount') }, rows: sales.slice(0, 50) };
+}
+async function previewReviews(adminId: string, offset: number) {
+  const connection = await importConnection();
+  const page = await etsy(`shops/${connection.shop_id}/reviews?limit=25&offset=${offset}`, connection.access_token);
+  const source = list(page.results);
+  const products = await database('products?select=id,name,external_id,etsy_listing_id&etsy_listing_id=not.is.null');
+  const productByListing = new Map(products.map((product: Record<string, any>) => [String(product.etsy_listing_id), product]));
+  const matched = source.map((review) => {
+    const listingId = String(review.listing_id || ''); const product = productByListing.get(listingId);
+    const createdAt = stamp(review.create_timestamp || review.created_timestamp);
+    const externalReviewId = String(review.transaction_id || review.review_id || `${listingId}:${createdAt}:${review.rating || ''}`);
+    return { external_review_id: externalReviewId, listing_id: listingId, product_id: product?.id || null, product_name: product?.name || null, rating: Math.max(1, Math.min(5, Number(review.rating) || 5)), body: String(review.review || ''), photos: review.image_url_fullxfull ? [String(review.image_url_fullxfull)] : [], reviewer_name: String(review.buyer_name || review.buyer_login_name || ''), created_at: createdAt };
+  });
+  const importable = matched.filter((review) => review.product_id);
+  const batchId = await createImportBatch(adminId, 'reviews', { reviews: importable });
+  const unmatchedListings = [...new Map(matched.filter((review) => !review.product_id && review.listing_id).map((review) => [review.listing_id, review])).values()].map((review) => ({ listing_id: review.listing_id, rating: review.rating, body: review.body }));
+  return { batch_id: batchId, next_offset: offset + source.length, has_more: source.length === 25, reviews: source.length, matched: importable.length, unmatched: matched.length - importable.length, unmatched_listings: unmatchedListings, rows: matched.slice(0, 50) };
+}
 async function callback(request: Request) {
   const url = new URL(request.url), state = url.searchParams.get('state') || '';
   if (!/^[A-Za-z0-9_-]{43}$/.test(state)) return json({ error: 'Invalid or missing authorization state. Start again from Store Control.' }, 400);
@@ -123,6 +212,8 @@ Deno.serve(async (request: Request) => {
       await database('etsy_connections?id=eq.true', 'DELETE');
       return json({ connected: false });
     }
+    if (body.action === 'preview_orders') return json(await previewOrders(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
+    if (body.action === 'preview_reviews') return json(await previewReviews(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
     if (!['status', 'verify'].includes(body.action)) return json({ error: 'Unknown connection action.' }, 400);
     let connection = (await database('etsy_connections?id=eq.true'))[0];
     if (!connection) return json({ connected: false, callback_url: callbackUrl });
@@ -135,7 +226,7 @@ Deno.serve(async (request: Request) => {
     return json({ connected: true, shop_id: connection.shop_id, shop_name: connection.shop_name, connected_at: connection.connected_at, verified_at: connection.verified_at, callback_url: callbackUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
-    const allowed = ['Connection storage is unavailable.', 'Open the admin on HTTPS or a local preview.', 'Etsy authorization expired or was rejected. Please reconnect.', 'Etsy could not verify this connection. Try reconnecting.', 'Etsy is rate limiting requests. Try again shortly.', 'Another connection check is running. Try again shortly.', 'The connection changed during verification. Try again.'];
+    const allowed = ['Connection storage is unavailable.', 'Open the admin on HTTPS or a local preview.', 'Etsy authorization expired or was rejected. Please reconnect.', 'Etsy could not verify this connection. Try reconnecting.', 'Etsy is rate limiting requests. Try again shortly.', 'Another connection check is running. Try again shortly.', 'The connection changed during verification. Try again.', 'Connect Etsy before preparing an import.'];
     return json({ error: allowed.includes(message) ? message : 'Unable to complete the Etsy connection request. Please try again.' }, 400);
   }
 });

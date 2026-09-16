@@ -133,7 +133,7 @@ async function hydrateProductReviews(item){
   if(!section)return;
   let reviews=[];
   if(window.beadSupabase&&item.databaseId){
-    const result=await window.beadSupabase.from('reviews').select('rating,body,verified_purchase,created_at').eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false});
+    const result=await window.beadSupabase.from('reviews').select('rating,body,photos,reviewer_name,verified_purchase,created_at,profiles(full_name)').eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false});
     if(result.error)return;
     reviews=result.data||[];
   }else if(window.reviewTools){
@@ -142,7 +142,8 @@ async function hydrateProductReviews(item){
   const ratingFor=(review)=>Math.max(0,Math.min(5,Math.round(Number(review.rating)||0)));
   const starsFor=(review)=>'★'.repeat(ratingFor(review))+'☆'.repeat(5-ratingFor(review));
   const dateFor=(review)=>{const date=new Date(review.created_at||review.createdAt||'');return Number.isNaN(date.getTime())?'Date unavailable':date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});};
-  const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
+  const reviewPhotos=(review)=>{const photos=Array.isArray(review.photos)?review.photos:[];const links=photos.slice(0,5).map((photo,index)=>{try{const url=new URL(String(photo));if(!['https:','http:'].includes(url.protocol))return '';const safe=productPageEscape(url.href);return `<a href="${safe}" target="_blank" rel="noopener noreferrer"><img src="${safe}" alt="Customer review photo ${index+1}" loading="lazy"></a>`;}catch(error){return '';}}).filter(Boolean).join('');return links?`<div class="product-review-photos">${links}</div>`:'';};
+  const reviewMarkup=(review)=>{const profile=Array.isArray(review.profiles)?review.profiles[0]:review.profiles;const name=String(review.reviewer_name||profile?.full_name||'Customer').trim()||'Customer';return `<article class="product-review"><strong>${productPageEscape(name)}</strong><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p>${reviewPhotos(review)}<small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;};
   const average=reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0;
   if(!reviews.length){section.innerHTML='<h2>Reviews</h2><p>No approved reviews yet.</p>';return;}
   const reviewCount=`${reviews.length} review${reviews.length===1?'':'s'}`;

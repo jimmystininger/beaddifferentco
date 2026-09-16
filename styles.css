@@ -709,3 +709,5 @@ body[data-page="Sale Collection"] .sale-collection-card .product-card-badges{poi
 body[data-page="Sale Collection"] .store-empty{margin-top:22px}
 body[data-page="Admin"] .promo-form label button{margin-top:8px}
 @media(max-width:560px){body[data-page="Sale Collection"] .sale-collection-intro{font-size:14px;margin-top:-18px}}
+
+.product-review-photos{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.product-review-photos img{width:110px;height:110px;object-fit:cover;border-radius:8px;display:block}
