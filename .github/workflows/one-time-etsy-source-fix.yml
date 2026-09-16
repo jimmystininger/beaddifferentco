@@ -1,4 +1,5 @@
 # One-time source-only migration; self-removes after the PR branch is fixed.
+# Trigger marker: 2026-09-16-source-fix-retry
 name: One-time Etsy source fix
 
 on:
