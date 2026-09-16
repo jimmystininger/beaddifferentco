@@ -1,25 +1,41 @@
 (function(){
   const original=window.renderEtsyImports;
   if(typeof original!=='function')return;
-  const dollars=v=>'$'+(Number(v)||0).toFixed(2);
-  const safe=v=>typeof adminSafe==='function'?adminSafe(v):String(v??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
   window.renderEtsyImports=async function(){
-    const root=document.createElement('section');root.className='admin-card';
-    root.innerHTML='<p class="kicker">ETSY DATA</p><h2>Orders, sales &amp; product reviews</h2><p>Normal Etsy imports remain unchanged. The one-time 3-year history import is staged first and does not touch inventory.</p><div class="admin-actions"><button type="button" data-preview-orders>Preview newest 25 orders</button><button type="button" data-import-new-orders>Import all new orders</button><button type="button" data-import-three-years>Import last 3 years of orders</button><button type="button" data-preview-reviews>Preview newest 25 reviews</button><button type="button" data-import-all-reviews>Import all matched reviews</button></div><p data-import-status role="status">Checking Etsy connection…</p><div data-order-preview></div><div data-review-preview></div>';
-    panel.replaceChildren(root);
-    const client=cloudAdmin(),status=root.querySelector('[data-import-status]'),orders=root.querySelector('[data-order-preview]'),reviews=root.querySelector('[data-review-preview]');
-    const normal=async(action,body={})=>{if(!client)throw new Error('Please sign in to your administrator account.');const r=await client.functions.invoke('etsy-connect',{body:{action,...body}});if(r.error)throw r.error; if(r.data?.error)throw new Error(r.data.error);return r.data;};
-    const historical=async(body)=>{if(!client)throw new Error('Please sign in to your administrator account.');const r=await client.functions.invoke('etsy-historical',{body:{action:'preview_orders',...body}});if(r.error){let detail;try{detail=await r.error.context?.json();}catch(_){}throw new Error(detail?.error||r.error.message||'Unable to reach the historical Etsy importer.');}if(r.data?.error)throw new Error(r.data.error);return r.data;};
-    const setBusy=v=>root.querySelectorAll('button').forEach(b=>b.disabled=v);
+    await original();
+    const button=document.querySelector('[data-import-three-years]');
+    const status=document.querySelector('[data-import-status]');
+    const client=cloudAdmin();
+    if(!button||!client)return;
+    const historical=async(body)=>{const r=await client.functions.invoke('etsy-historical',{body:{action:'preview_orders',...body}});if(r.error){let detail;try{detail=await r.error.context?.json();}catch(_){}throw new Error(detail?.error||r.error.message||'Unable to reach the historical Etsy importer.');}if(r.data?.error)throw new Error(r.data.error);return r.data;};
     const applyStage=async(batchId)=>{const r=await client.rpc('apply_etsy_import_batch',{batch_id:batchId});if(r.error)throw r.error;return r.data||{};};
-    const renderPreview=async(offset=0)=>{status.textContent='Reading Etsy receipts…';try{const p=await normal('preview_orders',{offset});const t=p.totals||{};orders.innerHTML='<section class="admin-card"><h3>Orders &amp; sales preview</h3><p>'+p.receipts+' receipts · '+p.sales+' sale lines · '+p.matched+' inventory matches · '+p.unmatched+' unmatched SKUs</p><p>Revenue '+dollars(t.revenue)+' · Etsy fees '+dollars(t.fees)+' · Refunds '+dollars(t.refunds)+'</p></section>';status.textContent='Order preview ready.';}catch(e){status.textContent=e.message||'Unable to prepare the order preview.';}};
-    const importNew=async()=>{if(!window.confirm('Import every Etsy order added since the prior import?'))return;setBusy(true);try{let offset=0,pages=0;const checkpoint=await normal('order_sync_start');for(;pages<500;pages++){status.textContent='Importing new Etsy orders: batch '+(pages+1)+'…';const p=await normal('preview_orders',{offset,min_created:checkpoint.min_created});if(!p.receipts)break;const r=await client.rpc('apply_etsy_import_batch',{batch_id:p.batch_id});if(r.error)throw r.error;if(!p.has_more)break;offset=p.next_offset;}status.textContent='New-order import finished.';}catch(e){status.textContent=e.message||'New-order import stopped.';}finally{setBusy(false);}};
-    const importHistorical=async()=>{if(!window.confirm('Import every Etsy order from the last three years? The entire history will be staged first. Inventory, recipes, and Etsy Flags will NOT be changed by this historical import.'))return;setBusy(true);let stagedLines=0,stagedBatches=0;const day=86400;const end=Math.floor(Date.now()/1000);const start=Math.floor(new Date(new Date().setFullYear(new Date().getFullYear()-3)).getTime()/1000);const processWindow=async(min,max)=>{const probe=await historical({min_created:min,max_created:max,offset:0,probe:true});const count=Number(probe.total_receipts)||0;if(!count)return;if(count>11975){const mid=Math.floor((min+max)/2);await processWindow(min,mid);await processWindow(mid,max);return;}let offset=0;while(true){status.textContent='Staging Etsy history: '+new Date(min*1000).toLocaleDateString()+'–'+new Date(max*1000).toLocaleDateString()+' · '+(offset+1)+'+';const p=await historical({min_created:min,max_created:max,offset});if(!p.receipts)break;await applyStage(p.batch_id);stagedBatches++;stagedLines+=Number(p.sales)||0;if(!p.has_more)break;offset=p.next_offset;}};try{let cursor=start;const windowSize=30*day;while(cursor<end){const max=Math.min(end,cursor+windowSize);await processWindow(cursor,max);cursor=max;}status.textContent='Historical Etsy staging finished: '+stagedLines+' sale lines in '+stagedBatches+' staged batches. Nothing has been applied to inventory.';}catch(e){status.textContent=(e.message||'Historical import stopped.')+' Staged so far: '+stagedLines+' sale lines in '+stagedBatches+' batches.';}finally{setBusy(false);}};
-    root.querySelector('[data-preview-orders]').onclick=()=>void renderPreview();
-    root.querySelector('[data-import-new-orders]').onclick=()=>void importNew();
-    root.querySelector('[data-import-three-years]').onclick=()=>void importHistorical();
-    root.querySelector('[data-preview-reviews]').onclick=()=>void renderPreview();
-    root.querySelector('[data-import-all-reviews]').onclick=()=>void renderPreview();
-    try{const c=await normal('status');status.textContent=c.connected?'Connected to '+c.shop_name+'.':'Connect Etsy before importing.';if(!c.connected)root.querySelectorAll('button').forEach(b=>b.disabled=true);}catch(e){status.textContent=e.message||'Unable to check Etsy connection.';root.querySelectorAll('button').forEach(b=>b.disabled=true);}
+    button.onclick=async()=>{
+      if(!window.confirm('Import every Etsy order from the last three years? The entire history will be staged first. Inventory, recipes, and Etsy Flags will NOT be changed by this historical import.'))return;
+      const buttons=[...document.querySelectorAll('[data-import-new-orders],[data-import-three-years],[data-import-all-reviews]')];buttons.forEach(b=>b.disabled=true);
+      let stagedLines=0,stagedBatches=0;
+      const day=86400,end=Math.floor(Date.now()/1000),start=Math.floor(new Date(new Date().setFullYear(new Date().getFullYear()-3)).getTime()/1000);
+      const processWindow=async(min,max)=>{
+        const probe=await historical({min_created:min,max_created:max,offset:0,probe:true});
+        const count=Number(probe.total_receipts)||0;
+        if(!count)return;
+        if(count>11975){const mid=Math.floor((min+max)/2);await processWindow(min,mid);await processWindow(mid,max);return;}
+        let offset=0;
+        while(true){
+          status.textContent='Staging Etsy history: '+new Date(min*1000).toLocaleDateString()+'–'+new Date(max*1000).toLocaleDateString()+' · '+(offset+1)+'+';
+          const p=await historical({min_created:min,max_created:max,offset});
+          if(!p.receipts)break;
+          await applyStage(p.batch_id);
+          stagedBatches++;stagedLines+=Number(p.sales)||0;
+          if(!p.has_more)break;
+          offset=p.next_offset;
+        }
+      };
+      try{
+        let cursor=start;const windowSize=30*day;
+        while(cursor<end){const max=Math.min(end,cursor+windowSize);await processWindow(cursor,max);cursor=max;}
+        status.textContent='Historical Etsy staging finished: '+stagedLines+' sale lines in '+stagedBatches+' staged batches. Nothing has been applied to inventory.';
+      }catch(e){status.textContent=(e.message||'Historical import stopped.')+' Staged so far: '+stagedLines+' sale lines in '+stagedBatches+' batches.';}
+      finally{buttons.forEach(b=>b.disabled=false);}
+    };
   };
 })();
