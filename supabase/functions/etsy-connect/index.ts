@@ -41,10 +41,23 @@ async function tokenRequest(body: URLSearchParams) {
   if (typeof token.access_token !== 'string' || typeof token.refresh_token !== 'string' || !(Number(token.expires_in) > 0)) throw new Error('Etsy returned an invalid authorization response.');
   return token;
 }
+let nextEtsyRequestAt = 0;
+const pause = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 async function etsy(path: string, accessToken: string) {
-  const response = await network(`https://api.etsy.com/v3/application/${path}`, { headers: { 'x-api-key': `${etsyKey}:${etsySecret}`, Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) throw new Error(response.status === 429 ? 'Etsy is rate limiting requests. Try again shortly.' : 'Etsy could not verify this connection. Try reconnecting.');
-  return response.json();
+  // Receipt imports need detail and payment reads. Serialize them below Etsy's
+  // per-second limit and honor a temporary 429 instead of failing the preview.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const now = Date.now(), scheduled = Math.max(now, nextEtsyRequestAt);
+    nextEtsyRequestAt = scheduled + 175;
+    if (scheduled > now) await pause(scheduled - now);
+    const response = await network(`https://api.etsy.com/v3/application/${path}`, { headers: { 'x-api-key': `${etsyKey}:${etsySecret}`, Authorization: `Bearer ${accessToken}` } });
+    if (response.ok) return response.json();
+    if (response.status !== 429) throw new Error('Etsy could not verify this connection. Try reconnecting.');
+    const retryAfter = Math.max(1000, Number(response.headers.get('Retry-After')) * 1000 || 1000 * (attempt + 1));
+    nextEtsyRequestAt = Math.max(nextEtsyRequestAt, Date.now() + retryAfter);
+    await pause(retryAfter);
+  }
+  throw new Error('Etsy is busy. Please wait a minute, then try the import again.');
 }
 async function refreshConnection(connection: Record<string, any>) {
   if (Date.parse(connection.expires_at) > Date.now() + 90000) return connection;
@@ -104,7 +117,7 @@ async function previewOrders(adminId: string, offset: number) {
   const receipts = list(page.results);
   const mappingRows = await database('product_etsy_mappings?select=etsy_sku,inventory_sku&active=eq.true');
   const inventoryByEtsySku = new Map(mappingRows.map((row: Record<string, any>) => [String(row.etsy_sku || '').trim().toLowerCase(), String(row.inventory_sku || '').trim()]));
-  const sales = (await concurrent(receipts, 4, async (receipt) => {
+  const sales = (await concurrent(receipts, 2, async (receipt) => {
     const receiptId = String(receipt.receipt_id || '');
     const transactions = list(receipt.transactions).length ? list(receipt.transactions) : list(await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/transactions`, connection.access_token));
     const payments = list(await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/payments`, connection.access_token));
