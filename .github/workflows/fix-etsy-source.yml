@@ -16,11 +16,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Replace obsolete historical handler at the source
-        shell: python
+        shell: bash
         run: |
+          python3 - <<'PY'
           from pathlib import Path
           import re
-          import subprocess
 
           admin = Path('admin.js')
           text = admin.read_text(encoding='utf-8')
@@ -55,9 +55,9 @@ jobs:
       (result.data||[]).forEach(row=>{
         const payload=row?.payload;
         if(payload?.historical!==true)return;
-        const window=payload?.historical_window;
-        if(!window)return;
-        const min=Number(window.min_created),max=Number(window.max_created);
+        const historicalWindow=payload?.historical_window;
+        if(!historicalWindow)return;
+        const min=Number(historicalWindow.min_created),max=Number(historicalWindow.max_created);
         if(Number.isFinite(min)&&Number.isFinite(max)&&max>min)windows.add(min+':'+max);
       });
       return windows;
@@ -103,7 +103,7 @@ jobs:
           html.write_text(html_text, encoding='utf-8')
 
           Path('admin-etsy-historical-v3.js').unlink(missing_ok=False)
-
+          PY
       - name: Commit source fix and remove temporary workflow
         shell: bash
         run: |
