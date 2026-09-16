@@ -4,6 +4,14 @@
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/admin/:path*", "destination": "/admin.html" }
   ],
+  "headers": [
+    {
+      "source": "/styles.css",
+      "headers": [
+        { "key": "Content-Type", "value": "text/css; charset=utf-8" }
+      ]
+    }
+  ],
   "git": {
     "deploymentEnabled": {
       "*": false,

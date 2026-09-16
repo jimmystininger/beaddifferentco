@@ -62,15 +62,16 @@ async function sendResendEmail(to: string, subject: string, text: string, html: 
   throw new Error(`Resend rejected the message${detail ? `: ${detail}` : "."}`);
 }
 
-async function sendOrderConfirmation(orderId: string, user: { id: string; email?: string; user_metadata?: Record<string, unknown> }) {
-  const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,status,total,subtotal,discount,shipping_amount,shipping_name,shipping_address,carrier,tracking_number,created_at,order_items(product_name,sku,quantity,unit_price,selected_options)`);
+async function sendOrderConfirmation(orderId: string, user: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null, guestOrderToken = "") {
+  const ownershipFilter = user ? `user_id=eq.${encodeURIComponent(user.id)}` : `user_id=is.null&guest_order_token=eq.${encodeURIComponent(guestOrderToken)}`;
+  const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&${ownershipFilter}&select=id,status,total,subtotal,discount,shipping_amount,shipping_name,shipping_address,customer_email,carrier,tracking_number,created_at,order_items(product_name,sku,quantity,unit_price,selected_options)`);
   if (!response.ok) throw new Error("Unable to load the order.");
   const orders = await response.json();
   const order = orders[0];
-  const email = textValue(user.email, 320).toLowerCase();
+  const email = textValue(order.customer_email || user?.email, 320).toLowerCase();
   if (!order) throw new Error("Order not found.");
   if (!emailPattern.test(email)) return { sent: 0, skipped: true };
-  const name = textValue(order.shipping_name || user.user_metadata?.full_name, 160);
+  const name = textValue(order.shipping_name || user?.user_metadata?.full_name, 160);
   const orderShortId = String(order.id).slice(0, 8);
   const items = Array.isArray(order.order_items) ? order.order_items : [];
   const itemLines = items.map((item: { product_name?: string; quantity?: number; unit_price?: number }) => `${textValue(item.product_name, 200)} × ${Math.max(1, Number(item.quantity) || 1)} — $${(Number(item.unit_price) * Math.max(1, Number(item.quantity) || 1)).toFixed(2)}`).join("\n");
@@ -86,8 +87,6 @@ Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
   if (!resendApiKey || !emailFrom) return json({ error: "Resend email delivery is not configured." }, 503);
-  const user = await currentUser(request);
-  if (!user) return json({ error: "Authentication required." }, 401);
   let payload: Record<string, unknown>;
   try {
     payload = await request.json();
@@ -97,8 +96,11 @@ Deno.serve(async (request) => {
   if (textValue(payload.action, 40) !== "confirmation") return json({ error: "Unsupported email action." }, 400);
   const orderId = textValue(payload.orderId, 80);
   if (!orderId) return json({ error: "Order id is required." }, 400);
+  const user = await currentUser(request);
+  const guestOrderToken = textValue(payload.guestOrderToken, 100);
+  if (!user && !guestOrderToken) return json({ error: "Authentication or guest order token is required." }, 401);
   try {
-    return json(await sendOrderConfirmation(orderId, user));
+    return json(await sendOrderConfirmation(orderId, user, guestOrderToken));
   } catch (error) {
     return json({ error: textValue(error instanceof Error ? error.message : error, 500) }, 502);
   }
