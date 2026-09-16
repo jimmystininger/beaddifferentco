@@ -1,5 +1,5 @@
 # One-time source-only migration; self-removes after the PR branch is fixed.
-# Trigger marker: 2026-09-16-source-fix-retry
+# Trigger marker: 2026-09-16-source-fix-retry-2
 name: One-time Etsy source fix
 
 on:
@@ -62,7 +62,7 @@ jobs:
           rm -f .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml .github/workflows/one-time-etsy-source-fix.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add admin.js admin.html admin-etsy-historical-v3.js .github/workflows/fix-etsy-source.yml .github/workflows/source-fix2.yml .github/workflows/one-time-etsy-source-fix.yml
+          git add -A
           if git diff --cached --quiet; then
             echo "No source changes needed."
             exit 0
