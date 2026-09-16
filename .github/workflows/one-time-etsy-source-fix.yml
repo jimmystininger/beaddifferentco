@@ -22,12 +22,16 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           admin = Path('admin.js')
           text = admin.read_text(encoding='utf-8')
-          pattern = r"  const importThreeYears=async\(\)=>\{.*?\};\n  const importAllReviews="
-          replacement = r'''  const importThreeYears=async()=>{
+          start_marker = '  const importThreeYears=async()=>{'
+          end_marker = '  const importAllReviews='
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('Could not locate the obsolete three-year handler in admin.js; source was not changed.')
+          replacement = '''  const importThreeYears=async()=>{
             if(!window.confirm('Import every Etsy order from the last three years? Already staged historical date windows will be skipped. Inventory, recipes, and Etsy Flags will NOT be changed by this historical import.'))return;
             setImportButtons(true);
             let stagedLines=0,stagedBatches=0,skippedWindows=0;
@@ -41,18 +45,15 @@ jobs:
               status.textContent='Historical Etsy staging finished: '+stagedLines+' new sale lines in '+stagedBatches+' staged batches. Skipped '+skippedWindows+' already-staged windows. Nothing has been applied to inventory.';
             }catch(error){status.textContent=(error.message||'Historical import stopped.')+' Staged so far: '+stagedLines+' sale lines in '+stagedBatches+' batches. Skipped '+skippedWindows+' already-staged windows.';}finally{setImportButtons(false);}
           };
-          const importAllReviews='''
-          updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
-          if count != 1:
-              raise SystemExit('Expected exactly one obsolete importThreeYears handler; source was not changed.')
-          admin.write_text(updated, encoding='utf-8')
+          '''
+          admin.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
 
           html = Path('admin.html')
           h = html.read_text(encoding='utf-8')
-          h2, removed = re.subn(r'\s*<script[^>]+src=["\']/admin-etsy-historical-v3\.js(?:\?[^"\']*)?["\'][^>]*></script>', '', h, count=1)
-          if removed != 1:
-              raise SystemExit('Expected exactly one v3 historical overlay script include; source was not changed.')
-          html.write_text(h2, encoding='utf-8')
+          script = '<script src="admin-etsy-historical-v3.js"></script>'
+          if script not in h:
+              raise SystemExit('Could not locate the v3 historical overlay script include; source was not changed.')
+          html.write_text(h.replace(script, '', 1), encoding='utf-8')
       - name: Remove failed overlay and this one-time workflow
         shell: bash
         run: |
