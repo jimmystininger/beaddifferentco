@@ -111,9 +111,10 @@ function receiptStatus(receipt: Record<string, any>) {
   const status = String(receipt.status || '').toLowerCase();
   return ['paid', 'completed', 'refunded', 'returned', 'cancelled'].includes(status) ? status : 'paid';
 }
-async function previewOrders(adminId: string, offset: number) {
+async function previewOrders(adminId: string, offset: number, minCreated?: number) {
   const connection = await importConnection();
-  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=25&offset=${offset}`, connection.access_token);
+  const dateFilter = Number.isFinite(minCreated) && Number(minCreated) > 0 ? `&min_created=${Math.floor(Number(minCreated))}` : '';
+  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=25&offset=${offset}${dateFilter}`, connection.access_token);
   const receipts = list(page.results);
   const mappingRows = await database('product_etsy_mappings?select=etsy_sku,inventory_sku&active=eq.true');
   const inventoryByEtsySku = new Map(mappingRows.map((row: Record<string, any>) => [String(row.etsy_sku || '').trim().toLowerCase(), String(row.inventory_sku || '').trim()]));
@@ -154,10 +155,24 @@ async function previewReviews(adminId: string, offset: number) {
   const connection = await importConnection();
   const page = await etsy(`shops/${connection.shop_id}/reviews?limit=25&offset=${offset}`, connection.access_token);
   const source = list(page.results);
-  const products = await database('products?select=id,name,external_id,etsy_listing_id&etsy_listing_id=not.is.null');
+  const products = await database('products?select=id,name,external_id,etsy_listing_id');
   const productByListing = new Map(products.map((product: Record<string, any>) => [String(product.etsy_listing_id), product]));
+  const productsById = new Map(products.map((product: Record<string, any>) => [String(product.id), product]));
+  const skuMappings = await database('product_etsy_mappings?select=product_id,etsy_sku&active=eq.true');
+  const productIdsBySku = new Map<string, Set<string>>();
+  skuMappings.forEach((mapping: Record<string, any>) => { const sku = String(mapping.etsy_sku || '').trim().toLowerCase(); if (!sku || !mapping.product_id) return; const ids = productIdsBySku.get(sku) || new Set<string>(); ids.add(String(mapping.product_id)); productIdsBySku.set(sku, ids); });
+  const unresolved = [...new Set(source.map((review) => String(review.listing_id || '')).filter((listingId) => listingId && !productByListing.has(listingId)))];
+  const inferredByListing = new Map<string, Record<string, any>>();
+  await concurrent(unresolved, 2, async (listingId) => {
+    try {
+      const inventory = await etsy(`listings/${encodeURIComponent(listingId)}/inventory`, connection.access_token);
+      const candidates = new Set<string>();
+      list(inventory.products).forEach((listingProduct) => { const ids = productIdsBySku.get(String(listingProduct.sku || '').trim().toLowerCase()); ids?.forEach((id) => candidates.add(id)); });
+      if (candidates.size === 1) { const product = productsById.get([...candidates][0]); if (product) inferredByListing.set(listingId, product); }
+    } catch { /* Expired or non-inventory listings remain available for manual matching. */ }
+  });
   const matched = source.map((review) => {
-    const listingId = String(review.listing_id || ''); const product = productByListing.get(listingId);
+    const listingId = String(review.listing_id || ''); const product = productByListing.get(listingId) || inferredByListing.get(listingId);
     const createdAt = stamp(review.create_timestamp || review.created_timestamp);
     const externalReviewId = String(review.transaction_id || review.review_id || `${listingId}:${createdAt}:${review.rating || ''}`);
     return { external_review_id: externalReviewId, listing_id: listingId, product_id: product?.id || null, product_name: product?.name || null, rating: Math.max(1, Math.min(5, Number(review.rating) || 5)), body: String(review.review || ''), photos: review.image_url_fullxfull ? [String(review.image_url_fullxfull)] : [], reviewer_name: String(review.buyer_name || review.buyer_login_name || ''), created_at: createdAt };
@@ -225,7 +240,7 @@ Deno.serve(async (request: Request) => {
       await database('etsy_connections?id=eq.true', 'DELETE');
       return json({ connected: false });
     }
-    if (body.action === 'preview_orders') return json(await previewOrders(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
+    if (body.action === 'preview_orders') return json(await previewOrders(adminId, Math.max(0, Math.floor(Number(body.offset) || 0)), Number(body.min_created)));
     if (body.action === 'preview_reviews') return json(await previewReviews(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
     if (!['status', 'verify'].includes(body.action)) return json({ error: 'Unknown connection action.' }, 400);
     let connection = (await database('etsy_connections?id=eq.true'))[0];
