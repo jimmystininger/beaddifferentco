@@ -1,3 +1,4 @@
+# One-time source-only migration; self-removes after the PR branch is fixed.
 name: One-time Etsy source fix
 
 on:
