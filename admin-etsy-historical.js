@@ -68,7 +68,11 @@
         };
         let cursor=start;const windowSize=30*day;
         while(cursor<end){const max=Math.min(end,cursor+windowSize);await processWindow(cursor,max);cursor=max;}
-        status.textContent='Historical Etsy staging finished: '+stagedLines+' new sale lines in '+stagedBatches+' staged batches. Skipped '+skippedWindows+' already-staged windows. Nothing has been applied to inventory.';
+        status.textContent='Applying staged Etsy history (sales only)…';
+        const {data:applied,error:applyError}=await client.rpc('apply_staged_historical_etsy_sales');
+        if(applyError)throw applyError;
+        const result=applied||{};
+        status.textContent='Three-year Etsy sales history finished: '+Number(result.inserted||0)+' new sale lines, '+Number(result.updated||0)+' updated sale lines, '+Number(result.deduped_staged_sales||0)+' total unique staged sale lines. Inventory was not changed.';
       }catch(e){status.textContent=(e.message||'Historical import stopped.')+' Staged so far: '+stagedLines+' sale lines in '+stagedBatches+' batches. Skipped '+skippedWindows+' already-staged windows.';}
       finally{buttons.forEach(b=>b.disabled=false);}
     };
