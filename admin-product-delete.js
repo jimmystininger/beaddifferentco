@@ -1,4 +1,6 @@
 (() => {
+  const isPreviewBranch = () => window.location.hostname.includes('-git-preview-delete-product-page-');
+
   const addDeleteProductPageButton = () => {
     const form = document.querySelector('#cloud-item-form[data-product-id]');
     if (!form || form.dataset.deletePageReady === 'true') return;
@@ -26,6 +28,13 @@
       );
       if (!confirmed) return;
 
+      // The Vercel preview points at the live Supabase project. Never allow a
+      // destructive click on this preview to mutate production data.
+      if (isPreviewBranch()) {
+        window.alert('Preview only: the delete action was not executed. No product or inventory data was changed.');
+        return;
+      }
+
       button.disabled = true;
       button.textContent = 'Deleting…';
 
@@ -39,7 +48,7 @@
         const adjustments = await admin.from('inventory_adjustments').update({ product_id: null }).eq('product_id', productId);
         if (adjustments.error && !/null|not-null|constraint/i.test(adjustments.error.message || '')) throw adjustments.error;
 
-        // Delete only page-owned data that is not safely handled by the product FK cascade.
+        // Delete page-owned Etsy mapping components before the page itself.
         const mappingRows = await admin.from('product_etsy_mappings').select('id').eq('product_id', productId);
         if (mappingRows.error) throw mappingRows.error;
         const mappingIds = (mappingRows.data || []).map(row => row.id).filter(Boolean);
