@@ -394,11 +394,13 @@ async function syncCloudStore(){
     await loadCartProductOptions();
     await applyCanonicalInventory();
   }
-  const cloudBag=cloudItems.map((item)=>{
+  const cloudBagEntries=cloudItems.map((item)=>{
     const product=findProduct(item.product_id);
     if(!product)return null;
     return{id:product.externalId||product.id,quantity:Number(item.quantity)||1,selectedOptions:normalizeCartOptions(item.selected_options)};
   }).filter(Boolean);
+  const cloudBag=mergeCartLines(cloudBagEntries);
+  const cloudCartNeedsNormalization=cloudBag.length<cloudBagEntries.length;
   // A sign-out keeps a local handoff snapshot so the cart survives the auth
   // transition.  When the same snapshot is already present in the cloud
   // cart, do not merge it a second time on the next sign-in.  Only merge
@@ -409,7 +411,7 @@ async function syncCloudStore(){
   const mergedBag=holdApplies?(heldCartChanged?localBag:cloudBag):cartDirty&&localBag.length?mergeCartLines(localBag):mergeCartLines([...cloudBag,...localBagToMerge]);
   writeStore(storeKeys.bag,mergedBag);
   localStorage.setItem(storeKeys.cartOwner,cart.id);
-  if((cartDirty&&localBag.length)||localBagToMerge.length||(user&&heldCartChanged))await persistCloudCart();
+  if((cartDirty&&localBag.length)||localBagToMerge.length||(user&&heldCartChanged)||cloudCartNeedsNormalization)await persistCloudCart();
   if(user){localStorage.setItem(storeKeys.cartHoldUser,String(user.id||''));if(heldSnapshot){localStorage.removeItem(storeKeys.cartHoldSnapshot);localStorage.removeItem(storeKeys.cartHoldUser);}}
   if(user)await withStoreTimeout(window.beadSupabase.from('customer_favorites').select('product_id,products!inner(id,external_id,visible)').eq('user_id',user.id).eq('products.visible',true),'Favorites sync request').then((favoriteResult)=>{
       if(favoriteResult.error)throw favoriteResult.error;
