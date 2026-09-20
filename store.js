@@ -147,28 +147,24 @@ async function loadCatalog(){
   let data=[],error=null;
   try{
     if(productPageId){
-      // A detail route has one known key; avoid the general catalog range
-      // request and its anonymous-only failure mode.
-      const result=await withStoreTimeout(productQueryFor().limit(1),'Product request');
-      data=result.data||[];error=result.error||null;
+      // Detail pages must never accept an unrelated row returned by an
+      // intermediary cache. Read the exact public row through REST with a
+      // unique discriminator and validate the identifier before mapping it.
+      const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const filterField=uuidPattern.test(productPageId)?'id':'external_id';
+      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
+      const nonce=crypto.randomUUID();
+      const response=await withStoreTimeout(fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'}),'Product request');
+      const responseData=await response.json();
+      const exactRow=Array.isArray(responseData)?responseData.find((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId):null;
+      if(!response.ok)error=new Error(`Product request failed (${response.status}).`);
+      else if(exactRow)data=[exactRow];
+      else error=new Error('The product request returned an unrelated row.');
     }else{
       const result=await fetchStorePages(()=>productQueryFor().order('added_at',{ascending:false}).limit(homepage?12:1000));
       data=result.data||[];error=result.error||null;
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
-  if(productPageId&&(!data.length||!data.some((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId))){
-    const retryDebug=new URLSearchParams(location.search).has('debugCatalog');
-    try{
-      const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const filterField=uuidPattern.test(productPageId)?'id':'external_id';
-      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
-      const nonce=crypto.randomUUID();
-      const response=await fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache'},cache:'no-store'});
-      const retryData=await response.json();
-      if(retryDebug)window.storeCatalogRetryDebug={status:response.status,ok:response.ok,count:Array.isArray(retryData)?retryData.length:0,first:Array.isArray(retryData)?retryData[0]||null:retryData};
-      if(response.ok&&Array.isArray(retryData)){data=retryData;error=null;}
-    }catch(retryError){if(retryDebug)window.storeCatalogRetryDebug={error:String(retryError?.message||retryError)};window.storeCatalogError=retryError;}
-  }
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
   if(!data?.length){catalog=[];return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
