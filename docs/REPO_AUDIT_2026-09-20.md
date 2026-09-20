@@ -41,4 +41,3 @@ No object was deleted. Storage deletion needs the authenticated Storage API and 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
 2. Review the 67 storage orphans in the admin context, then remove only confirmed objects through the Storage API.
 3. Add a repeatable CI audit for migration-name drift, storage-reference checks, and generated-output staleness.
-
