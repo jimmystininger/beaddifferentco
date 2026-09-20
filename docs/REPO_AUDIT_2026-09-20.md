@@ -56,8 +56,13 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 - The cart previously called the Edge Function without the transient-request retry already used by the product page. Cart quotes now use that shared retry path and recognize the Supabase client error text `Failed to send a request to the Edge Function`; configuration, validation, and provider errors are still returned immediately.
 - The live quote endpoints remain unauthenticated public functions with client-side caching only. Origin allowlisting, bounded server-side caching/rate limiting, and provider-cost monitoring remain pre-launch hardening work; no such external behavior change was made in this repair.
 
+### Repeatable repository audit — added
+
+- `tools/repository-audit.mjs` now checks every HTML route for missing local `href`/`src` targets, rejects root-level parallel implementation artifacts, and fails when stale `.vercel/output` is present.
+- The same audit runs in `.github/workflows/repository-gates.yml`; the current repository passes it across 26 HTML routes. Live migration-ledger and storage-reference checks remain intentionally separate because they require credentialed Supabase access.
+
 ## Remaining audit work
 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
 2. Review the 67 storage orphans in the admin context, then remove only confirmed objects through the Storage API.
-3. Add a repeatable CI audit for migration-name drift, storage-reference checks, and generated-output staleness.
+3. Add credentialed CI evidence for migration-name drift and storage-reference checks without exposing Supabase secrets to browser code.
