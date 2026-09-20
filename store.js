@@ -18,7 +18,7 @@ const writeStore=(key,value)=>localStorage.setItem(key,JSON.stringify(value));
 const readCartPromo=()=>String(localStorage.getItem(storeKeys.promo)||'').trim();
 const writeCartPromo=(code)=>{const normalized=String(code||'').trim();if(normalized)localStorage.setItem(storeKeys.promo,normalized);else localStorage.removeItem(storeKeys.promo);};
 // Keep a local handoff snapshot so logging out and back in does not re-merge the same account cart.
-const cartSnapshot=(items=[])=>JSON.stringify((Array.isArray(items)?items:[]).map((item)=>({id:String(item?.id||''),quantity:Math.max(1,Number(item?.quantity)||1),selectedOptions:normalizeCartOptions(item?.selectedOptions)})).filter((item)=>item.id).sort((first,second)=>`${first.id}:${JSON.stringify(first.selectedOptions)}`.localeCompare(`${second.id}:${JSON.stringify(second.selectedOptions)}`)));
+const cartSnapshot=(items=[])=>JSON.stringify((Array.isArray(items)?items:[]).map((item)=>{const product=typeof findProduct==='function'?findProduct(item?.id):null;return{id:String(product?.externalId||product?.id||item?.id||''),quantity:Math.max(1,Number(item?.quantity)||1),selectedOptions:normalizeCartOptions(item?.selectedOptions)};}).filter((item)=>item.id).sort((first,second)=>`${first.id}:${JSON.stringify(first.selectedOptions)}`.localeCompare(`${second.id}:${JSON.stringify(second.selectedOptions)}`)));
 function parseCsv(text){const rows=[];let row=[],cell='',quoted=false;for(let index=0;index<text.length;index+=1){const char=text[index],next=text[index+1];if(char==='"'&&quoted&&next==='"'){cell+='"';index+=1;}else if(char==='"'){quoted=!quoted;}else if(char===','&&!quoted){row.push(cell);cell='';}else if((char==='\n'||char==='\r')&&!quoted){if(char==='\r'&&next==='\n')index+=1;row.push(cell);if(row.some((value)=>value!==''))rows.push(row);row=[];cell='';}else cell+=char;}if(cell||row.length){row.push(cell);rows.push(row);}const headers=rows.shift().map((header)=>header.replace(/^\uFEFF/,''));return rows.map((values)=>Object.fromEntries(headers.map((header,index)=>[header,values[index]||''])));}
 async function ensureSupabaseClient(){if(window.beadSupabase)return window.beadSupabase;if(window.beadSupabaseReady)return window.beadSupabaseReady;const loadScript=(source)=>new Promise((resolve)=>{const script=document.createElement('script');script.src=source;script.onload=resolve;script.onerror=()=>resolve();document.head.append(script);});const librarySource='/vendor/supabase.min.js';window.beadSupabaseReady=(window.supabase?Promise.resolve():loadScript(librarySource)).then(()=>window.beadSupabase?window.beadSupabase:loadScript('supabase-client.js?v=20260920-canonical44').then(()=>window.beadSupabase||window.supabase?.createClient(window.beadSupabaseUrl,window.beadSupabasePublishableKey)));return window.beadSupabaseReady;}
 async function loadStoreControls(){const client=await ensureSupabaseClient();if(!client)return storeControls;const result=await withStoreTimeout(client.from('storefront_store_controls').select('sales_frozen,etsy_imports_frozen').maybeSingle(),'Store controls request');if(!result.error&&result.data){storeControls.salesFrozen=result.data.sales_frozen===true;storeControls.etsyImportsFrozen=result.data.etsy_imports_frozen===true;}return storeControls;}async function loadPublicRewardSettings(){const client=await ensureSupabaseClient();if(!client||!window.productStoreConfig)return window.productStoreConfig;const result=await withStoreTimeout(client.rpc('get_storefront_reward_settings'),'Reward settings request');if(!result.error&&result.data){window.productStoreConfig.rewardThreshold=Math.max(0.01,Number(result.data.threshold)||35);window.productStoreConfig.rewardDiscountPercent=Math.min(100,Math.max(0.01,Number(result.data.discountPercent)||5));}return window.productStoreConfig;}
@@ -397,9 +397,14 @@ async function syncCloudStore(){
   const cloudBag=cloudItems.map((item)=>{
     const product=findProduct(item.product_id);
     if(!product)return null;
-    return{id:product.databaseId||product.id,quantity:Number(item.quantity)||1,selectedOptions:normalizeCartOptions(item.selected_options)};
+    return{id:product.externalId||product.id,quantity:Number(item.quantity)||1,selectedOptions:normalizeCartOptions(item.selected_options)};
   }).filter(Boolean);
-  const localBagToMerge=!holdApplies&&!cartOwner&&!cartDirty&&localBag.length?localBag:[];
+  // A sign-out keeps a local handoff snapshot so the cart survives the auth
+  // transition.  When the same snapshot is already present in the cloud
+  // cart, do not merge it a second time on the next sign-in.  Only merge
+  // local lines that are genuinely different (for example, guest additions
+  // made while signed out).
+  const localBagToMerge=!holdApplies&&!cartOwner&&!cartDirty&&localBag.length&&cartSnapshot(localBag)!==cartSnapshot(cloudBag)?localBag:[];
   const heldCartChanged=holdApplies&&cartSnapshot(localBag)!==heldSnapshot;
   const mergedBag=holdApplies?(heldCartChanged?localBag:cloudBag):cartDirty&&localBag.length?mergeCartLines(localBag):mergeCartLines([...cloudBag,...localBagToMerge]);
   writeStore(storeKeys.bag,mergedBag);
@@ -421,7 +426,7 @@ const initializeCloudStoreSync=async()=>{
   await queueStoreSync(()=>syncCloudStore());
 };
 window.customerStoreReady=initializeCloudStoreSync();
-function clearLocalCart(){const localBag=bagItems();if(localBag.length)localStorage.setItem(storeKeys.cartHoldSnapshot,cartSnapshot(localBag));else{localStorage.removeItem(storeKeys.cartHoldSnapshot);localStorage.removeItem(storeKeys.cartHoldUser);}localStorage.removeItem(storeKeys.cartOwner);localStorage.removeItem(storeKeys.cartDirty);writeStore(storeKeys.wishlist,[]);if(typeof updateBagCount==='function')updateBagCount();window.dispatchEvent(new Event('bead-cart-changed'));}
+function clearLocalCart(userId=''){const localBag=bagItems();if(localBag.length){localStorage.setItem(storeKeys.cartHoldSnapshot,cartSnapshot(localBag));localStorage.setItem(storeKeys.cartHoldUser,String(userId||''));}else{localStorage.removeItem(storeKeys.cartHoldSnapshot);localStorage.removeItem(storeKeys.cartHoldUser);}localStorage.removeItem(storeKeys.cartOwner);localStorage.removeItem(storeKeys.cartDirty);writeStore(storeKeys.wishlist,[]);if(typeof updateBagCount==='function')updateBagCount();window.dispatchEvent(new Event('bead-cart-changed'));}
 window.customerStore={sync:syncCloudStore,clearForSignOut:clearLocalCart};
 const bagItems=()=>{const items=readStore(storeKeys.bag);const normalized=mergeCartEntries(items);if(JSON.stringify(items)!==JSON.stringify(normalized))writeStore(storeKeys.bag,normalized);return normalized;};
 const wishlistItems=()=>readStore(storeKeys.wishlist);
