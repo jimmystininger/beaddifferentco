@@ -50,6 +50,12 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 - All 8 local Edge Functions have matching active deployments in project `zejcuqhihbfpuwsjvmhc`.
 - Normalized `index.ts` content matches exactly for every function (`etsy-connect`, `etsy-historical`, `ohio-sales-tax`, `send-auth-email`, `send-order-email`, `send-restock-notifications`, `send-store-email`, and `shipping-rates`). No local/live function drift was found; no deployment was performed.
 
+### USPS quote flow — cart retry repaired
+
+- The product page and cart both use the canonical `store.js` shipping client and the live `shipping-rates` Edge Function. A production guest-cart smoke test returned USPS Ground Advantage ($7.90), Priority Mail ($11.00), and an estimated delivery date with no browser errors.
+- The cart previously called the Edge Function without the transient-request retry already used by the product page. Cart quotes now use that shared retry path and recognize the Supabase client error text `Failed to send a request to the Edge Function`; configuration, validation, and provider errors are still returned immediately.
+- The live quote endpoints remain unauthenticated public functions with client-side caching only. Origin allowlisting, bounded server-side caching/rate limiting, and provider-cost monitoring remain pre-launch hardening work; no such external behavior change was made in this repair.
+
 ## Remaining audit work
 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
