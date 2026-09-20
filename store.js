@@ -129,6 +129,9 @@ async function hydrateStorefrontOptionInventory(client,optionRows){
   return (optionRows||[]).map((option)=>({...option,product_option_values:(option.product_option_values||[]).map((value)=>({...value,inventory_skus:storefrontInventoryById.get(String(value.inventory_sku_id||''))||null}))}));
 }
 async function loadCatalog(){
+  const catalogDebug=new URLSearchParams(location.search).has('debugCatalog');
+  const debugCatalog=(stage,details={})=>{if(catalogDebug)window.storeCatalogDebug={stage,...details};};
+  debugCatalog('start',{page:document.body.dataset.page||'',productId:new URLSearchParams(location.search).get('id')||''});
   const client=await ensureSupabaseClient();
   if(!client){catalog=[];window.storeCatalogError=new Error('The live store catalog could not be connected.');return catalog;}
   if(storefrontListingPage())return loadStorefrontCategoryPage(1);
@@ -156,8 +159,9 @@ async function loadCatalog(){
       data=result.data||[];error=result.error||null;
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
+  debugCatalog('product-request',{error:error?String(error.message||error):null,count:data.length});
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
-  if(!data?.length){catalog=[];return catalog;}
+  if(!data?.length){catalog=[];debugCatalog('no-product',{error:error?String(error.message||error):null});return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
     const media=imagesByProduct.get(item.id)||[];
     return{...item,id:item.external_id||item.id,databaseId:item.id,externalId:item.external_id,seoTitle:item.seo_title||item.name,searchText:item.search_text||item.seo_title||item.name,category:item.subcategory_slug||item.category_slug,image:media.find((entry)=>entry.media_type!=='video')?.url||'product-mix.jpg',images:media.filter((entry)=>entry.media_type!=='video').map((entry)=>entry.url),media:media.map((entry)=>({url:entry.url,type:entry.media_type||'image'})),options:optionRows.filter((option)=>option.product_id===item.id).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_available===null||value.inventory_skus?.quantity_available===undefined?0:Number(value.inventory_skus.quantity_available)||0,lowStockThreshold:0}))})),price:Number(item.price)||0,promoPrice:null,displayPrice:Number(item.price)||0,promoDiscountPercent:Number(item.promo_discount_percent)||0,promoSkus:Array.isArray(item.promo_skus)?item.promo_skus:[],addedAt:item.added_at,waitlist:item.waitlist_enabled,description:item.description||'',itemDetails:item.item_details||'',shippingDetails:item.shipping_details||'',etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,quantity:Number(item.quantity)||0,lowStockThreshold:Number(item.low_stock_threshold)||0,badges:Array.isArray(item.badges)?item.badges:[]};
@@ -178,6 +182,7 @@ async function loadCatalog(){
     let hydratedOptionRows=optionResult.data||[];
     try{hydratedOptionRows=await hydrateStorefrontOptionInventory(client,hydratedOptionRows);}catch(error){window.storeCatalogOptionsError=error;}
     catalog=mapRows(data,imagesByProduct,hydratedOptionRows);
+    debugCatalog('enriched',{count:catalog.length,images:imageResult.data?.length||0,options:hydratedOptionRows.length});
     window.dispatchEvent(new Event('bead-catalog-enriched'));
     return catalog;
   };
