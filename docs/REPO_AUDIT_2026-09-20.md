@@ -61,6 +61,11 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 - `tools/repository-audit.mjs` now checks every HTML route for missing local `href`/`src` targets, rejects root-level parallel implementation artifacts, and fails when stale `.vercel/output` is present.
 - The same audit runs in `.github/workflows/repository-gates.yml`; the current repository passes it across 26 HTML routes. Live migration-ledger and storage-reference checks remain intentionally separate because they require credentialed Supabase access.
 
+### Production runtime — passed
+
+- Vercel runtime-error aggregation for the last 7 days returned no runtime errors, and production error/fatal log counts were empty.
+- The current production deployment is READY from merged commit `b78ba1d` (PR #91). The live cart USPS smoke test was repeated against that release with a guest address and returned both configured USPS services without browser console errors.
+
 ## Remaining audit work
 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
