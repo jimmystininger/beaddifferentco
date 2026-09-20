@@ -154,14 +154,19 @@ async function loadCatalog(){
   });
   const productIds=data.map((item)=>item.id);
   const enrichCatalog=async()=>{
+    // Product visibility must not depend on optional media/option enrichment.
+    // A slow or restricted child request used to reject loadCatalog entirely,
+    // leaving the otherwise public product looking like an unavailable item.
     const [imageResult,optionResult]=await Promise.all([
-      fetchStoreBatches(productIds,(batch)=>client.from('product_images').select('id,product_id,url,alt_text,sort_order,media_type').in('product_id',batch).order('sort_order').order('id')),
-      fetchStoreBatches(productIds,(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order'))
+      fetchStoreBatches(productIds,(batch)=>client.from('product_images').select('id,product_id,url,alt_text,sort_order,media_type').in('product_id',batch).order('sort_order').order('id')).catch((error)=>({data:[],error})),
+      fetchStoreBatches(productIds,(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order')).catch((error)=>({data:[],error}))
     ]);
-    if(imageResult.error||optionResult.error)throw imageResult.error||optionResult.error;
+    if(imageResult.error)window.storeCatalogImagesError=imageResult.error;
+    if(optionResult.error)window.storeCatalogOptionsError=optionResult.error;
     const imagesByProduct=new Map();
     (imageResult.data||[]).forEach((image)=>{const images=imagesByProduct.get(image.product_id)||[];images.push(image);imagesByProduct.set(image.product_id,images);});
-    const hydratedOptionRows=await hydrateStorefrontOptionInventory(client,optionResult.data||[]);
+    let hydratedOptionRows=optionResult.data||[];
+    try{hydratedOptionRows=await hydrateStorefrontOptionInventory(client,hydratedOptionRows);}catch(error){window.storeCatalogOptionsError=error;}
     catalog=mapRows(data,imagesByProduct,hydratedOptionRows);
     window.dispatchEvent(new Event('bead-catalog-enriched'));
     return catalog;
@@ -169,7 +174,8 @@ async function loadCatalog(){
   const applyPageScopedSkuOptions=async()=>{
     const skus=[...new Set(catalog.flatMap((item)=>(item.options||[]).flatMap((option)=>option.values||[])).map((value)=>String(value?.inventorySku||value?.sku||'').trim()).filter(Boolean))];
     if(!skus.length)return;
-    const result=await fetchStoreBatches(skus,(batch)=>client.from('storefront_inventory_skus').select('sku,name,product_pages').in('sku',batch));
+    let result;
+    try{result=await fetchStoreBatches(skus,(batch)=>client.from('storefront_inventory_skus').select('sku,name,product_pages').in('sku',batch));}catch(error){window.storeCatalogOptionsError=error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error}}));return;}
     if(result.error){
       window.storeCatalogOptionsError=result.error;
       window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error:result.error}}));
