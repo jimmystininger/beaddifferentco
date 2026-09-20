@@ -229,6 +229,8 @@ const setupShoppingBag=async()=>{
   const optionSummary=(entry)=>normalizeCartOptions(entry.selectedOptions).map((option)=>option.label).filter(Boolean).join(' · ');
   const packCountForCart=(pricing)=>{const label=String(pricing?.option?.label||'');const countLabel=label.match(/\((\d+)\s*(?:ct|count|pcs?|pack)\)/i);if(countLabel)return Math.max(1,Number(countLabel[1])||1);const packMatch=String(pricing?.sku||'').match(/-(\d+)PK$/i);return packMatch?Math.max(1,Number(packMatch[1])||1):1;};
   const linePricing=(entry,item)=>window.storeCartPricing(item,entry);
+  const lineNeedsOption=(entry,item,pricing)=>Boolean(item?.options?.some((option)=>option.required)&&!pricing?.option);
+  const invalidEntries=()=>validBagItems().filter((entry)=>{const item=findProduct(entry.id);return item&&lineNeedsOption(entry,item,linePricing(entry,item));});
   const currentEntries=()=>validBagItems().filter((entry)=>findProduct(entry.id));
   const renderCart=()=>{
     const allEntries=validBagItems();
@@ -236,11 +238,12 @@ const setupShoppingBag=async()=>{
     grid.replaceChildren(...entries.map((entry)=>{
       const item=findProduct(entry.id);
       const pricing=linePricing(entry,item);
+      const invalidOption=lineNeedsOption(entry,item,pricing);
       const quantity=Math.max(1,Number(entry.quantity)||1);
       const inventoryMaximum=window.storeCart?.maxQuantity?.(entry.id,entry.selectedOptions,entries);
       const finiteInventoryMaximum=Number.isFinite(inventoryMaximum);
       const row=document.createElement('article');
-      row.className='cart-line';
+      row.className='cart-line'+(invalidOption?' cart-line-invalid':'');
       const image=pricing.option?.imageUrl||item.image||'product-mix.jpg';
       const productHref=`product.html?id=${encodeURIComponent(item.id)}`;
       const priceMarkup=pricing.productPromoApplied?`<s class="cart-line-original-price">$${pricing.originalUnitPrice.toFixed(2)}</s> <span class="cart-line-promo-price">$${pricing.unitPrice.toFixed(2)}</span>`:`$${pricing.unitPrice.toFixed(2)}`;
@@ -248,7 +251,7 @@ const setupShoppingBag=async()=>{
       const packCount=packCountForCart(pricing);
       const wished=wishlistItems().includes(entry.id);
       const promoDetails=pricing.promoDetails?`<small class="cart-line-promo-disclaimer">${escapeProductText(pricing.promoDetails)}</small>`:'';
-      row.innerHTML=`<a class="cart-line-image-link" href="${productHref}" aria-label="View ${escapeProductText(item.name)}"><img class="product-card-image" src="${escapeProductText(image)}" alt="${escapeProductText(item.name)}"></a><div class="cart-line-copy"><h3>${escapeProductText(item.name)}</h3>${optionSummary(entry)?`<p>${escapeProductText(optionSummary(entry))}</p>`:''}<p class="cart-line-sku">SKU: ${escapeProductText(pricing.sku||item.sku||'—')}</p></div><div class="cart-line-unit"><span>Price / unit</span><strong>${priceMarkup}</strong>${promoDetails}</div><label class="cart-line-quantity">Quantity<input type="number" min="1" ${finiteInventoryMaximum?`max="${Math.max(1,inventoryMaximum)}"`:''} step="1" value="${quantity}" data-cart-quantity>${finiteInventoryMaximum?`<small>${inventoryMaximum} max with other cart items</small>`:''}</label><div class="cart-line-total"><span>Line total</span><strong>${totalMarkup}</strong></div><div class="cart-line-actions"><a href="#" class="cart-line-favorite${wished?' active':''}" data-cart-favorite aria-label="${wished?'Remove from':'Add to'} favorites">${wished?'Remove from Favorites':'Add to Favorites'}</a><a href="#" class="cart-line-remove" data-remove-cart-line>Remove</a></div>`;
+      row.innerHTML=`<a class="cart-line-image-link" href="${productHref}" aria-label="View ${escapeProductText(item.name)}"><img class="product-card-image" src="${escapeProductText(image)}" alt="${escapeProductText(item.name)}"></a><div class="cart-line-copy"><h3>${escapeProductText(item.name)}</h3>${optionSummary(entry)?`<p>${escapeProductText(optionSummary(entry))}</p>`:''}<p class="cart-line-sku">SKU: ${escapeProductText(pricing.sku||item.sku||'—')}</p>${invalidOption?`<p class="cart-line-warning" role="alert">This saved line is missing its pack option. Reopen the product to choose an option, or remove this line before checkout.</p>`:''}</div><div class="cart-line-unit"><span>Price / unit</span><strong>${priceMarkup}</strong>${promoDetails}</div><label class="cart-line-quantity">Quantity<input type="number" min="1" ${finiteInventoryMaximum?`max="${Math.max(1,inventoryMaximum)}"`:''} step="1" value="${quantity}" data-cart-quantity></label><div class="cart-line-total"><span>Line total</span><strong>${totalMarkup}</strong></div><div class="cart-line-actions"><a href="#" class="cart-line-favorite${wished?' active':''}" data-cart-favorite aria-label="${wished?'Remove from':'Add to'} favorites">${wished?'Remove from Favorites':'Add to Favorites'}</a><a href="#" class="cart-line-remove" data-remove-cart-line>Remove</a></div>`;
       const unitLabel=row.querySelector('.cart-line-unit span');
       if(unitLabel)unitLabel.textContent=packCount>1?`Price / ${packCount} Pack`:'Price / unit';
       if(packCount>1){const bulkNote=document.createElement('small');bulkNote.className='cart-line-bulk-pricing';bulkNote.textContent=`Bulk pricing · $${(pricing.unitPrice/packCount).toFixed(2)} per bead`;row.querySelector('.cart-line-unit')?.append(bulkNote);}
@@ -258,6 +261,7 @@ const setupShoppingBag=async()=>{
       return row;
     }));
     const unresolved=window.storeCartCatalogState==='ready'&&allEntries.length>entries.length;
+    storePage.dataset.invalidCartLines=String(invalidEntries().length);
     storePage.classList.toggle('bag-is-empty',entries.length===0);
     empty.hidden=entries.length>0;
     empty.textContent=unresolved?'Some saved items are no longer available.':'Your shopping bag is empty.';
@@ -297,6 +301,7 @@ const setupShoppingBag=async()=>{
   const promoLabel=(promo)=>window.storePromos.discountLabel?.(promo)||'';
   const drawSummary=()=>{
     const totals=currentTotals();
+    const invalid=invalidEntries();
     const discount=promoDiscount(totals);
     const standard=shippingQuote?.standard;
     const priority=shippingQuote?.priority;
@@ -307,7 +312,9 @@ const setupShoppingBag=async()=>{
     const eta=selectedRate?.scheduledDeliveryDate;
     const dateLabel=eta?new Date(eta+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'Quote pending';
     const promoMarkup=activePromo?`<div class="checkout-promo-applied"><span>Promo code · ${escapeProductText(activePromo.code||'Automatic promotion')} · ${escapeProductText(promoLabel(activePromo))}</span><strong>-$${discount.toFixed(2)}</strong><button type="button" data-remove-checkout-promo>Remove</button></div>`:'';
-    orderSummary.innerHTML=`<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${selectedRate?(shippingMethod==='standard'&&shippingQuote.free?'Free':'$'+shippingAmount.toFixed(2)):'Quote pending'}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div></div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
+    orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${selectedRate?(shippingMethod==='standard'&&shippingQuote.free?'Free':'$'+shippingAmount.toFixed(2)):'Quote pending'}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div></div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
+    const checkoutButton=form.querySelector('button[type="submit"]');
+    if(checkoutButton){checkoutButton.disabled=invalid.length>0;checkoutButton.title=invalid.length?'Resolve highlighted cart items before checkout.':'';}
     orderSummary.querySelector('[data-checkout-shipping-method]')?.addEventListener('change',(event)=>{shippingMethod=event.target.value==='priority'?'priority':'standard';void refreshQuote();});
     orderSummary.querySelector('[data-remove-checkout-promo]')?.addEventListener('click',()=>{activePromo=window.storePromos.auto(currentTotals().subtotal);savedPromoCode='';window.storeCart?.clearPromo?.();form.elements.promo_code.value='';promoStatus.textContent=activePromo?'Automatic promotion reapplied.':'Promotion removed.';drawSummary();});
   };
@@ -390,6 +397,8 @@ const setupShoppingBag=async()=>{
   });
   form.addEventListener('submit',async(event)=>{
     event.preventDefault();
+    const invalid=invalidEntries();
+    if(invalid.length){status.textContent=`Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.`;drawSummary();return;}
     const address=addressValue();
     if(!addressValid(address)){status.textContent='Complete the shipping address first.';setAddressExpanded(true);return;}
     const account=window.customerAccounts?.current?.();
