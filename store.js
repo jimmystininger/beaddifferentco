@@ -157,6 +157,7 @@ async function loadCatalog(){
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
   if(productPageId&&(!data.length||!data.some((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId))){
+    const retryDebug=new URLSearchParams(location.search).has('debugCatalog');
     try{
       const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const filterField=uuidPattern.test(productPageId)?'id':'external_id';
@@ -164,8 +165,9 @@ async function loadCatalog(){
       const nonce=crypto.randomUUID();
       const response=await fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache'},cache:'no-store'});
       const retryData=await response.json();
+      if(retryDebug)window.storeCatalogRetryDebug={status:response.status,ok:response.ok,count:Array.isArray(retryData)?retryData.length:0,first:Array.isArray(retryData)?retryData[0]||null:retryData};
       if(response.ok&&Array.isArray(retryData)){data=retryData;error=null;}
-    }catch(retryError){window.storeCatalogError=retryError;}
+    }catch(retryError){if(retryDebug)window.storeCatalogRetryDebug={error:String(retryError?.message||retryError)};window.storeCatalogError=retryError;}
   }
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
   if(!data?.length){catalog=[];return catalog;}
