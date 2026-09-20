@@ -38,6 +38,11 @@ The admin uploader safety path was repaired in PR #87: product-scoped uploads us
 - The two RLS-enabled tables without policies are the private Etsy OAuth tables; their browser-role privileges are revoked by design.
 - Performance notices include unused indexes and multiple permissive policies. They require query-traffic evidence and policy-by-policy review; no index or policy was removed opportunistically.
 
+### Routes and local assets — passed
+
+- A static audit of every HTML entry route found zero missing local `href` or `src` targets after query/hash normalization.
+- The repository root has no `fixed`, `backup`, `legacy`, `copy`, or `v2` duplicate implementation files. The previously stale ignored `.vercel/output` directory remains absent.
+
 ## Remaining audit work
 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
