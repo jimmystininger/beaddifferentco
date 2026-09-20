@@ -38,6 +38,8 @@ The admin uploader safety path was repaired in PR #87: product-scoped uploads us
 - The two RLS-enabled tables without policies are the private Etsy OAuth tables; their browser-role privileges are revoked by design.
 - Performance notices include unused indexes and multiple permissive policies. They require query-traffic evidence and policy-by-policy review; no index or policy was removed opportunistically.
 
+Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR), 8 anonymous security-definer functions (WARN), 26 authenticated security-definer functions (WARN), 1 disabled leaked-password-protection setting (WARN), 2 RLS-without-policy tables (INFO), 25 unindexed foreign keys (INFO), 47 unused indexes (INFO), and 18 multiple-permissive-policy findings (WARN). The admin RPCs check `private.is_admin()`; the public cart/catalog/newsletter functions are intentionally exposed for the current storefront. The test-checkout RPC additionally requires `test_order=true`, but it can still create a test order and decrement inventory; it must remain gated until real payment checkout replaces it. Enabling leaked-password protection is a Supabase Auth dashboard setting, not a repository migration, and remains an external follow-up.
+
 ### Routes and local assets — passed
 
 - A static audit of every HTML entry route found zero missing local `href` or `src` targets after query/hash normalization.
