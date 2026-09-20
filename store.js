@@ -138,14 +138,24 @@ async function loadCatalog(){
   if(!['Home','Product','Search','Sale Collection','Wishlist','Account'].includes(pageName)){catalog=[];return catalog;}
   const homepage=document.body.dataset.page==='Home';
   const productPageId=document.body.dataset.page==='Product'?(document.body.dataset.productId||new URLSearchParams(location.search).get('id')||''):'';
-  const {data,error}=await fetchStorePages(()=>{
+  const productQueryFor=()=>{
     let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions');
     if(document.body.dataset.page!=='Admin')productQuery=productQuery.eq('visible',true);
     if(productPageId){const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;productQuery=productQuery.eq(uuidPattern.test(productPageId)?'id':'external_id',productPageId);}
-    productQuery=productQuery.order('added_at',{ascending:false});
-    if(homepage)productQuery=productQuery.limit(12);
     return productQuery;
-  });
+  };
+  let data=[],error=null;
+  try{
+    if(productPageId){
+      // A detail route has one known key; avoid the general catalog range
+      // request and its anonymous-only failure mode.
+      const result=await withStoreTimeout(productQueryFor().limit(1),'Product request');
+      data=result.data||[];error=result.error||null;
+    }else{
+      const result=await fetchStorePages(()=>productQueryFor().order('added_at',{ascending:false}).limit(homepage?12:1000));
+      data=result.data||[];error=result.error||null;
+    }
+  }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
   if(!data?.length){catalog=[];return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
