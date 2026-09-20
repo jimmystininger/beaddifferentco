@@ -29,6 +29,8 @@ The live `product-media` bucket contains 110 objects (24,638,363 bytes). 43 obje
 
 No object was deleted. Storage deletion needs the authenticated Storage API and a final review of historical/theme references; deleting rows from `storage.objects` would not be a safe substitute for deleting blobs.
 
+The admin uploader safety path was repaired in PR #87: product-scoped uploads use `products/` paths and are protected from the generic delayed orphan timer. Their save transaction removes uploaded rows and objects when the save fails, while successful SKU references remain in the canonical inventory metadata. The bounded delayed check remains only for storefront, category, and review media; existing suspected orphans were not deleted.
+
 ### Security/performance advisors — reviewed, no blind changes
 
 - Supabase still reports two intentional security-definer public views used by the storefront (`storefront_store_controls` and `storefront_inventory_skus`).
