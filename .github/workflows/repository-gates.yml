@@ -36,5 +36,8 @@ jobs:
             node --check "$file"
           done < <(find . -type f -name '*.js' -not -path './.git/*' -print0)
 
+      - name: Audit local routes and generated output
+        run: node tools/repository-audit.mjs
+
       - name: Check whitespace errors
         run: git diff --check "${{ github.event.pull_request.base.sha || github.event.before }}" "${{ github.sha }}"
