@@ -156,6 +156,17 @@ async function loadCatalog(){
       data=result.data||[];error=result.error||null;
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
+  if(productPageId&&(!data.length||!data.some((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId))){
+    try{
+      const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const filterField=uuidPattern.test(productPageId)?'id':'external_id';
+      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
+      const nonce=crypto.randomUUID();
+      const response=await fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache'},cache:'no-store'});
+      const retryData=await response.json();
+      if(response.ok&&Array.isArray(retryData)){data=retryData;error=null;}
+    }catch(retryError){window.storeCatalogError=retryError;}
+  }
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
   if(!data?.length){catalog=[];return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
