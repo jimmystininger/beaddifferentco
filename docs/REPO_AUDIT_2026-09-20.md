@@ -31,6 +31,8 @@ No object was deleted. Storage deletion needs the authenticated Storage API and 
 
 The admin uploader safety path was repaired in PR #87: product-scoped uploads use `products/` paths and are protected from the generic delayed orphan timer. Their save transaction removes uploaded rows and objects when the save fails, while successful SKU references remain in the canonical inventory metadata. The bounded delayed check remains only for storefront, category, and review media; existing suspected orphans were not deleted.
 
+The follow-up reference scan found a useful distinction: several unreferenced category and storefront objects are byte-identical copies of currently referenced objects (matching storage ETags but using older timestamped paths), while some product uploads have no matching row at all and some product videos have duplicate content with only one path referenced. This confirms storage drift, but it does not prove which historical theme or admin session may still need an older path. No delete was attempted; the candidates remain review-only until an authenticated Storage API cleanup can be tied to an explicit canonical replacement.
+
 ### Security/performance advisors — reviewed, no blind changes
 
 - Supabase still reports two intentional security-definer public views used by the storefront (`storefront_store_controls` and `storefront_inventory_skus`).
