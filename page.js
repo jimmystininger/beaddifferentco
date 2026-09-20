@@ -124,7 +124,7 @@ const renderCategoryPage=async()=>{
   const products=visibleCatalog();
   renderProductCards(products,grid);
   drawStorefrontPagination();
-  if(empty){empty.textContent='No products are currently available in this category.';empty.hidden=products.length>0;}
+  if(empty){empty.textContent=window.storeCatalogError?'The store catalog is temporarily unavailable. Please refresh and try again.':'No products are currently available in this category.';empty.hidden=products.length>0;}
   const slug=currentRequestedCategory()||storefrontCategoryListing.request.categorySlugs[0]||(page==='Shop All'?'shop-all':'');
   const heading=storePage.querySelector('h1');if(heading)heading.textContent=categoryLabelFor(slug)||page;
   if(slug){try{const filters=await loadStorefrontCategoryFilters(slug);if(window.storefrontCategoryFiltersChanged){window.storefrontCategoryFiltersChanged=false;await loadStorefrontCategoryPage(1);renderProductCards(visibleCatalog(),grid);drawStorefrontPagination();if(empty)empty.hidden=visibleCatalog().length>0;}renderCategoryFilters(filters);}catch(error){renderCategoryFilters([]);}}
@@ -477,7 +477,9 @@ const managedContentDefaults={
 const managedContentSource=()=>{
   const source=window.siteContent||window.productStoreConfig||{};
   let local={};
-  try{local=JSON.parse(localStorage.getItem('beadDifferentAdminData')||'{}').settings||{};}catch(error){}
+  if(window.siteSettingsLoadState!=='connected'){
+    try{local=JSON.parse(localStorage.getItem('beadDifferentAdminData')||'{}').settings||{};}catch(error){}
+  }
   const faqItems=Array.isArray(source.faqItems)?source.faqItems:Array.isArray(local.faqItems)?local.faqItems:managedContentDefaults.faqItems;
   return {...managedContentDefaults,...local,...source,faqItems};
 };

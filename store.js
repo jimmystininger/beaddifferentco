@@ -3,6 +3,8 @@ let catalog=[];
 let storeControls={salesFrozen:false,etsyImportsFrozen:false};
 let storefrontBestSellerIds=new Set();
 let storefrontInventoryAvailability=new Map();
+const storefrontInventoryById=new Map();
+const storefrontInventoryBySku=new Map();
 window.storefrontBestSellerIds=storefrontBestSellerIds;
 window.storefrontInventoryAvailability=storefrontInventoryAvailability;
 window.storeControls=storeControls;
@@ -17,6 +19,8 @@ async function ensureSupabaseClient(){if(window.beadSupabase)return window.beadS
 async function loadStoreControls(){const client=await ensureSupabaseClient();if(!client)return storeControls;const result=await withStoreTimeout(client.from('storefront_store_controls').select('sales_frozen,etsy_imports_frozen').maybeSingle(),'Store controls request');if(!result.error&&result.data){storeControls.salesFrozen=result.data.sales_frozen===true;storeControls.etsyImportsFrozen=result.data.etsy_imports_frozen===true;}return storeControls;}async function loadPublicRewardSettings(){const client=await ensureSupabaseClient();if(!client||!window.productStoreConfig)return window.productStoreConfig;const result=await withStoreTimeout(client.rpc('get_storefront_reward_settings'),'Reward settings request');if(!result.error&&result.data){window.productStoreConfig.rewardThreshold=Math.max(0.01,Number(result.data.threshold)||35);window.productStoreConfig.rewardDiscountPercent=Math.min(100,Math.max(0.01,Number(result.data.discountPercent)||5));}return window.productStoreConfig;}
 const storeRequestTimeoutMs=12000;const withStoreTimeout=(request,label)=>Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out.')),storeRequestTimeoutMs))]);const fetchStorePages=async(buildQuery,pageSize=1000)=>{const rows=[];for(let page=0;;page+=1){const result=await withStoreTimeout(buildQuery().range(page*pageSize,page*pageSize+pageSize-1),'Store data request');if(result.error)return result;rows.push(...(result.data||[]));if((result.data||[]).length<pageSize)return{data:rows,error:null};}};
 const fetchStoreBatches=async(values,buildQuery,batchSize=500)=>{const rows=[];for(let start=0;start<values.length;start+=batchSize){const result=await withStoreTimeout(buildQuery(values.slice(start,start+batchSize)),'Store data request');if(result.error)return result;rows.push(...(result.data||[]));}return{data:rows,error:null};};
+const cacheStorefrontInventoryRecords=(rows=[])=>{(rows||[]).forEach((record)=>{if(!record||typeof record!=='object')return;const normalizedSku=String(record.sku||'').trim().toLowerCase();if(record.id)storefrontInventoryById.set(String(record.id),record);if(normalizedSku)storefrontInventoryBySku.set(normalizedSku,{...(storefrontInventoryBySku.get(normalizedSku)||{}),...record});});};
+const storefrontInventoryForSku=(sku)=>storefrontInventoryBySku.get(String(sku||'').trim().toLowerCase())||null;
 async function loadStorefrontBestSellers(){const client=await ensureSupabaseClient();if(!client){window.storefrontBestSellerIds=storefrontBestSellerIds;return storefrontBestSellerIds;}try{const result=await withStoreTimeout(client.rpc('get_storefront_best_sellers',{limit_count:25}),'Best sellers request');if(!result.error)storefrontBestSellerIds=new Set((result.data||[]).map((row)=>String(row.product_external_id||'').trim()).filter(Boolean));}catch(error){}window.storefrontBestSellerIds=storefrontBestSellerIds;return storefrontBestSellerIds;}
 
 const storefrontCategoryRequest=()=>{
@@ -40,7 +44,7 @@ const storefrontCategoryRequest=()=>{
 };
 const storefrontListingPage=()=>document.body.dataset.categoryLayout==='true'||['Category','Shop All','New Arrivals','Acrylic Beads','Silicone Beads','Rhinestones','Flatbacks','Pen Supplies','Mixes & Kits','Clearance','Focal Beads'].includes(document.body.dataset.page||'');
 const storefrontCategoryListing={page:1,pageSize:24,total:0,request:storefrontCategoryRequest()};
-const mapStorefrontListingRows=(rows)=>rows.map((item)=>({
+const mapStorefrontListingRows=(rows,optionRows=[])=>rows.map((item)=>({
   ...item,
   id:item.external_id||item.id,
   databaseId:item.id,
@@ -52,7 +56,7 @@ const mapStorefrontListingRows=(rows)=>rows.map((item)=>({
   image:item.lead_image_url||'',
   images:item.lead_image_url?[item.lead_image_url]:[],
   media:item.lead_image_url?[{url:item.lead_image_url,type:'image'}]:[],
-  options:[],
+  options:optionRows.filter((option)=>option.product_id===item.id).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_available===null||value.inventory_skus?.quantity_available===undefined?0:Number(value.inventory_skus.quantity_available)||0,lowStockThreshold:0}))})),
   price:Number(item.price)||0,
   promoPrice:item.promo_price===null||item.promo_price===undefined?null:Number(item.promo_price),
   displayPrice:Number(item.price)||0,
@@ -83,6 +87,13 @@ async function loadStorefrontCategoryPage(pageNumber=1){
   if(result.error){catalog=[];window.storeCatalogError=result.error;return catalog;}
   const rows=result.data||[];
   catalog=mapStorefrontListingRows(rows);
+  try{
+    const optionResult=await fetchStoreBatches(rows.map((item)=>item.id),(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order'));
+    if(!optionResult.error){
+      const hydratedOptionRows=await hydrateStorefrontOptionInventory(client,optionResult.data||[]);
+      catalog=mapStorefrontListingRows(rows,hydratedOptionRows);
+    }else window.storeCatalogOptionsError=optionResult.error;
+  }catch(error){window.storeCatalogOptionsError=error;}
   storefrontCategoryListing.page=page;
   storefrontCategoryListing.total=Number(rows[0]?.total_count)||0;
   window.storeCategoryPagination={
@@ -109,33 +120,49 @@ async function loadStorefrontCategoryFilters(categorySlug){
   return filters;
 }
 window.loadStorefrontCategoryFilters=loadStorefrontCategoryFilters;
+async function hydrateStorefrontOptionInventory(client,optionRows){
+  const inventoryIds=[...new Set((optionRows||[]).flatMap((option)=>option.product_option_values||[]).map((value)=>String(value.inventory_sku_id||'').trim()).filter(Boolean))];
+  if(!inventoryIds.length)return optionRows||[];
+  const result=await fetchStoreBatches(inventoryIds,(batch)=>client.from('storefront_inventory_skus').select('id,sku,name,quantity_available,price,unit_type,weight_value,weight_unit').in('id',batch));
+  if(result.error){window.storeCatalogOptionsError=result.error;return optionRows||[];}
+  cacheStorefrontInventoryRecords(result.data||[]);
+  return (optionRows||[]).map((option)=>({...option,product_option_values:(option.product_option_values||[]).map((value)=>({...value,inventory_skus:storefrontInventoryById.get(String(value.inventory_sku_id||''))||null}))}));
+}
 async function loadCatalog(){
   const client=await ensureSupabaseClient();
   if(!client){catalog=[];window.storeCatalogError=new Error('The live store catalog could not be connected.');return catalog;}
   if(storefrontListingPage())return loadStorefrontCategoryPage(1);
+  const pageName=document.body.dataset.page||'';
+  // Static content pages do not render product cards. Avoid loading the full
+  // catalog, images, and option graph merely to render their shared header.
+  if(!['Home','Product','Search','Sale Collection','Wishlist','Account'].includes(pageName)){catalog=[];return catalog;}
+  const homepage=document.body.dataset.page==='Home';
   const productPageId=document.body.dataset.page==='Product'?(document.body.dataset.productId||new URLSearchParams(location.search).get('id')||''):'';
   const {data,error}=await fetchStorePages(()=>{
     let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions');
     if(document.body.dataset.page!=='Admin')productQuery=productQuery.eq('visible',true);
     if(productPageId){const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;productQuery=productQuery.eq(uuidPattern.test(productPageId)?'id':'external_id',productPageId);}
-    return productQuery.order('added_at',{ascending:false});
+    productQuery=productQuery.order('added_at',{ascending:false});
+    if(homepage)productQuery=productQuery.limit(12);
+    return productQuery;
   });
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
   if(!data?.length){catalog=[];return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
     const media=imagesByProduct.get(item.id)||[];
-    return{...item,id:item.external_id||item.id,databaseId:item.id,externalId:item.external_id,seoTitle:item.seo_title||item.name,searchText:item.search_text||item.seo_title||item.name,category:item.subcategory_slug||item.category_slug,image:media.find((entry)=>entry.media_type!=='video')?.url||'product-mix.jpg',images:media.filter((entry)=>entry.media_type!=='video').map((entry)=>entry.url),media:media.map((entry)=>({url:entry.url,type:entry.media_type||'image'})),options:optionRows.filter((option)=>option.product_id===item.id).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_on_hand===null||value.inventory_skus?.quantity_on_hand===undefined?0:Number(value.inventory_skus.quantity_on_hand)||0,lowStockThreshold:value.inventory_skus?.reorder_point===null||value.inventory_skus?.reorder_point===undefined?0:Number(value.inventory_skus.reorder_point)||0}))})),price:Number(item.price)||0,promoPrice:null,displayPrice:Number(item.price)||0,promoDiscountPercent:Number(item.promo_discount_percent)||0,promoSkus:Array.isArray(item.promo_skus)?item.promo_skus:[],addedAt:item.added_at,waitlist:item.waitlist_enabled,description:item.description||'',itemDetails:item.item_details||'',shippingDetails:item.shipping_details||'',etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,quantity:Number(item.quantity)||0,lowStockThreshold:Number(item.low_stock_threshold)||0,badges:Array.isArray(item.badges)?item.badges:[]};
+    return{...item,id:item.external_id||item.id,databaseId:item.id,externalId:item.external_id,seoTitle:item.seo_title||item.name,searchText:item.search_text||item.seo_title||item.name,category:item.subcategory_slug||item.category_slug,image:media.find((entry)=>entry.media_type!=='video')?.url||'product-mix.jpg',images:media.filter((entry)=>entry.media_type!=='video').map((entry)=>entry.url),media:media.map((entry)=>({url:entry.url,type:entry.media_type||'image'})),options:optionRows.filter((option)=>option.product_id===item.id).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_available===null||value.inventory_skus?.quantity_available===undefined?0:Number(value.inventory_skus.quantity_available)||0,lowStockThreshold:0}))})),price:Number(item.price)||0,promoPrice:null,displayPrice:Number(item.price)||0,promoDiscountPercent:Number(item.promo_discount_percent)||0,promoSkus:Array.isArray(item.promo_skus)?item.promo_skus:[],addedAt:item.added_at,waitlist:item.waitlist_enabled,description:item.description||'',itemDetails:item.item_details||'',shippingDetails:item.shipping_details||'',etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,quantity:Number(item.quantity)||0,lowStockThreshold:Number(item.low_stock_threshold)||0,badges:Array.isArray(item.badges)?item.badges:[]};
   });
   const productIds=data.map((item)=>item.id);
   const enrichCatalog=async()=>{
     const [imageResult,optionResult]=await Promise.all([
       fetchStoreBatches(productIds,(batch)=>client.from('product_images').select('id,product_id,url,alt_text,sort_order,media_type').in('product_id',batch).order('sort_order').order('id')),
-      fetchStoreBatches(productIds,(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order,inventory_skus(id,sku,name,quantity_on_hand,reorder_point,price,unit_type,weight_value,weight_unit))').in('product_id',batch).order('sort_order'))
+      fetchStoreBatches(productIds,(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order'))
     ]);
     if(imageResult.error||optionResult.error)throw imageResult.error||optionResult.error;
     const imagesByProduct=new Map();
     (imageResult.data||[]).forEach((image)=>{const images=imagesByProduct.get(image.product_id)||[];images.push(image);imagesByProduct.set(image.product_id,images);});
-    catalog=mapRows(data,imagesByProduct,optionResult.data||[]);
+    const hydratedOptionRows=await hydrateStorefrontOptionInventory(client,optionResult.data||[]);
+    catalog=mapRows(data,imagesByProduct,hydratedOptionRows);
     window.dispatchEvent(new Event('bead-catalog-enriched'));
     return catalog;
   };
@@ -149,6 +176,7 @@ async function loadCatalog(){
       return;
     }
     window.storeCatalogOptionsError=null;
+    cacheStorefrontInventoryRecords(result.data||[]);
     const bySku=new Map((result.data||[]).map((row)=>[String(row.sku||'').trim().toLowerCase(),row]));
     catalog.forEach((item)=>{
       const values=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object');
@@ -163,15 +191,66 @@ async function loadCatalog(){
   else {await enrichCatalog();await applyPageScopedSkuOptions();}
   return catalog;
 }
-async function applyCanonicalInventory(){if(!window.beadSupabase||!catalog.length)return catalog;const skus=[...new Set(catalog.flatMap((item)=>[item.sku||'',...(item.options||[]).flatMap((option)=>option.values||[])]).map((value)=>typeof value==='object'?(value.inventorySku||value.sku):value).filter(Boolean))];if(!skus.length)return catalog;const result=await withStoreTimeout(window.beadSupabase.from('storefront_inventory_skus').select('sku,quantity_available,price,unit_type,weight_value,weight_unit').in('sku',skus),'Inventory request');if(result.error)return catalog;const bySku=new Map((result.data||[]).map((record)=>[record.sku,record]));(result.data||[]).forEach((record)=>storefrontInventoryAvailability.set(String(record.sku||'').trim().toLowerCase(),Math.max(0,Number(record.quantity_available)||0)));window.storefrontInventoryAvailability=storefrontInventoryAvailability;catalog.forEach((item)=>{item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{if(typeof value!=='object')return value;const record=bySku.get(value.inventorySku||value.sku);if(!record)return value;return {...value,sku:record.sku,inventorySku:record.sku,price:record.price===null?value.price:Number(record.price),unitType:record.unit_type||value.unitType||'Each',weight:record.weight_value===null||record.weight_value===undefined?null:Number(record.weight_value),weightUnit:record.weight_unit||value.weightUnit||'oz',quantity:Math.max(0,Number(record.quantity_available)||0)};})}));const variants=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&value.sku);const itemRecord=bySku.get(item.sku);if(itemRecord){item.price=itemRecord.price===null||itemRecord.price===undefined?item.price:Number(itemRecord.price);item.displayPrice=item.price;item.unitType=itemRecord.unit_type||item.unitType||'Each';item.weight=itemRecord.weight_value===null||itemRecord.weight_value===undefined?null:Number(itemRecord.weight_value);item.weightUnit=itemRecord.weight_unit||'oz';}if(variants.length)item.quantity=variants.reduce((total,value)=>total+Number(value.quantity||0),0);else if(itemRecord)item.quantity=Math.max(0,Number(itemRecord.quantity_available)||0);});return catalog;}
-async function applyCanonicalInventoryNames(){if(!window.beadSupabase||!catalog.length)return catalog;const skus=[...new Set(catalog.flatMap((item)=>[item.sku||'',...(item.options||[]).flatMap((option)=>option.values||[])]).map((value)=>typeof value==='object'?(value.inventorySku||value.sku):value).map((sku)=>String(sku||'').trim()).filter(Boolean))];if(!skus.length)return catalog;const result=await fetchStoreBatches(skus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('sku,name').in('sku',batch));if(result.error)return catalog;const bySku=new Map((result.data||[]).map((record)=>[String(record.sku||'').trim().toLowerCase(),record]));catalog.forEach((item)=>{item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{if(typeof value!=='object')return value;const record=bySku.get(String(value.inventorySku||value.sku||'').trim().toLowerCase());return record?.name?{...value,label:String(record.name).trim()}:value;})}));});return catalog;}
-const loadStorefrontBundleComponents=async()=>{
+async function applyCanonicalInventory(){
   if(!window.beadSupabase||!catalog.length)return catalog;
-  const result=await fetchStorePages(()=>window.beadSupabase.from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity,sort_order').order('sort_order'));
+  const skus=[...new Set(catalog.flatMap((item)=>[item.sku||'',...(item.options||[]).flatMap((option)=>option.values||[])]).map((value)=>typeof value==='object'?(value.inventorySku||value.sku):value).map((sku)=>String(sku||'').trim()).filter(Boolean))];
+  if(!skus.length)return catalog;
+  const missingSkus=skus.filter((sku)=>!storefrontInventoryForSku(sku));
+  if(missingSkus.length){
+    const result=await fetchStoreBatches(missingSkus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('sku,name,quantity_available,price,unit_type,weight_value,weight_unit').in('sku',batch));
+    if(result.error)return catalog;
+    cacheStorefrontInventoryRecords(result.data||[]);
+  }
+  catalog.forEach((item)=>{
+    item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{
+      if(typeof value!=='object')return value;
+      const record=storefrontInventoryForSku(value.inventorySku||value.sku);
+      if(!record)return value;
+      return {...value,sku:record.sku,inventorySku:record.sku,price:record.price===null?value.price:Number(record.price),unitType:record.unit_type||value.unitType||'Each',weight:record.weight_value===null||record.weight_value===undefined?null:Number(record.weight_value),weightUnit:record.weight_unit||value.weightUnit||'oz',quantity:Math.max(0,Number(record.quantity_available)||0)};
+    })}));
+    const variants=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&value.sku);
+    const itemRecord=storefrontInventoryForSku(item.sku);
+    if(itemRecord){item.price=itemRecord.price===null||itemRecord.price===undefined?item.price:Number(itemRecord.price);item.displayPrice=item.price;item.unitType=itemRecord.unit_type||item.unitType||'Each';item.weight=itemRecord.weight_value===null||itemRecord.weight_value===undefined?null:Number(itemRecord.weight_value);item.weightUnit=itemRecord.weight_unit||'oz';}
+    if(variants.length)item.quantity=variants.reduce((total,value)=>total+Number(value.quantity||0),0);else if(itemRecord)item.quantity=Math.max(0,Number(itemRecord.quantity_available)||0);
+  });
+  (skus||[]).forEach((sku)=>{const record=storefrontInventoryForSku(sku);if(record)storefrontInventoryAvailability.set(String(sku).trim().toLowerCase(),Math.max(0,Number(record.quantity_available)||0));});
+  window.storefrontInventoryAvailability=storefrontInventoryAvailability;
+  return catalog;
+}
+async function applyCanonicalInventoryNames(){
+  if(!window.beadSupabase||!catalog.length)return catalog;
+  const skus=[...new Set(catalog.flatMap((item)=>[item.sku||'',...(item.options||[]).flatMap((option)=>option.values||[])]).map((value)=>typeof value==='object'?(value.inventorySku||value.sku):value).map((sku)=>String(sku||'').trim()).filter(Boolean))];
+  if(!skus.length)return catalog;
+  const missingSkus=skus.filter((sku)=>!storefrontInventoryForSku(sku)?.name);
+  if(missingSkus.length){
+    const result=await fetchStoreBatches(missingSkus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('sku,name').in('sku',batch));
+    if(result.error)return catalog;
+    cacheStorefrontInventoryRecords(result.data||[]);
+  }
+  catalog.forEach((item)=>{item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{if(typeof value!=='object')return value;const record=storefrontInventoryForSku(value.inventorySku||value.sku);return record?.name?{...value,label:String(record.name).trim()}:value;})}));});
+  return catalog;
+}
+let storefrontBundleComponentsPromise=null;
+const loadStorefrontBundleComponents=()=>{
+  if(storefrontBundleComponentsPromise)return storefrontBundleComponentsPromise;
+  storefrontBundleComponentsPromise=(async()=>{
+  if(!window.beadSupabase||!catalog.length)return catalog;
+  // Bundle recipes are needed only for SKUs on this catalog page. Loading the
+  // entire recipe table on every storefront route was a large, repeated read.
+  const currentSkus=[...new Set(catalog.flatMap((item)=>[item.sku||'',...(item.options||[]).flatMap((option)=>option.values||[]).map((value)=>typeof value==='object'?(value.inventorySku||value.sku):value)]).map((sku)=>String(sku||'').trim()).filter(Boolean))];
+  const missingSkus=currentSkus.filter((sku)=>!storefrontInventoryForSku(sku)?.id);
+  if(missingSkus.length){
+    const skuResult=await fetchStoreBatches(missingSkus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('id,sku,quantity_available').in('sku',batch));
+    if(skuResult.error)return catalog;
+    cacheStorefrontInventoryRecords(skuResult.data||[]);
+  }
+  const bundleIds=currentSkus.map((sku)=>storefrontInventoryForSku(sku)?.id).filter(Boolean);
+  const result=bundleIds.length?await fetchStoreBatches(bundleIds,(batch)=>window.beadSupabase.from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity,sort_order').in('bundle_sku_id',batch).order('sort_order')):{data:[],error:null};
   if(result.error)return catalog;
   const ids=[...new Set((result.data||[]).flatMap((entry)=>[entry.bundle_sku_id,entry.component_sku_id]).filter(Boolean))];
   const lookup=ids.length?await fetchStorePages(()=>window.beadSupabase.from('storefront_inventory_skus').select('id,sku,quantity_available').in('id',ids)):{data:[],error:null};
   if(lookup.error)return catalog;
+  cacheStorefrontInventoryRecords(lookup.data||[]);
   const skuById=new Map((lookup.data||[]).map((entry)=>[entry.id,entry.sku]));
   (lookup.data||[]).forEach((entry)=>storefrontInventoryAvailability.set(String(entry.sku||'').trim().toLowerCase(),Math.max(0,Number(entry.quantity_available)||0)));
   window.storefrontInventoryAvailability=storefrontInventoryAvailability;
@@ -181,6 +260,8 @@ const loadStorefrontBundleComponents=async()=>{
 window.storefrontBundleRecipes=byBundle;
   window.dispatchEvent(new Event('bead-inventory-recipes-ready'));
   return catalog;
+  })();
+  return storefrontBundleComponentsPromise;
 };
 async function loadCartCatalog(additionalIds=[]){
   const client=await ensureSupabaseClient();
@@ -242,13 +323,13 @@ async function loadCartCatalog(additionalIds=[]){
   return catalog;
 }
 const bagHasItems=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentBag')||'[]').some((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);}catch(error){return false;}};
-const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{const ancillary=Promise.all([loadStoreControls(),loadPublicRewardSettings(),loadStorefrontBestSellers()]).then(()=>applyCanonicalInventory()).then(()=>loadStorefrontBundleComponents());void ancillary.catch((error)=>{window.storeCatalogAncillaryError=error;});return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
+const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{const pageName=document.body.dataset.page||'';const needsStorefrontAncillary=storefrontListingPage()||['Home','Product','Search','Sale Collection','Wishlist','Account','Shopping Bag'].includes(pageName);const ancillary=needsStorefrontAncillary?Promise.all([loadStoreControls(),loadPublicRewardSettings(),loadStorefrontBestSellers()]).then(()=>applyCanonicalInventory()).then(()=>loadStorefrontBundleComponents()):Promise.resolve(catalog);window.storefrontInventoryReady=ancillary;void ancillary.catch((error)=>{window.storeCatalogAncillaryError=error;});return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
 window.catalogReady=catalogReady;window.storeCatalog=()=>catalog;
 const productIdentifierMatches=(item,needle)=>{const normalizedNeedle=String(needle||'').trim().toLowerCase();return [item.id,item.externalId,item.databaseId,item.sku].filter(Boolean).some((value)=>String(value).trim().toLowerCase()===normalizedNeedle)||(item.options||[]).some((option)=>(option.values||[]).some((value)=>typeof value==='object'&&[value.sku,value.inventorySku].filter(Boolean).some((identifier)=>String(identifier).trim().toLowerCase()===normalizedNeedle)));};
 const findProduct=(id)=>{const needle=String(id||'').trim();if(!needle)return null;return catalog.find((item)=>productIdentifierMatches(item,needle))||null;};
 let searchCatalog=(query)=>{const needle=String(query||'').trim().toLowerCase();const visible=visibleCatalog();if(!needle)return visible;return visible.filter((item)=>`${item.searchText} ${(item.badges||[]).join(' ')}`.toLowerCase().includes(needle));};
 window.searchCatalog=searchCatalog;
-const badgeCatalogReady=catalogReady.then(async()=>{if(!window.beadSupabase)return;const ids=catalog.map((item)=>item.externalId).filter(Boolean);if(!ids.length)return;const {data}=await window.beadSupabase.from('products').select('external_id,low_stock_threshold,badges').in('external_id',ids);(data||[]).forEach((record)=>{const item=catalog.find((entry)=>entry.externalId===record.external_id);if(item){item.lowStockThreshold=Number(record.low_stock_threshold)||0;item.badges=Array.isArray(record.badges)?record.badges:[];}});});
+const badgeCatalogReady=catalogReady;
 async function cloudStoreUser(){if(!window.beadSupabase)return null;const {data}=await window.beadSupabase.auth.getUser();return data?.user||null;}
 const durableCartToken=()=>{let token=localStorage.getItem(storeKeys.cartToken)||'';if(!token){token=crypto.randomUUID();localStorage.setItem(storeKeys.cartToken,token);}return token;};
 const durableCartId=()=>String(localStorage.getItem(storeKeys.cartId)||'').trim();
@@ -347,8 +428,8 @@ const storeShipping={
 window.storeShipping=storeShipping;
 window.storeCartPricing=cartLinePricing;
 const storefrontSkuWeight=(sku,path=[])=>{const needle=String(sku||'').trim();if(!needle||path.map((value)=>value.toLowerCase()).includes(needle.toLowerCase()))return 0;const recipes=window.storefrontBundleRecipes?.get(needle.toLowerCase())||[];if(recipes.length)return recipes.reduce((total,recipe)=>total+storefrontSkuWeight(recipe.componentSku,[...path,needle])*recipe.quantity,0);for(const item of catalog){for(const option of item.options||[]){for(const value of option.values||[]){if(typeof value==='object'&&String(value.inventorySku||value.sku||'').trim().toLowerCase()===needle.toLowerCase())return shippingWeightToOz(value.weight,value.weightUnit||'oz');}}if(String(item.sku||'').trim().toLowerCase()===needle.toLowerCase())return shippingWeightToOz(item.weight,item.weightUnit||'oz');}return 0;};
-async function trackProductEvent(id,eventType,searchTerm='',selectedOptions=[]){try{const client=await ensureSupabaseClient();if(!client)return;const payload={product_id:null,inventory_sku_id:null,event_type:eventType,search_term:eventType==='search'?String(searchTerm||'').trim().slice(0,200):null};if(id){const {data:product}=await client.from('products').select('id').eq('external_id',id).maybeSingle();if(product)payload.product_id=product.id;else if(eventType!=='search')return;}const fallbackEntry=eventType==='cart_add'?bagItems().find((entry)=>entry.id===id):null;const selected=normalizeCartOptions(selectedOptions?.length?selectedOptions:fallbackEntry?.selectedOptions||[]);const sku=selected.find((option)=>option?.inventorySku||option?.sku)?.inventorySku||selected.find((option)=>option?.sku)?.sku||'';if(sku){const {data:inventory}=await client.from('inventory_skus').select('id').ilike('sku',String(sku).trim()).maybeSingle();if(inventory)payload.inventory_sku_id=inventory.id;}await client.from('analytics_events').insert(payload);}catch(error){return null;}}
-function addToBag(id,selectedOptions=[]){if(storeControls.salesFrozen)return false;const item=findProduct(id);if(!item||!isProductVisible(item))return false;const normalizedOptions=normalizeCartOptions(selectedOptions);const items=bagItems();const existing=items.find((entry)=>entry.id===id&&cartOptionsMatch(entry.selectedOptions,normalizedOptions));const maximum=cartInventoryMaximum(id,normalizedOptions,items);if((existing?.quantity||0)>=maximum){window.dispatchEvent(new CustomEvent('bead-cart-stock-limited',{detail:{id,selectedOptions:normalizedOptions,maximum}}));return false;}if(existing)existing.quantity+=1;else items.push({id,quantity:1,selectedOptions:normalizedOptions});writeStore(storeKeys.bag,items);localStorage.setItem(storeKeys.cartDirty,'1');updateBagCount();trackProductEvent(id,'cart_add');queueStoreSync(()=>persistCloudCart());window.dispatchEvent(new Event('bead-cart-changed'));return true;}
+async function trackProductEvent(id,eventType,searchTerm='',selectedOptions=[]){try{const client=await ensureSupabaseClient();if(!client)return;const payload={product_id:null,inventory_sku_id:null,event_type:eventType,search_term:eventType==='search'?String(searchTerm||'').trim().slice(0,200):null};const item=id?findProduct(id):null;if(item?.databaseId)payload.product_id=item.databaseId;else if(id&&eventType!=='search'){const {data:product}=await client.from('products').select('id').eq('external_id',id).maybeSingle();if(product)payload.product_id=product.id;else return;}const fallbackEntry=eventType==='cart_add'?bagItems().find((entry)=>entry.id===id):null;const selected=normalizeCartOptions(selectedOptions?.length?selectedOptions:fallbackEntry?.selectedOptions||[]);const sku=selected.find((option)=>option?.inventorySku||option?.sku)?.inventorySku||selected.find((option)=>option?.sku)?.sku||'';if(sku){const cached=storefrontInventoryForSku(sku);if(cached?.id)payload.inventory_sku_id=cached.id;else{const {data:inventory}=await client.from('storefront_inventory_skus').select('id,sku').eq('sku',String(sku).trim()).maybeSingle();if(inventory?.id){cacheStorefrontInventoryRecords([inventory]);payload.inventory_sku_id=inventory.id;}}}await client.from('analytics_events').insert(payload);}catch(error){return null;}}
+function addToBag(id,selectedOptions=[]){if(storeControls.salesFrozen)return false;const item=findProduct(id);if(!item||!isProductVisible(item))return false;const normalizedOptions=normalizeCartOptions(selectedOptions);const items=bagItems();const existing=items.find((entry)=>entry.id===id&&cartOptionsMatch(entry.selectedOptions,normalizedOptions));const maximum=cartInventoryMaximum(id,normalizedOptions,items);if((existing?.quantity||0)>=maximum){window.dispatchEvent(new CustomEvent('bead-cart-stock-limited',{detail:{id,selectedOptions:normalizedOptions,maximum}}));return false;}if(existing)existing.quantity+=1;else items.push({id,quantity:1,selectedOptions:normalizedOptions});writeStore(storeKeys.bag,items);localStorage.setItem(storeKeys.cartDirty,'1');updateBagCount();trackProductEvent(id,'cart_add','',normalizedOptions);queueStoreSync(()=>persistCloudCart());window.dispatchEvent(new Event('bead-cart-changed'));return true;}
 window.etsyImportsFrozen=()=>storeControls.etsyImportsFrozen===true;
 function removeFromBag(id,selectedOptions=null){writeStore(storeKeys.bag,bagItems().filter((item)=>item.id!==id||(selectedOptions!==null&&!cartOptionsMatch(item.selectedOptions,selectedOptions))));localStorage.setItem(storeKeys.cartDirty,'1');updateBagCount();queueStoreSync(()=>persistCloudCart());window.dispatchEvent(new Event('bead-cart-changed'));}
 function toggleWishlist(id){const items=wishlistItems();const index=items.indexOf(id);if(index===-1)items.push(id);else items.splice(index,1);writeStore(storeKeys.wishlist,items);queueStoreSync(()=>persistCloudFavorite(id,index===-1));return index===-1;}
@@ -382,16 +463,17 @@ async function loadCartProductOptions(){
   if(document.body.dataset.page!=='Shopping Bag'||!window.beadSupabase||!catalog.length)return catalog;
   const ids=[...new Set(catalog.map((item)=>item.databaseId).filter(Boolean))];
   if(!ids.length)return catalog;
-  const result=await fetchStoreBatches(ids,(batch)=>window.beadSupabase.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order,inventory_skus(id,sku,name,quantity_on_hand,reorder_point,price,unit_type,weight_value,weight_unit))').in('product_id',batch).order('sort_order'));
+  const result=await fetchStoreBatches(ids,(batch)=>window.beadSupabase.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order'));
   if(result.error){window.storeCartOptionsError=result.error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error:result.error}}));return catalog;}
   window.storeCartOptionsError=null;
-  catalog.forEach((item)=>{item.options=(result.data||[]).filter((option)=>option.product_id===item.databaseId).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_on_hand===null||value.inventory_skus?.quantity_on_hand===undefined?0:Number(value.inventory_skus.quantity_on_hand)||0,lowStockThreshold:value.inventory_skus?.reorder_point===null||value.inventory_skus?.reorder_point===undefined?0:Number(value.inventory_skus.reorder_point)||0}))}));});
+  const hydratedOptionRows=await hydrateStorefrontOptionInventory(window.beadSupabase,result.data||[]);
+  catalog.forEach((item)=>{item.options=(hydratedOptionRows||[]).filter((option)=>option.product_id===item.databaseId).map((option)=>({name:option.name,required:option.required,values:(option.product_option_values||[]).sort((a,b)=>a.sort_order-b.sort_order).map((value)=>({label:value.inventory_skus?.name||'',price:value.inventory_skus?.price===null||value.inventory_skus?.price===undefined?Number(item.price||0):Number(value.inventory_skus.price)||0,sku:value.inventory_skus?.sku||'',inventorySku:value.inventory_skus?.sku||'',inventoryUnits:1,imageUrl:'',unitType:value.inventory_skus?.unit_type||'Each',quantity:value.inventory_skus?.quantity_available===null||value.inventory_skus?.quantity_available===undefined?0:Number(value.inventory_skus.quantity_available)||0,lowStockThreshold:0}))}));});
   await applyCanonicalInventoryNames();
   window.dispatchEvent(new Event('bead-catalog-options-ready'));
   return catalog;
 }
 const normalizeCatalogPromoFields=()=>{catalog.forEach((item)=>{item.promoPrice=item.promo_price===null||item.promo_price===undefined?null:Number(item.promo_price);item.promoStartsAt=item.promo_starts_at||null;item.promoEndsAt=item.promo_ends_at||null;item.promoDiscountPercent=Number(item.promo_discount_percent)||0;item.promoSkus=Array.isArray(item.promo_skus)?item.promo_skus:[];});return catalog;};
-window.catalogMetadataReady=catalogReady.then(async()=>{normalizeCatalogPromoFields();await loadProductCatalogMetadata();await loadCartProductOptions();if(document.body.dataset.page==='Shopping Bag'){await applyCanonicalInventory();await loadStorefrontBundleComponents();}normalizeCatalogPromoFields();return catalog;}).catch((error)=>{window.storeCartOptionsError=error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error}}));return catalog;});
+window.catalogMetadataReady=catalogReady.then(async()=>{normalizeCatalogPromoFields();await loadProductCatalogMetadata();await window.storefrontInventoryReady?.catch?.(()=>{});await loadCartProductOptions();if(document.body.dataset.page==='Shopping Bag'){await applyCanonicalInventory();await loadStorefrontBundleComponents();}normalizeCatalogPromoFields();return catalog;}).catch((error)=>{window.storeCartOptionsError=error;window.dispatchEvent(new CustomEvent('bead-catalog-options-error',{detail:{error}}));return catalog;});
 window.renderPaginatedProducts=renderPaginatedProducts;
 const storeCartLineKey=(entry)=>{const options=normalizeCartOptions(entry?.selectedOptions);return `${entry?.id||''}:${JSON.stringify(options)}`;};
 const mergeCartLines=(items)=>{const merged=new Map();items.forEach((item)=>{if(!item||!String(item.id||'').trim())return;const selectedOptions=normalizeCartOptions(item.selectedOptions);const lineKey=storeCartLineKey({...item,selectedOptions});const existing=merged.get(lineKey);if(existing)existing.quantity+=Math.max(1,Number(item.quantity)||1);else merged.set(lineKey,{id:item.id,quantity:Math.max(1,Number(item.quantity)||1),selectedOptions});});return[...merged.values()];};
@@ -431,10 +513,11 @@ const applyCanonicalProductPageMedia=async()=>{
   if(!window.beadSupabase||!catalog.length)return catalog;
   const skus=[...new Set(catalog.flatMap((item)=>(item.options||[]).flatMap((option)=>option.values||[])).map((value)=>String(value?.inventorySku||value?.sku||'').trim()).filter(Boolean))];
   if(!skus.length)return catalog;
-  const result=await fetchStoreBatches(skus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('sku,product_pages').in('sku',batch));
+  const missingSkus=skus.filter((sku)=>!storefrontInventoryForSku(sku)?.product_pages);
+  const result=missingSkus.length?await fetchStoreBatches(missingSkus,(batch)=>window.beadSupabase.from('storefront_inventory_skus').select('sku,product_pages').in('sku',batch)):{data:[],error:null};
   if(result.error)return catalog;
-  const bySku=new Map((result.data||[]).map((row)=>[String(row.sku||'').trim().toLowerCase(),row]));
-  catalog.forEach((item)=>{const pageKey=String(item.databaseId||'');item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{const record=bySku.get(String(value.inventorySku||value.sku||'').trim().toLowerCase());const imageUrl=record?.product_pages?.[pageKey]?.image_url;return imageUrl?{...value,imageUrl:String(imageUrl)}:value;})}));});
+  cacheStorefrontInventoryRecords(result.data||[]);
+  catalog.forEach((item)=>{const pageKey=String(item.databaseId||'');item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>{const record=storefrontInventoryForSku(value.inventorySku||value.sku);const imageUrl=record?.product_pages?.[pageKey]?.image_url;return imageUrl?{...value,imageUrl:String(imageUrl)}:value;})}));});
   return catalog;
 };
 if(window.catalogMetadataReady)window.catalogMetadataReady=window.catalogMetadataReady.then(applyCanonicalProductPageMedia);
