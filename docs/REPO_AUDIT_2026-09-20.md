@@ -20,7 +20,7 @@ This is an evidence log for the system-wide audit. Source-of-truth behavior rema
 
 ### Migration ledger drift — open, do not delete or replay
 
-Live project `zejcuqhihbfpuwsjvmhc` reports 157 applied migrations. The repository contains 172 SQL files. The logical migration names are substantially the same, but many local files use rebased timestamps and 24 live migration names have no same-named local file. There are also duplicate local timestamp versions (including `20260910013000`, `20260916200000`, and `20260917200000`).
+Live project `zejcuqhihbfpuwsjvmhc` reports 157 applied migrations. The repository contains 172 SQL files. A fresh exact `(version, name)` comparison found 159 local-only entries, 144 live-only entries, 120 shared logical names with different timestamps, and three duplicate local timestamp groups (`20260910013000`, `20260916200000`, and `20260917200000`). This is timestamp rebasing/drift, not evidence that either side can be deleted or replayed safely.
 
 This cannot be safely normalized from the current workspace: the Supabase CLI is not installed, and the available management result exposes the live ledger names but not the original SQL needed to reconstruct missing files. No migration was replayed, deleted, or marked repaired. The next safe action is to run the official `supabase migration repair`/`db pull` workflow from a credentialed environment, review the complete diff, and submit that as its own batch.
 
@@ -67,7 +67,7 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 ### Production runtime — passed
 
 - Vercel runtime-error aggregation for the last 7 days returned no runtime errors, and production error/fatal log counts were empty.
-- The current production deployment is READY from merged commit `ea4d726` (PR #95). The live shopping-bag route loaded after deployment with no browser console errors; the existing malformed saved line remained visible with its recovery message, confirming the repair does not silently discard user data.
+- The current production deployment is READY from merged commit `d3ce115` (PR #97). The live shopping-bag route loaded after deployment with no browser console errors; the existing malformed saved line remained visible with its recovery message, confirming the repair does not silently discard user data. Vercel runtime-error aggregation and production error/fatal route counts remain empty for the last 7 days.
 
 ## Remaining audit work
 
