@@ -45,6 +45,11 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 - A static audit of every HTML entry route found zero missing local `href` or `src` targets after query/hash normalization.
 - The repository root has no `fixed`, `backup`, `legacy`, `copy`, or `v2` duplicate implementation files. The previously stale ignored `.vercel/output` directory remains absent.
 
+### Edge Functions — canonical match
+
+- All 8 local Edge Functions have matching active deployments in project `zejcuqhihbfpuwsjvmhc`.
+- Normalized `index.ts` content matches exactly for every function (`etsy-connect`, `etsy-historical`, `ohio-sales-tax`, `send-auth-email`, `send-order-email`, `send-restock-notifications`, `send-store-email`, and `shipping-rates`). No local/live function drift was found; no deployment was performed.
+
 ## Remaining audit work
 
 1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
