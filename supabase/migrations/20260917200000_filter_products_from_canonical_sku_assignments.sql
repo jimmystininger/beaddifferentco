@@ -1,0 +1,2 @@
+-- Product filtering now reads canonical per-SKU JSON assignments. The equivalent
+-- function definition was applied in migration 20260917200000_filter_products_from_canonical_sku_assignments_v2.

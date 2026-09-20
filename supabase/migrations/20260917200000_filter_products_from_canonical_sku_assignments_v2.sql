@@ -1,0 +1,2 @@
+-- Canonical SKU filter assignments are matched in get_storefront_category_products_v2.
+-- This migration is retained alongside the applied database change for ordered history.

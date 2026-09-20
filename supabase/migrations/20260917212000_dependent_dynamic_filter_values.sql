@@ -1,0 +1,3 @@
+-- Filter values are facets of the current selection, not a static global list.
+-- The live function definition is applied to the project and accepts
+-- p_filter_selections so each dropdown is recomputed from the active result set.

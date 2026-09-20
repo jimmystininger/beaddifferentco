@@ -40,13 +40,13 @@ const renderCategoryFilters=(filters)=>{
   if(!region)return;
   region.replaceChildren();
   const request=storefrontCategoryListing.request;
-  (Array.isArray(filters)?filters:[]).forEach((filter)=>{
+  (Array.isArray(filters)?filters:[]).filter((filter)=>Array.isArray(filter.values)&&filter.values.length>0).forEach((filter)=>{
     const wrapper=document.createElement('label');
     wrapper.className='category-filter';
-    wrapper.textContent=filter.label||filter.key;
     const select=document.createElement('select');
     select.dataset.categoryFilter=filter.key;
     select.setAttribute('aria-label',filter.label||filter.key);
+    select.title=filter.label||filter.key;
     const all=document.createElement('option');
     all.value='';
     all.textContent=`All ${String(filter.label||filter.key).toLowerCase()}`;
@@ -55,17 +55,22 @@ const renderCategoryFilters=(filters)=>{
       const option=document.createElement('option');
       option.value=value.key||'';
       option.textContent=value.label||value.key||'';
-      option.selected=request.filterKey===filter.key&&request.filterValues.includes(option.value);
+      option.selected=Array.isArray(request.filters?.[filter.key])&&request.filters[filter.key].includes(option.value);
       select.append(option);
     });
     select.addEventListener('change',async()=>{
       const nextUrl=new URL(location.href);
       nextUrl.searchParams.delete('style');
+      let nextFilters={};
+      try{const parsed=JSON.parse(nextUrl.searchParams.get('filters')||'{}');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))nextFilters=parsed;}catch(error){}
       const value=select.value;
-      if(value){nextUrl.searchParams.set('filterKey',filter.key);nextUrl.searchParams.set('filterValues',value);}
-      else{nextUrl.searchParams.delete('filterKey');nextUrl.searchParams.delete('filterValues');}
+      if(value)nextFilters[filter.key]=[value];else delete nextFilters[filter.key];
+      nextUrl.searchParams.delete('filterKey');
+      nextUrl.searchParams.delete('filterValues');
+      if(Object.keys(nextFilters).length)nextUrl.searchParams.set('filters',JSON.stringify(nextFilters));else nextUrl.searchParams.delete('filters');
       history.pushState({},'',nextUrl);
       storefrontCategoryListing.request=storefrontCategoryRequest();
+      const updatedFilters=await loadStorefrontCategoryFilters(currentRequestedCategory()||'shop-all');
       region.setAttribute('aria-busy','true');
       const grid=document.querySelector('#page-products');
       grid?.setAttribute('aria-busy','true');
@@ -76,11 +81,39 @@ const renderCategoryFilters=(filters)=>{
       if(empty)empty.hidden=visibleCatalog().length>0;
       region.setAttribute('aria-busy','false');
       grid?.setAttribute('aria-busy','false');
-      renderCategoryFilters(window.storefrontCategoryFilters||filters);
+      renderCategoryFilters(updatedFilters);
     });
     wrapper.append(select);
     region.append(wrapper);
   });
+  const hasSelections=Object.values(request.filters||{}).some((values)=>Array.isArray(values)&&values.length>0);
+  const clear=document.createElement('button');
+  clear.type='button';
+  clear.className='category-filter-clear';
+  clear.textContent='Clear filters';
+  clear.hidden=!hasSelections;
+  clear.addEventListener('click',async()=>{
+    const nextUrl=new URL(location.href);
+    nextUrl.searchParams.delete('style');
+    nextUrl.searchParams.delete('filters');
+    nextUrl.searchParams.delete('filterKey');
+    nextUrl.searchParams.delete('filterValues');
+    history.pushState({},'',nextUrl);
+    storefrontCategoryListing.request=storefrontCategoryRequest();
+    region.setAttribute('aria-busy','true');
+    const grid=document.querySelector('#page-products');
+    grid?.setAttribute('aria-busy','true');
+    await loadStorefrontCategoryPage(1);
+    renderProductCards(visibleCatalog(),grid);
+    drawStorefrontPagination();
+    const empty=document.querySelector('#store-empty');
+    if(empty)empty.hidden=visibleCatalog().length>0;
+    region.setAttribute('aria-busy','false');
+    grid?.setAttribute('aria-busy','false');
+    const updatedFilters=await loadStorefrontCategoryFilters(currentRequestedCategory()||'shop-all');
+    renderCategoryFilters(updatedFilters);
+  });
+  region.append(clear);
 };
 
 const renderCategoryPage=async()=>{
@@ -92,9 +125,9 @@ const renderCategoryPage=async()=>{
   renderProductCards(products,grid);
   drawStorefrontPagination();
   if(empty){empty.textContent='No products are currently available in this category.';empty.hidden=products.length>0;}
-  const slug=currentRequestedCategory()||storefrontCategoryListing.request.categorySlugs[0]||'';
+  const slug=currentRequestedCategory()||storefrontCategoryListing.request.categorySlugs[0]||(page==='Shop All'?'shop-all':'');
   const heading=storePage.querySelector('h1');if(heading)heading.textContent=categoryLabelFor(slug)||page;
-  if(slug){try{renderCategoryFilters(await loadStorefrontCategoryFilters(slug));}catch(error){renderCategoryFilters([]);}}
+  if(slug){try{const filters=await loadStorefrontCategoryFilters(slug);if(window.storefrontCategoryFiltersChanged){window.storefrontCategoryFiltersChanged=false;await loadStorefrontCategoryPage(1);renderProductCards(visibleCatalog(),grid);drawStorefrontPagination();if(empty)empty.hidden=visibleCatalog().length>0;}renderCategoryFilters(filters);}catch(error){renderCategoryFilters([]);}}
   storePage.dataset.categoryRendered='true';
 };
 
@@ -194,6 +227,7 @@ const setupShoppingBag=async()=>{
   if(!storePage||!grid||storePage.dataset.shoppingBagSetup)return;
   storePage.dataset.shoppingBagSetup='ready';
   const optionSummary=(entry)=>normalizeCartOptions(entry.selectedOptions).map((option)=>option.label).filter(Boolean).join(' · ');
+  const packCountForCart=(pricing)=>{const label=String(pricing?.option?.label||'');const countLabel=label.match(/\((\d+)\s*(?:ct|count|pcs?|pack)\)/i);if(countLabel)return Math.max(1,Number(countLabel[1])||1);const packMatch=String(pricing?.sku||'').match(/-(\d+)PK$/i);return packMatch?Math.max(1,Number(packMatch[1])||1):1;};
   const linePricing=(entry,item)=>window.storeCartPricing(item,entry);
   const currentEntries=()=>validBagItems().filter((entry)=>findProduct(entry.id));
   const renderCart=()=>{
@@ -203,15 +237,21 @@ const setupShoppingBag=async()=>{
       const item=findProduct(entry.id);
       const pricing=linePricing(entry,item);
       const quantity=Math.max(1,Number(entry.quantity)||1);
+      const inventoryMaximum=window.storeCart?.maxQuantity?.(entry.id,entry.selectedOptions,entries);
+      const finiteInventoryMaximum=Number.isFinite(inventoryMaximum);
       const row=document.createElement('article');
       row.className='cart-line';
       const image=pricing.option?.imageUrl||item.image||'product-mix.jpg';
       const productHref=`product.html?id=${encodeURIComponent(item.id)}`;
       const priceMarkup=pricing.productPromoApplied?`<s class="cart-line-original-price">$${pricing.originalUnitPrice.toFixed(2)}</s> <span class="cart-line-promo-price">$${pricing.unitPrice.toFixed(2)}</span>`:`$${pricing.unitPrice.toFixed(2)}`;
       const totalMarkup=pricing.productPromoApplied?`<s class="cart-line-original-price">$${(pricing.originalUnitPrice*quantity).toFixed(2)}</s> <span class="cart-line-promo-price">$${(pricing.unitPrice*quantity).toFixed(2)}</span>`:`$${(pricing.unitPrice*quantity).toFixed(2)}`;
+      const packCount=packCountForCart(pricing);
       const wished=wishlistItems().includes(entry.id);
       const promoDetails=pricing.promoDetails?`<small class="cart-line-promo-disclaimer">${escapeProductText(pricing.promoDetails)}</small>`:'';
-      row.innerHTML=`<a class="cart-line-image-link" href="${productHref}" aria-label="View ${escapeProductText(item.name)}"><img class="product-card-image" src="${escapeProductText(image)}" alt="${escapeProductText(item.name)}"></a><div class="cart-line-copy"><h3>${escapeProductText(item.name)}</h3>${optionSummary(entry)?`<p>${escapeProductText(optionSummary(entry))}</p>`:''}<p class="cart-line-sku">SKU: ${escapeProductText(pricing.sku||item.sku||'—')}</p></div><div class="cart-line-unit"><span>Price / unit</span><strong>${priceMarkup}</strong>${promoDetails}</div><label class="cart-line-quantity">Quantity<input type="number" min="1" step="1" value="${quantity}" data-cart-quantity></label><div class="cart-line-total"><span>Line total</span><strong>${totalMarkup}</strong></div><div class="cart-line-actions"><a href="#" class="cart-line-favorite${wished?' active':''}" data-cart-favorite aria-label="${wished?'Remove from':'Add to'} favorites">${wished?'Remove from Favorites':'Add to Favorites'}</a><a href="#" class="cart-line-remove" data-remove-cart-line>Remove</a></div>`;
+      row.innerHTML=`<a class="cart-line-image-link" href="${productHref}" aria-label="View ${escapeProductText(item.name)}"><img class="product-card-image" src="${escapeProductText(image)}" alt="${escapeProductText(item.name)}"></a><div class="cart-line-copy"><h3>${escapeProductText(item.name)}</h3>${optionSummary(entry)?`<p>${escapeProductText(optionSummary(entry))}</p>`:''}<p class="cart-line-sku">SKU: ${escapeProductText(pricing.sku||item.sku||'—')}</p></div><div class="cart-line-unit"><span>Price / unit</span><strong>${priceMarkup}</strong>${promoDetails}</div><label class="cart-line-quantity">Quantity<input type="number" min="1" ${finiteInventoryMaximum?`max="${Math.max(1,inventoryMaximum)}"`:''} step="1" value="${quantity}" data-cart-quantity>${finiteInventoryMaximum?`<small>${inventoryMaximum} max with other cart items</small>`:''}</label><div class="cart-line-total"><span>Line total</span><strong>${totalMarkup}</strong></div><div class="cart-line-actions"><a href="#" class="cart-line-favorite${wished?' active':''}" data-cart-favorite aria-label="${wished?'Remove from':'Add to'} favorites">${wished?'Remove from Favorites':'Add to Favorites'}</a><a href="#" class="cart-line-remove" data-remove-cart-line>Remove</a></div>`;
+      const unitLabel=row.querySelector('.cart-line-unit span');
+      if(unitLabel)unitLabel.textContent=packCount>1?`Price / ${packCount} Pack`:'Price / unit';
+      if(packCount>1){const bulkNote=document.createElement('small');bulkNote.className='cart-line-bulk-pricing';bulkNote.textContent=`Bulk pricing · $${(pricing.unitPrice/packCount).toFixed(2)} per bead`;row.querySelector('.cart-line-unit')?.append(bulkNote);}
       row.querySelector('[data-cart-quantity]').addEventListener('change',(event)=>window.storeCart.setQuantity(entry.id,entry.selectedOptions,event.target.value));
       row.querySelector('[data-remove-cart-line]').addEventListener('click',(event)=>{event.preventDefault();window.storeCart.removeLine(entry.id,entry.selectedOptions);});
       row.querySelector('[data-cart-favorite]').addEventListener('click',(event)=>{event.preventDefault();const active=toggleWishlist(entry.id);event.currentTarget.classList.toggle('active',active);event.currentTarget.textContent=active?'Remove from Favorites':'Add to Favorites';event.currentTarget.setAttribute('aria-label',active?'Remove from favorites':'Add to favorites');});
@@ -382,6 +422,8 @@ const setupShoppingBag=async()=>{
   window.addEventListener('bead-store-synced',refresh);
   window.addEventListener('bead-catalog-enriched',refresh);
   window.addEventListener('bead-catalog-options-ready',refresh);
+  window.addEventListener('bead-inventory-recipes-ready',refresh);
+  window.addEventListener('bead-cart-stock-limited',(event)=>{status.textContent=`Only ${Math.max(0,Number(event.detail?.maximum)||0)} of that pack can be purchased with the other items in your cart.`;refresh();});
 };
 
 const renderStorePage=async()=>{
