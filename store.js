@@ -157,6 +157,7 @@ async function loadCatalog(){
       const response=await withStoreTimeout(fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'}),'Product request');
       const responseData=await response.json();
       const exactRow=Array.isArray(responseData)?responseData.find((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId):null;
+      if(new URLSearchParams(location.search).has('debugCatalog'))window.storeCatalogDebug={status:response.status,ok:response.ok,requested:productPageId,filterField,returned:Array.isArray(responseData)?responseData.map((row)=>({id:row?.id,externalId:row?.external_id,name:row?.name,visible:row?.visible})):responseData};
       if(!response.ok)error=new Error(`Product request failed (${response.status}).`);
       else if(exactRow)data=[exactRow];
       else error=new Error('The product request returned an unrelated row.');
