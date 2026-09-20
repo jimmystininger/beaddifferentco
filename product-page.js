@@ -11,6 +11,9 @@ function productOptionPrice(option,value){
 const deliveryZipPattern=/^\d{5}(?:-\d{4})?$/;
 const deliveryDateLabel=(value)=>{const date=new Date(`${String(value||'').slice(0,10)}T12:00:00`);return Number.isNaN(date.getTime())?'':date.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});};
 const deliveryProcessingLabel=(days)=>`${Number(days)||0} business-day processing`;
+const productDeliveryCache=new Map();
+const productDeliveryInFlight=new Map();
+const productDeliveryCacheTtlMs=10*60*1000;
 
 function addShippingIcon(className,svg){const icon=document.createElement('span');icon.className=`shipping-row-icon ${className}`;icon.setAttribute('aria-hidden','true');icon.innerHTML=svg;return icon;}
 function enhanceProductShippingCard(){const shipping=document.querySelector('[data-delivery-form]');if(!shipping||shipping.dataset.iconsReady)return;shipping.dataset.iconsReady='true';const heading=shipping.querySelector('.shipping-estimate-heading');const destination=shipping.querySelector('.shipping-delivery');const estimate=shipping.querySelector('.shipping-estimate-result');const truck='<svg viewBox="0 0 24 24" focusable="false"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7zM7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>';const pin='<svg viewBox="0 0 24 24" focusable="false"><path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.2"/></svg>';const calendar='<svg viewBox="0 0 24 24" focusable="false"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>';if(heading&&!heading.querySelector('.shipping-row-icon')){heading.classList.add('shipping-row');heading.prepend(addShippingIcon('shipping-truck-icon',truck));}if(destination&&!destination.querySelector('.shipping-row-icon')){destination.classList.add('shipping-row');destination.prepend(addShippingIcon('',pin));}if(estimate&&!estimate.querySelector('.shipping-row-icon')){estimate.classList.add('shipping-row');estimate.prepend(addShippingIcon('',calendar));}}
@@ -25,25 +28,38 @@ async function refreshProductDeliveryEstimate(main,item){
   if(!form||!input||!arrival)return;
   const zip=input.value.trim();
   if(!deliveryZipPattern.test(zip)){arrival.textContent='Enter a valid ZIP code to see an estimate.';return;}
+  const config=window.productStoreConfig||{};
+  const weightOz=Math.max(0.01,Number(item.weight)||1);
+  const cacheKey=JSON.stringify({zip,weightOz,origin:String(config.shippingOriginPostalCode||''),processingDays:Number(config.processingDays)||0});
+  const applyResult=(result)=>{
+    if(!result||result.error){arrival.textContent=result?.error||'Delivery estimates are unavailable right now.';return;}
+    const rate=result.rates?.[0]||{};
+    const earliestDate=deliveryDateLabel(rate.estimatedDeliveryStart||result.estimatedDeliveryStart);
+    const latestDate=deliveryDateLabel(rate.estimatedDeliveryEnd||result.estimatedDeliveryEnd);
+    const deliveryDate=deliveryDateLabel(rate.scheduledDeliveryDate||result.scheduledDeliveryDate);
+    arrival.textContent=earliestDate&&latestDate?`Estimated delivery ${earliestDate} – ${latestDate}`:deliveryDate?`Estimated delivery by ${deliveryDate}`:'USPS estimate received.';
+    if(note)note.textContent=result.estimateSource==='usps-standard'?`USPS Ground Advantage · 2–5 business days after ${deliveryProcessingLabel(result.processingDays)} · Service standards are estimates, not guarantees.`:`USPS Ground Advantage · ${deliveryProcessingLabel(result.processingDays)} · Service standards are estimates, not guarantees.`;
+  };
+  const cached=productDeliveryCache.get(cacheKey);
+  if(cached&&Date.now()-cached.timestamp<productDeliveryCacheTtlMs){applyResult(cached.result);return;}
   if(button)button.disabled=true;
   arrival.textContent='Checking USPS service standards…';
-  const result=await window.storeShipping?.estimateDelivery({postalCode:zip,weightOz:item.weight});
+  let request=productDeliveryInFlight.get(cacheKey);
+  if(!request){request=window.storeShipping?.estimateDelivery({postalCode:zip,weightOz});productDeliveryInFlight.set(cacheKey,request||Promise.resolve(null));}
+  const result=await request;
+  productDeliveryInFlight.delete(cacheKey);
   if(button)button.disabled=false;
-  if(!result||result.error){arrival.textContent=result?.error||'Delivery estimates are unavailable right now.';return;}
-  const rate=result.rates?.[0]||{};
-  const earliestDate=deliveryDateLabel(rate.estimatedDeliveryStart||result.estimatedDeliveryStart);
-  const latestDate=deliveryDateLabel(rate.estimatedDeliveryEnd||result.estimatedDeliveryEnd);
-  const deliveryDate=deliveryDateLabel(rate.scheduledDeliveryDate||result.scheduledDeliveryDate);
-  arrival.textContent=earliestDate&&latestDate?`Estimated delivery ${earliestDate} – ${latestDate}`:deliveryDate?`Estimated delivery by ${deliveryDate}`:'USPS estimate received.';
-  if(note)note.textContent=result.estimateSource==='usps-standard'?`USPS Ground Advantage · 2–5 business days after ${deliveryProcessingLabel(result.processingDays)} · Service standards are estimates, not guarantees.`:`USPS Ground Advantage · ${deliveryProcessingLabel(result.processingDays)} · Service standards are estimates, not guarantees.`;
+  if(result&&!result.error)productDeliveryCache.set(cacheKey,{result,timestamp:Date.now()});
+  applyResult(result);
 }
 
 function bindProductDeliveryEstimate(main,item){
   const form=main.querySelector('[data-delivery-form]');
   if(!form)return;
-  form.addEventListener('submit',(event)=>{event.preventDefault();void refreshProductDeliveryEstimate(main,item);});
+  let inputTimer=0;
+  form.addEventListener('submit',(event)=>{event.preventDefault();window.clearTimeout(inputTimer);void refreshProductDeliveryEstimate(main,item);});
   const input=form.querySelector('#delivery-zip');
-  input?.addEventListener('input',()=>{if(deliveryZipPattern.test(input.value.trim()))void refreshProductDeliveryEstimate(main,item);});
+  input?.addEventListener('input',()=>{window.clearTimeout(inputTimer);if(deliveryZipPattern.test(input.value.trim()))inputTimer=window.setTimeout(()=>void refreshProductDeliveryEstimate(main,item),350);});
 }
 
 async function hydrateProductDeliveryEstimate(main,item){
