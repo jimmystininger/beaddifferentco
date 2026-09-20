@@ -146,16 +146,20 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
     const delivery = (estimate.delivery || {}) as Record<string, unknown>;
     return { serviceDays: numberValue(estimate.serviceStandard), scheduledDeliveryDate: textValue(delivery.scheduledDeliveryDateTime, 30).slice(0, 10) };
   };
-  try {
-    const services = [
-      ["USPS_GROUND_ADVANTAGE", "USPS Ground Advantage"],
-      ["PRIORITY_MAIL", "USPS Priority Mail"],
-    ] as const;
-    const rates = await Promise.all(services.map(async ([serviceCode, serviceName]) => ({ ...await requestPrice(serviceCode, serviceName), ...await requestDelivery(serviceCode) })));
-    return json({ provider: "usps", rates });
-  } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "USPS shipping quote failed." }, 502);
-  }
+  const services = [
+    ["USPS_GROUND_ADVANTAGE", "USPS Ground Advantage"],
+    ["PRIORITY_MAIL", "USPS Priority Mail"],
+  ] as const;
+  const results = await Promise.all(services.map(async ([serviceCode, serviceName]) => {
+    const service: Record<string, unknown> = { serviceCode, serviceName };
+    const errors: string[] = [];
+    try { Object.assign(service, await requestPrice(serviceCode, serviceName)); } catch (error) { errors.push(error instanceof Error ? error.message : `${serviceName} postage failed.`); }
+    try { Object.assign(service, await requestDelivery(serviceCode)); } catch (error) { errors.push(error instanceof Error ? error.message : `${serviceName} delivery estimate failed.`); }
+    return errors.length < 2 ? service : null;
+  }));
+  const rates = results.filter((rate): rate is Record<string, unknown> => Boolean(rate));
+  if (!rates.length) return json({ error: "USPS could not return a postage or delivery estimate." }, 502);
+  return json({ provider: "usps", rates });
 };
 
 const serviceName = (code: string) => ({
