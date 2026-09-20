@@ -68,8 +68,8 @@ async function sendOrderConfirmation(orderId: string, user: { id: string; email?
   if (!response.ok) throw new Error("Unable to load the order.");
   const orders = await response.json();
   const order = orders[0];
-  const email = textValue(order.customer_email || user?.email, 320).toLowerCase();
   if (!order) throw new Error("Order not found.");
+  const email = textValue(order.customer_email || user?.email, 320).toLowerCase();
   if (!emailPattern.test(email)) return { sent: 0, skipped: true };
   const name = textValue(order.shipping_name || user?.user_metadata?.full_name, 160);
   const orderShortId = String(order.id).slice(0, 8);
