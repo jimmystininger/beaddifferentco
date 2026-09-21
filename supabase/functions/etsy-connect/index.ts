@@ -390,6 +390,8 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const unitPrice = packSize > 1 ? Math.round((listingPrice / packSize) * 100) / 100 : listingPrice;
   const quantity = listingQuantityFrom(listing, detail);
   const categorySlug = listingCategoryFrom(listing, detail, availableCategories);
+  const recipeText = [title, description, etsySku, detail.category_path, detail.taxonomy_path, listing.category_path, listing.taxonomy_path].filter(Boolean).join(' ');
+  const manualRecipeRequired = canonicalEtsySku !== oneSku && (categorySlug === 'mixes-bundles-kits' || /(?:^|[^a-z])(mix|mixed|mixes|assort(?:ed|ment)?|bundle|kit|variety|random)(?:$|[^a-z])/i.test(recipeText));
   const images = listingImagesFrom(listing, detail);
   const tags = listingValues(detail.tags).slice(0, 40);
   const materials = listingValues(detail.materials).slice(0, 40);
@@ -406,7 +408,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   if (canonicalEtsySku !== oneSku) {
     childInventory = await ensurePhysicalInventorySku(childInventory);
     parentInventory = await findOrCreateInventorySku(canonicalEtsySku, { sku: canonicalEtsySku, name: title, variant_name: `${packSize}PK`, quantity_on_hand: quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: listingPrice, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: etsySku, pack_size: packSize, imported_quantity: quantity, imported_at: new Date().toISOString() } });
-    await database('inventory_bundle_components?on_conflict=bundle_sku_id,component_sku_id', 'POST', [{ bundle_sku_id: parentInventory.id, component_sku_id: childInventory.id, quantity: packSize, sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
+    if (!manualRecipeRequired) await database('inventory_bundle_components?on_conflict=bundle_sku_id,component_sku_id', 'POST', [{ bundle_sku_id: parentInventory.id, component_sku_id: childInventory.id, quantity: packSize, sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
   }
   if (!product) {
     const inserted = await database('products', 'POST', { external_id: oneSku, sku: oneSku, etsy_listing_id: Number(listingId), category_slug: categorySlug, name: title, seo_title: title, short_description: description.slice(0, 240) || null, description: description || null, item_details: `Imported from Etsy listing ${listingId}. Tags: ${tags.join(', ') || 'None'}. Materials: ${materials.join(', ') || 'None'}.`, shipping_details: null, price: unitPrice, quantity: quantity * packSize, visible: false, waitlist_enabled: false, estimated_cost: 0, low_stock_threshold: 0, badges: [], promo_skus: [], etsy_units_per_sale: 1, sku_filter_definitions: [], featured: false, added_at: stamp(detail.created_timestamp || listing.created_timestamp) });
@@ -433,7 +435,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const onePkUrl = `admin.html?inventory=sku&sku=${encodeURIComponent(oneSku)}`;
   const packSkuUrl = canonicalEtsySku !== oneSku ? `admin.html?inventory=sku&sku=${encodeURIComponent(canonicalEtsySku)}` : null;
   const recipeUrl = canonicalEtsySku !== oneSku ? `admin.html?inventory=adjust&recipe=${encodeURIComponent(canonicalEtsySku)}` : null;
-  return { listing_id: listingId, product_id: product.id, product_name: title, etsy_sku: etsySku, one_pk_sku: oneSku, pack_size: packSize, created, quantity, url: productUrl, links: { product: productUrl, one_pk_sku: onePkUrl, pack_sku: packSkuUrl, recipe: recipeUrl } };
+  return { listing_id: listingId, product_id: product.id, product_name: title, etsy_sku: etsySku, one_pk_sku: oneSku, pack_size: packSize, created, quantity, manual_recipe_required: manualRecipeRequired, url: productUrl, links: { product: productUrl, one_pk_sku: onePkUrl, pack_sku: packSkuUrl, recipe: recipeUrl } };
 }
 async function importEtsyListings(adminId: string) {
   const connection = await importConnection();
