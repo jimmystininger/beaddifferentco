@@ -34,6 +34,8 @@ The admin uploader safety path was repaired in PR #87: product-scoped uploads us
 
 The follow-up reference scan found a useful distinction: several unreferenced category and storefront objects are byte-identical copies of currently referenced objects (matching storage ETags but using older timestamped paths), while some product uploads have no matching row at all and some product videos have duplicate content with only one path referenced. This confirms storage drift, but it does not prove which historical theme or admin session may still need an older path. No delete was attempted; the candidates remain review-only until an authenticated Storage API cleanup can be tied to an explicit canonical replacement.
 
+The latest live scan confirms 110 objects / 24,638,363 bytes total, 43 referenced objects / 8,694,149 bytes, and 67 unreferenced objects / 15,944,214 bytes. It also found exact duplicate groups that are entirely unreferenced: four copies of the Halloween hero (1,158,112 bytes), four copies of the Halloween logo (513,480 bytes), three storefront category-thumbnail copies (789,078 bytes), two Halloween logo/story-related storefront pairs, and one unreferenced review upload with no `reviews.photos` row. These are strong cleanup candidates, but they still require an authenticated Storage API deletion and a final product/theme review; no SQL or direct object deletion was used.
+
 ### Security/performance advisors — reviewed, no blind changes
 
 - Supabase still reports two intentional security-definer public views used by the storefront (`storefront_store_controls` and `storefront_inventory_skus`).
@@ -51,7 +53,17 @@ Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR
 ### Edge Functions — canonical match
 
 - All 8 local Edge Functions have matching active deployments in project `zejcuqhihbfpuwsjvmhc`.
-- Normalized `index.ts` content matches exactly for every function (`etsy-connect`, `etsy-historical`, `ohio-sales-tax`, `send-auth-email`, `send-order-email`, `send-restock-notifications`, `send-store-email`, and `shipping-rates`). No local/live function drift was found; no deployment was performed.
+- The pre-cache audit found normalized `index.ts` content matching exactly for every function; the provider-cache batch then intentionally changed and redeployed the two provider functions below.
+
+The provider-cache batch subsequently deployed the intentional source changes to `shipping-rates` v21 and `ohio-sales-tax` v9; those two live functions now match the current local files and are documented in the USPS section below.
+
+### Admin review and metrics implementation — statically verified
+
+- `admin.js` loads reviews in 25-row pages with exact counts and Previous/Next controls.
+- Review rows include up to five posted photos, a member-name profile dialog, a link to the full member record, and membership year derived from `created_at`/`reviewer_member_since` rather than the exact signup date.
+- The public review page queries approved reviews only, so blocked/hidden reviews do not contribute to its displayed average.
+- The metrics loader uses per-source result objects and renders warnings for unavailable tables instead of discarding all available reports when one source fails. It paginates large sources in 1,000-row batches.
+- These features passed JavaScript syntax checks; live admin rendering still requires an authenticated admin session for end-to-end verification.
 
 ### USPS quote flow — cart retry repaired
 
