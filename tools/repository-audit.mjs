@@ -37,6 +37,21 @@ for (const fileName of htmlFiles) {
   }
 }
 
+const cssPath = path.join(repoRoot, 'styles.css');
+if (fs.existsSync(cssPath)) {
+  const cssSource = fs.readFileSync(cssPath, 'utf8');
+  for (const [, reference] of cssSource.matchAll(/url\(\s*["']?([^\)"']+)["']?\s*\)/gi)) {
+    const target = localTarget(reference);
+    if (!target) continue;
+    const relative = path.relative(repoRoot, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      failures.push(`styles.css: local reference escapes repository: ${reference}`);
+    } else if (!fs.existsSync(target)) {
+      failures.push(`styles.css: missing local reference: ${reference}`);
+    }
+  }
+}
+
 const forbiddenRootArtifacts = fs.readdirSync(repoRoot, { withFileTypes: true })
   .filter((entry) => entry.isFile() && /\.(?:js|html|css|json|sql)$/i.test(entry.name))
   .map((entry) => entry.name)
@@ -45,6 +60,14 @@ for (const artifact of forbiddenRootArtifacts) failures.push(`parallel implement
 
 if (fs.existsSync(path.join(repoRoot, '.vercel', 'output'))) {
   failures.push('stale generated output exists: .vercel/output');
+}
+
+const storeSource = fs.readFileSync(path.join(repoRoot, 'store.js'), 'utf8');
+if (!/shipping_address\s*:\s*shippingAddress/.test(storeSource)) {
+  failures.push('checkout payload must map shippingAddress to shipping_address explicitly');
+}
+if (/\bshipping_address\s*,/.test(storeSource)) {
+  failures.push('checkout payload contains undeclared shipping_address shorthand');
 }
 
 if (failures.length) {
