@@ -130,7 +130,9 @@ async function requireAdmin(){
     if(!user)throw new Error('Sign in required.');
     const {data:profile,error}=await client.from('profiles').select('role,status').eq('id',user.id).maybeSingle();
     if(error||profile?.role!=='admin'||profile?.status!=='active')throw new Error('Administrator access required.');
-    if(window.siteSettingsReady)await window.siteSettingsReady;
+    // Store settings/theme hydration is independent of admin authorization.
+    // Waiting for the storefront category + shipping requests here made every
+    // direct editor route block before the editor could begin loading.
   }catch(error){
     if(shell)shell.hidden=true;
     const returnTarget=`${location.pathname.split('/').pop()||'admin.html'}${location.search}`;
@@ -144,7 +146,8 @@ async function requireAdmin(){
   // polling loop. Run it once after authorization; the next admin visit can
   // pick up any newly queued notifications without burning Supabase requests
   // while this tab sits open.
-  void dispatchRestockNotifications();
+  // Keep this maintenance check off the critical editor-load path.
+  window.setTimeout(()=>void dispatchRestockNotifications(),5000);
   try{
     document.querySelectorAll('[data-admin-tab]').forEach((button)=>button.addEventListener('click',()=>switchTab(button.dataset.adminTab)));
      const editorId=adminUrlParams.get('edit');
@@ -2063,7 +2066,19 @@ const recoverAdminProductPageOptions=async(form)=>{
 };
 const openCloudItemForm=async(id)=>{
   setAdminEditorRoute(id);
-  await cloudItemForm(id);
+  // Give immediate feedback instead of leaving the previous catalog view on
+  // screen while the editor's Supabase requests are in flight.
+  if(panel)panel.innerHTML='<div class="admin-empty admin-loading" role="status">Loading product editor…</div>';
+  try{
+    await cloudItemForm(id);
+  }catch(error){
+    // A transient browser-level fetch failure is safe to retry once because
+    // cloudItemForm only paints after its reads complete.
+    if(error instanceof TypeError&&/failed to fetch/i.test(String(error.message||''))){
+      await new Promise((resolve)=>setTimeout(resolve,250));
+      await cloudItemForm(id);
+    }else throw error;
+  }
   const form=document.querySelector('#cloud-item-form');
   if(form){
     // Paint the editor and the customer-facing filter controls first. Media
