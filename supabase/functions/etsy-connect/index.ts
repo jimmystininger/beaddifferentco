@@ -479,7 +479,11 @@ async function importEtsyListings(adminId: string) {
   let truncated = false;
   let warning = '';
   let continueAvailable = false;
-  const maxNewListingsPerRun = 10;
+  // Keep each Edge Function invocation deliberately small. A listing import
+  // creates/updates several inventory, product, option, image, and mapping
+  // rows; processing a large batch in one worker can hit Supabase's resource
+  // limit before the continuation cursor is returned to the browser.
+  const maxNewListingsPerRun = 1;
   try {
     for (let offset = 0; ; offset += 100) {
       let page: Record<string, any>;
@@ -506,7 +510,7 @@ async function importEtsyListings(adminId: string) {
       // rest of the shop and hitting Etsy's pagination/runtime limits.
       if (!newListings.length) break;
       const listingsThisRun = newListings.slice(0, maxNewListingsPerRun);
-      const imported = await concurrentSettled(listingsThisRun, 2, async (listing) => {
+      const imported = await concurrentSettled(listingsThisRun, 1, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
         return importEtsyListing(connection, batchId, listing, detail, availableCategories);
       });
