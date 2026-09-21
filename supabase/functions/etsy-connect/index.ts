@@ -499,6 +499,10 @@ async function importEtsyListings(adminId: string) {
       if (!listings.length) break;
       rows += listings.length;
       const newListings = listings.filter((listing) => !knownListingIds.has(String(listing.listing_id || listing.id || '').trim()));
+      // Listings are requested newest-first. Once a complete page is already
+      // known, every older page is known as well, so stop before walking the
+      // rest of the shop and hitting Etsy's pagination/runtime limits.
+      if (!newListings.length) break;
       const imported = await concurrentSettled(newListings, 2, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
         return importEtsyListing(connection, batchId, listing, detail, availableCategories);
