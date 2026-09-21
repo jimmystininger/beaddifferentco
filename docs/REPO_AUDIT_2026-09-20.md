@@ -20,7 +20,7 @@ This is an evidence log for the system-wide audit. Source-of-truth behavior rema
 
 ### Migration ledger drift — open, do not delete or replay
 
-Live project `zejcuqhihbfpuwsjvmhc` reports 157 applied migrations. The repository contains 172 SQL files. A fresh exact `(version, name)` comparison found 159 local-only entries, 144 live-only entries, 120 shared logical names with different timestamps, and three duplicate local timestamp groups (`20260910013000`, `20260916200000`, and `20260917200000`). This is timestamp rebasing/drift, not evidence that either side can be deleted or replayed safely.
+The latest live ledger read reports 159 applied migrations; the repository now contains 174 SQL files. Exact `(version, name)` comparison remains non-authoritative because many historical migrations were rebased or renamed: the live ledger has 25 names with no same-name local file, while the local tree has 39 names with no same-name live file (including the now-reconciled historical `guest_checkout_orders` name). The local tree still has duplicate timestamp groups (`20260910013000`, `20260916200000`, and `20260917200000`). This is timestamp/name drift, not evidence that either side can be deleted or replayed safely.
 
 This cannot be safely normalized from the current workspace: the Supabase CLI is not installed, and the available management result exposes the live ledger names but not the original SQL needed to reconstruct missing files. No migration was replayed, deleted, or marked repaired. The next safe action is to run the official `supabase migration repair`/`db pull` workflow from a credentialed environment, review the complete diff, and submit that as its own batch.
 
