@@ -501,31 +501,64 @@ async function renderReviews(){
     dialog.className='profile-dialog admin-review-member-dialog';
     const name=button.dataset.reviewMemberName||'Member';
     const id=button.dataset.reviewMemberId||'';
-    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(name)+'</h3><p class="admin-member-record-status" role="status">Loading full member record…</p>';
-    dialog.querySelector('[data-close-review-member]').addEventListener('click',()=>dialog.close());
+    const bindClose=()=>dialog.querySelector('[data-close-review-member]')?.addEventListener('click',()=>dialog.close());
+    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(name)+'</h3><p class="admin-member-record-status" role="status">Loading member dashboard…</p>';
+    bindClose();
     dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});
     dialog.addEventListener('close',()=>dialog.remove(),{once:true});
     document.body.append(dialog);dialog.showModal();
-    if(!id||!window.beadSupabase){dialog.querySelector('[data-member-record]')?.remove();return;}
+    if(!id||!window.beadSupabase){const status=dialog.querySelector('.admin-member-record-status');if(status)status.textContent='This member record is not available.';return;}
     const [profileResult,reviewsResult,ordersResult,notesResult]=await Promise.all([
       window.beadSupabase.from('profiles').select('id,email,full_name,status,created_at').eq('id',id).maybeSingle(),
       window.beadSupabase.from('reviews').select('id,review_type,rating,body,photos,status,created_at,products(name)').eq('user_id',id).order('created_at',{ascending:false}),
-      window.beadSupabase.from('orders').select('id,status,total,tracking_number,created_at').eq('user_id',id).order('created_at',{ascending:false}),
+      window.beadSupabase.from('orders').select('id,status,total,subtotal,discount,shipping_amount,tax_amount,shipping_name,shipping_address,carrier,tracking_number,shipped_at,created_at,order_items(id,product_name,sku,quantity,unit_price,selected_options)').eq('user_id',id).order('created_at',{ascending:false}),
       window.beadSupabase.from('member_notes').select('id,note,created_at').eq('member_id',id).order('created_at',{ascending:false})
     ]);
     const failure=profileResult.error||reviewsResult.error||ordersResult.error||notesResult.error;
     const status=dialog.querySelector('.admin-member-record-status');
     if(failure){if(status)status.textContent='Unable to load the full member record: '+(failure.message||'Unknown error.');return;}
+    if(!dialog.isConnected)return;
     const profile=profileResult.data||{};
     const year=memberYear(profile.created_at||button.dataset.reviewMemberYear);
     const reviews=reviewsResult.data||[];
     const orders=ordersResult.data||[];
     const notes=notesResult.data||[];
-    const reviewRows=reviews.map((review)=>{const photos=(Array.isArray(review.photos)?review.photos:[]).map((photo,index)=>{const safeUrl=safeAdminThemeImageUrl(photo);return safeUrl?'<a class="admin-review-photo-link" href="'+adminSafe(safeUrl)+'" target="_blank" rel="noreferrer"><img class="admin-review-photo" src="'+adminSafe(safeUrl)+'" alt="Review photo '+(index+1)+'" loading="lazy"></a>':'';}).join('');return'<article class="admin-member-record-item"><strong>'+adminSafe(review.products?.name||'Website review')+' · '+Number(review.rating||0)+'/5</strong><span>'+adminSafe(review.status||'pending')+' · '+adminSafe(review.created_at?new Date(review.created_at).toLocaleDateString():'Unknown date')+'</span><p>'+adminSafe(review.body||'')+'</p>'+(photos?'<div class="admin-review-photos">'+photos+'</div>':'')+'</article>';}).join('')||'<p>No reviews yet.</p>';
-    const orderRows=orders.map((order)=>'<article class="admin-member-record-item"><strong>Order '+adminSafe(String(order.id||'').slice(0,8))+' · $'+Number(order.total||0).toFixed(2)+'</strong><span>'+adminSafe(order.status||'unknown')+' · '+adminSafe(order.created_at?new Date(order.created_at).toLocaleDateString():'Unknown date')+'</span><p>'+adminSafe(order.tracking_number||'No tracking number')+'</p></article>').join('')||'<p>No orders yet.</p>';
-    const noteRows=notes.map((note)=>'<article class="admin-member-record-item"><strong>'+adminSafe(note.created_at?new Date(note.created_at).toLocaleString():'Unknown date')+'</strong><p>'+adminSafe(note.note||'')+'</p></article>').join('')||'<p>No notes yet.</p>';
-    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(profile.full_name||profile.email||name)+'</h3><div data-member-record><dl class="admin-review-member-profile"><div><dt>Email</dt><dd>'+adminSafe(profile.email||'Not available')+'</dd></div><div><dt>Member since</dt><dd>'+adminSafe(year||'Not available')+'</dd></div><div><dt>Status</dt><dd>'+adminSafe(profile.status||'unknown')+'</dd></div></dl><section class="admin-member-record-section"><h4>Reviews ('+reviews.length+')</h4>'+reviewRows+'</section><section class="admin-member-record-section"><h4>Orders ('+orders.length+')</h4>'+orderRows+'</section><section class="admin-member-record-section"><h4>Private notes ('+notes.length+')</h4>'+noteRows+'</section></div>';
-    dialog.querySelector('[data-close-review-member]').addEventListener('click',()=>dialog.close());
+    const totalSpent=orders.filter((order)=>!['cancelled','refunded'].includes(String(order.status||'').toLowerCase())).reduce((sum,order)=>sum+(Number(order.total)||0),0);
+    const pageSize=5;
+    let activeSection='reviews';
+    let activePage=1;
+    const dateLabel=(value,includeTime=false)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'Unknown date':date.toLocaleString(undefined,includeTime?{}:{dateStyle:'medium'});};
+    const moneyLabel=(value)=>'$'+(Number(value)||0).toFixed(2);
+    const reviewRow=(review)=>{const photos=reviewPhotos(review);return'<article class="admin-member-record-item"><strong>'+adminSafe(review.products?.name||'Website review')+' · '+Number(review.rating||0)+'/5</strong><span>'+adminSafe(review.status||'pending')+' · '+adminSafe(dateLabel(review.created_at))+'</span><p>'+adminSafe(review.body||'')+'</p>'+(photos?'<div class="admin-review-photos">'+photos+'</div>':'')+'</article>';};
+    const orderRow=(order)=>'<button type="button" class="admin-member-order-row" data-member-order="'+adminSafe(order.id)+'"><span><strong>Order '+adminSafe(String(order.id||'').slice(0,8))+'</strong><small>'+adminSafe(order.status||'unknown')+' · '+adminSafe(dateLabel(order.created_at))+'</small></span><strong>'+moneyLabel(order.total)+'</strong><span aria-hidden="true">›</span></button>';
+    const noteRow=(note)=>'<article class="admin-member-record-item"><strong>'+adminSafe(dateLabel(note.created_at,true))+'</strong><p>'+adminSafe(note.note||'')+'</p></article>';
+    const rowsFor=(section)=>section==='orders'?orders:section==='notes'?notes:reviews;
+    const sectionTitle=(section)=>section==='orders'?'Orders':section==='notes'?'Private notes':'Reviews';
+    const renderOrderDetail=(order)=>{
+      const address=Object.entries(order.shipping_address||{}).filter(([,value])=>value!==null&&value!==undefined&&String(value).trim()).map(([key,value])=>adminSafe(String(value))).join(', ');
+      const items=(order.order_items||[]).map((item)=>'<li><span>'+adminSafe(item.product_name||'Item')+(item.sku?' · '+adminSafe(item.sku):'')+' × '+Number(item.quantity||0)+'</span><strong>'+moneyLabel((Number(item.unit_price)||0)*(Number(item.quantity)||0))+'</strong></li>').join('')||'<li>No line items recorded.</li>';
+      const drilldown=dialog.querySelector('[data-member-drilldown]');
+      if(!drilldown)return;
+      drilldown.innerHTML='<div class="admin-member-drilldown-header"><button type="button" data-member-order-back>‹ Back to orders</button><h4>Order '+adminSafe(String(order.id||'').slice(0,8))+'</h4></div><dl class="admin-member-order-detail"><div><dt>Order number</dt><dd>'+adminSafe(order.id||'Not available')+'</dd></div><div><dt>Status</dt><dd>'+adminSafe(order.status||'unknown')+'</dd></div><div><dt>Placed</dt><dd>'+adminSafe(dateLabel(order.created_at,true))+'</dd></div><div><dt>Subtotal</dt><dd>'+moneyLabel(order.subtotal)+'</dd></div><div><dt>Discount</dt><dd>−'+moneyLabel(order.discount)+'</dd></div><div><dt>Shipping</dt><dd>'+moneyLabel(order.shipping_amount)+'</dd></div><div><dt>Tax</dt><dd>'+moneyLabel(order.tax_amount)+'</dd></div><div><dt>Total</dt><dd><strong>'+moneyLabel(order.total)+'</strong></dd></div><div><dt>Shipping name</dt><dd>'+adminSafe(order.shipping_name||'Not available')+'</dd></div><div><dt>Shipping address</dt><dd>'+address+'</dd></div><div><dt>Carrier / tracking</dt><dd>'+adminSafe([order.carrier,order.tracking_number].filter(Boolean).join(' · ')||'Not available')+'</dd></div></dl><section class="admin-member-record-section"><h5>Items</h5><ul class="admin-member-order-items">'+items+'</ul></section>';
+      drilldown.querySelector('[data-member-order-back]').onclick=()=>{activeSection='orders';activePage=1;renderDrilldown();};
+    };
+    const renderDrilldown=()=>{
+      const drilldown=dialog.querySelector('[data-member-drilldown]');
+      if(!drilldown)return;
+      const rows=rowsFor(activeSection);
+      const pageCount=Math.max(1,Math.ceil(rows.length/pageSize));
+      activePage=Math.min(activePage,pageCount);
+      const visible=rows.slice((activePage-1)*pageSize,activePage*pageSize);
+      const markup=activeSection==='reviews'?visible.map(reviewRow).join(''):activeSection==='orders'?visible.map(orderRow).join(''):visible.map(noteRow).join('');
+      drilldown.innerHTML='<div class="admin-member-drilldown-header"><h4>'+sectionTitle(activeSection)+'</h4><span>'+rows.length+' total</span></div><div class="admin-member-record-list">'+(markup||'<p class="admin-member-empty">No '+sectionTitle(activeSection).toLowerCase()+' yet.</p>')+'</div><div class="admin-member-pagination"><button type="button" data-member-page="prev" '+(activePage<=1?'disabled':'')+'>Previous</button><span>Page '+activePage+' of '+pageCount+'</span><button type="button" data-member-page="next" '+(activePage>=pageCount?'disabled':'')+'>Next</button></div>';
+      drilldown.querySelectorAll('[data-member-page]').forEach((pageButton)=>pageButton.onclick=()=>{activePage+=pageButton.dataset.memberPage==='next'?1:-1;renderDrilldown();});
+      drilldown.querySelectorAll('[data-member-order]').forEach((orderButton)=>orderButton.onclick=()=>{const order=orders.find((entry)=>String(entry.id)===orderButton.dataset.memberOrder);if(order)renderOrderDetail(order);});
+    };
+    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(profile.full_name||profile.email||name)+'</h3><div data-member-record><dl class="admin-review-member-profile"><div><dt>Email</dt><dd>'+adminSafe(profile.email||'Not available')+'</dd></div><div><dt>Member since</dt><dd>'+adminSafe(year||'Not available')+'</dd></div><div><dt>Status</dt><dd>'+adminSafe(profile.status||'unknown')+'</dd></div></dl><section class="admin-member-dashboard" aria-label="Member activity summary"><button type="button" class="admin-member-stat" data-member-section="reviews"><span>Reviews</span><strong>'+reviews.length+'</strong></button><button type="button" class="admin-member-stat" data-member-section="orders"><span>Orders</span><strong>'+orders.length+'</strong></button><button type="button" class="admin-member-stat" data-member-section="notes"><span>Notes</span><strong>'+notes.length+'</strong></button><div class="admin-member-stat admin-member-stat-total"><span>Total spent</span><strong>'+moneyLabel(totalSpent)+'</strong></div></section><section class="admin-member-drilldown" data-member-drilldown></section></div>';
+    bindClose();
+    dialog.querySelectorAll('[data-member-section]').forEach((sectionButton)=>sectionButton.onclick=()=>{activeSection=sectionButton.dataset.memberSection;activePage=1;dialog.querySelectorAll('[data-member-section]').forEach((entry)=>entry.classList.toggle('active',entry===sectionButton));renderDrilldown();});
+    dialog.querySelector('[data-member-section="reviews"]')?.classList.add('active');
+    renderDrilldown();
   };
   const attachMemberButtons=()=>panel.querySelectorAll('[data-review-member]').forEach((button)=>button.addEventListener('click',()=>profileDialog(button)));
   if(!window.beadSupabase){
