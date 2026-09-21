@@ -1700,13 +1700,30 @@ const loadAdminFilterDefinitionData=async(categorySlugs)=>{
   const cached=adminFilterDefinitionCache.get(cacheKey);
   if(cached)return cached;
   const request=(async()=>{
-    const result=await cloudAdmin().from('storefront_filter_categories').select('category_slug,filter_id,storefront_filter_definitions!inner(id,key,label,scope,sort_order,active,storefront_filter_values(id,filter_id,value_key,label,sort_order,active))').in('category_slug',slugs).eq('storefront_filter_definitions.active',true);
-    if(result.error)throw result.error;
+    // Keep these reads explicit instead of depending on a nested PostgREST
+    // relationship response. The editor runs with an authenticated admin
+    // session, and a relation/embed error must not silently erase the filter UI.
+    const [categoryResult,definitionResult,valueResult]=await Promise.all([
+      cloudAdmin().from('storefront_filter_categories').select('category_slug,filter_id').in('category_slug',slugs),
+      cloudAdmin().from('storefront_filter_definitions').select('id,key,label,scope,sort_order,active').eq('active',true),
+      cloudAdmin().from('storefront_filter_values').select('id,filter_id,value_key,label,sort_order,active').eq('active',true)
+    ]);
+    if(categoryResult.error)throw categoryResult.error;
+    if(definitionResult.error)throw definitionResult.error;
+    if(valueResult.error)throw valueResult.error;
+    const linkedIds=new Set((categoryResult.data||[]).map((row)=>row.filter_id).filter(Boolean));
+    const valuesByFilter=new Map();
+    (valueResult.data||[]).forEach((value)=>{
+      if(!linkedIds.has(value.filter_id))return;
+      const values=valuesByFilter.get(value.filter_id)||[];
+      values.push(value);
+      valuesByFilter.set(value.filter_id,values);
+    });
+    const categoryByFilter=new Map((categoryResult.data||[]).map((row)=>[row.filter_id,row.category_slug]));
     const definitionsById=new Map();
-    (result.data||[]).forEach((row)=>{
-      const definition=row.storefront_filter_definitions;
-      if(!definition?.active||definitionsById.has(definition.id))return;
-      definitionsById.set(definition.id,{...definition,category_slug:row.category_slug,values:(definition.storefront_filter_values||[]).filter((value)=>value.active===true)});
+    (definitionResult.data||[]).forEach((definition)=>{
+      if(!definition?.active||!linkedIds.has(definition.id)||definitionsById.has(definition.id))return;
+      definitionsById.set(definition.id,{...definition,category_slug:categoryByFilter.get(definition.id)||'',values:(valuesByFilter.get(definition.id)||[]).sort((left,right)=>(Number(left.sort_order)||0)-(Number(right.sort_order)||0)||String(left.label||'').localeCompare(String(right.label||'')))});
     });
     return [...definitionsById.values()].sort((left,right)=>(Number(left.sort_order)||0)-(Number(right.sort_order)||0)||String(left.label||'').localeCompare(String(right.label||'')));
   })();
@@ -1715,7 +1732,7 @@ const loadAdminFilterDefinitionData=async(categorySlugs)=>{
 };
 const adminFilterCategorySlugs=(form)=>[form.elements.category_slug?.value||'',form.querySelector('[data-additional-category]')?.value||''].filter(Boolean);
 const installAdminSkuFilterEditors=async(form)=>{
-  if(!form||form.dataset.skuFilterEditorsInstalled)return;
+  if(!form||['loading','ready'].includes(form.dataset.skuFilterEditorsInstalled))return;
   form.dataset.skuFilterEditorsInstalled='loading';
   let drawToken=0;
   let assignments=[];
@@ -1762,9 +1779,20 @@ const installAdminSkuFilterEditors=async(form)=>{
        if(definitions.length){const grid=document.createElement('div');grid.className='admin-sku-filter-grid';definitions.forEach((definition)=>{const label=document.createElement('label');label.textContent=definition.label;const select=document.createElement('select');select.dataset.skuFilterValue='';select.dataset.filterId=definition.id;select.dataset.filterKey=definition.key||'';select.dataset.filterLabel=definition.label;select.dataset.inventorySkuId=inventoryId;select.dataset.sku=sku;const blank=document.createElement('option');blank.value='';blank.textContent='Not assigned';select.append(blank);const canonicalChoiceId=canonicalFilterAssignments.get(inventoryId+':'+definition.id);const assigned=canonicalFilterInventoryIds.has(inventoryId)?(canonicalChoiceId?{filter_value_id:canonicalChoiceId}:null):assignments.find((assignment)=>assignment.inventory_sku_id===inventoryId&&assignment.filter_value_id&&definition.values.some((value)=>value.id===assignment.filter_value_id))||assignments.find((assignment)=>!assignment.inventory_sku_id&&assignment.filter_value_id&&definition.values.some((value)=>value.id===assignment.filter_value_id));definition.values.forEach((value)=>{const option=document.createElement('option');option.value=value.id;option.textContent=value.label;option.selected=assigned?.filter_value_id===value.id;select.append(option);});label.append(select);grid.append(label);});editor.append(grid);}      row.querySelector('.admin-sku-internal')?.before(editor);
     });
   };
-  form.addEventListener('sku-list-changed',()=>{void draw().catch((error)=>{form.dataset.skuFilterEditorError=error.message||'Unable to load storefront filters.';});});
-  form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))void draw().catch((error)=>{form.dataset.skuFilterEditorError=error.message||'Unable to load storefront filters.';});});
-  try{await loadAssignments();await draw();form.dataset.skuFilterEditorsInstalled='ready';}catch(error){form.dataset.skuFilterEditorsInstalled='ready';form.dataset.skuFilterEditorError=error.message||'Unable to load storefront filters.';}
+  const showError=(error)=>{
+    form.dataset.skuFilterEditorError=error.message||'Unable to load storefront filters.';
+    form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());
+    const notice=document.createElement('p');
+    notice.dataset.skuFilterEditorError='';
+    notice.className='admin-save-error';
+    notice.textContent=`Storefront filters could not be loaded: ${form.dataset.skuFilterEditorError}`;
+    form.querySelector('[data-variant-list]')?.before(notice);
+  };
+  const redraw=()=>{void draw().catch(showError);};
+  form.addEventListener('sku-list-changed',redraw);
+  form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))redraw();});
+  try{await loadAssignments();await draw();form.dataset.skuFilterEditorsInstalled='ready';form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());}
+  catch(error){form.dataset.skuFilterEditorsInstalled='error';showError(error);}
 };
 window.saveAdminProductFilterAssignments=async(productId,form)=>{
   if(!productId||!form)return;
@@ -1998,9 +2026,12 @@ const openCloudItemForm=async(id)=>{
   if(form){
     await initializeCanonicalAdminMedia(form);
     await initializeAdminMediaUploadButton(form);
-    await installProductEditorRestorations();
-    await recoverAdminProductPageOptions(form).catch((error)=>{form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';});
-    if(window.installAdminSkuFilterEditors)await window.installAdminSkuFilterEditors(form);
+    // These hydrators read independent canonical data. Run them together so
+    // the editor does not wait through three sequential Supabase round trips.
+    const restorationPromise=installProductEditorRestorations();
+    const recoveryPromise=recoverAdminProductPageOptions(form).catch((error)=>{form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';});
+    const filterPromise=window.installAdminSkuFilterEditors?window.installAdminSkuFilterEditors(form):Promise.resolve();
+    await Promise.all([restorationPromise,recoveryPromise,filterPromise]);
     await installCanonicalProductPageOptions(form);
     form.addEventListener('input',(event)=>{if(event.target.matches('[data-variant-sku]'))form.dispatchEvent(new Event('sku-list-changed'));});
   }
