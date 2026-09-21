@@ -14,7 +14,11 @@ const hash = async (value: string) => base64url(new Uint8Array(await crypto.subt
 const network = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
 async function database(path: string, method = 'GET', body?: unknown, prefer = 'return=representation') {
   const response = await network(`${projectUrl}/rest/v1/${path}`, { method, headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json', Prefer: prefer }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  if (!response.ok) throw new Error('Connection storage is unavailable.');
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.text()).replace(/\s+/g, ' ').slice(0, 180); } catch { /* Keep unreadable provider details out of the response. */ }
+    throw new Error(`Connection storage is unavailable (${response.status} at ${path.split('?')[0]})${detail ? `: ${detail}` : '.'}`);
+  }
   if (response.status === 204) return [];
   const payload = await response.text();
   if (!payload.trim()) return [];
