@@ -37,6 +37,21 @@ for (const fileName of htmlFiles) {
   }
 }
 
+const cssPath = path.join(repoRoot, 'styles.css');
+if (fs.existsSync(cssPath)) {
+  const cssSource = fs.readFileSync(cssPath, 'utf8');
+  for (const [, reference] of cssSource.matchAll(/url\(\s*["']?([^\)"']+)["']?\s*\)/gi)) {
+    const target = localTarget(reference);
+    if (!target) continue;
+    const relative = path.relative(repoRoot, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      failures.push(`styles.css: local reference escapes repository: ${reference}`);
+    } else if (!fs.existsSync(target)) {
+      failures.push(`styles.css: missing local reference: ${reference}`);
+    }
+  }
+}
+
 const forbiddenRootArtifacts = fs.readdirSync(repoRoot, { withFileTypes: true })
   .filter((entry) => entry.isFile() && /\.(?:js|html|css|json|sql)$/i.test(entry.name))
   .map((entry) => entry.name)
