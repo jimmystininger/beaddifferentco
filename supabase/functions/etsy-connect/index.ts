@@ -478,6 +478,7 @@ async function importEtsyListings(adminId: string) {
   let rows = 0;
   let truncated = false;
   let warning = '';
+  const maxNewListingsPerRun = 10;
   try {
     for (let offset = 0; ; offset += 100) {
       let page: Record<string, any>;
@@ -503,7 +504,8 @@ async function importEtsyListings(adminId: string) {
       // known, every older page is known as well, so stop before walking the
       // rest of the shop and hitting Etsy's pagination/runtime limits.
       if (!newListings.length) break;
-      const imported = await concurrentSettled(newListings, 2, async (listing) => {
+      const listingsThisRun = newListings.slice(0, maxNewListingsPerRun);
+      const imported = await concurrentSettled(listingsThisRun, 2, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
         return importEtsyListing(connection, batchId, listing, detail, availableCategories);
       });
@@ -518,6 +520,11 @@ async function importEtsyListings(adminId: string) {
         knownListingIds.add(String(result.listing_id || '').trim());
         (result.created ? createdPages : existingPages).push(result);
       });
+      if (newListings.length > listingsThisRun.length) {
+        truncated = true;
+        warning = `Processed ${listingsThisRun.length} new Etsy listings this run; run it again to continue.`;
+        break;
+      }
       const reportedCount = Number(page?.count);
       const nextOffset = offset + listings.length;
       if (listings.length < 100 || (Number.isFinite(reportedCount) && nextOffset >= reportedCount)) break;
