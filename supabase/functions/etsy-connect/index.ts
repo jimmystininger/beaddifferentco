@@ -111,6 +111,18 @@ async function concurrent<T, R>(items: T[], limit: number, task: (item: T) => Pr
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return output;
 }
+async function concurrentSettled<T, R>(items: T[], limit: number, task: (item: T) => Promise<R>) {
+  const output: { item: T; value?: R; error?: string }[] = []; let index = 0;
+  const worker = async () => {
+    while (index < items.length) {
+      const current = index++;
+      try { output[current] = { item: items[current], value: await task(items[current]) }; }
+      catch (error) { output[current] = { item: items[current], error: error instanceof Error ? error.message : String(error || 'Import failed.') }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return output;
+}
 async function importConnection() {
   const connection = (await database('etsy_connections?id=eq.true'))[0];
   if (!connection) throw new Error('Connect Etsy before preparing an import.');
@@ -290,6 +302,12 @@ async function previewReviews(adminId: string, offset: number) {
 function normalizeSku(value: unknown) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 }
+function cleanText(value: unknown) {
+  // Etsy can return malformed UTF-16 in older listing descriptions. Replace
+  // lone surrogates and NULs before JSON encoding so PostgREST never receives
+  // an invalid JSON string for one listing.
+  return String(value ?? '').replace(/\u0000/g, '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
 function packSizeForSku(sku: string) {
   const match = String(sku || '').match(/(?:^|-)(1|5|10|20|25|50|100)PK$/i);
   return match ? Math.max(1, Number(match[1])) : 1;
@@ -380,9 +398,9 @@ async function fetchEtsyListingDetail(connection: Record<string, any>, listing: 
 }
 async function importEtsyListing(connection: Record<string, any>, batchId: string | undefined, listing: Record<string, any>, detail: Record<string, any>, availableCategories: Set<string>) {
   const listingId = String(detail.listing_id || listing.listing_id || listing.id || '').trim();
-  const title = String(detail.title || listing.title || `Etsy listing ${listingId}`).trim();
-  const description = String(detail.description || listing.description || '').trim();
-  const etsySku = listingSkuFrom(listing, detail);
+  const title = cleanText(detail.title || listing.title || `Etsy listing ${listingId}`).trim();
+  const description = cleanText(detail.description || listing.description || '').trim();
+  const etsySku = cleanText(listingSkuFrom(listing, detail)).trim();
   const canonicalEtsySku = normalizeSku(etsySku) || `ETSY-${listingId}`;
   const oneSku = onePackSkuFor(canonicalEtsySku, listingId, title);
   const packSize = packSizeForSku(canonicalEtsySku);
@@ -393,8 +411,8 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const recipeText = [title, description, etsySku, detail.category_path, detail.taxonomy_path, listing.category_path, listing.taxonomy_path].filter(Boolean).join(' ');
   const manualRecipeRequired = canonicalEtsySku !== oneSku && (categorySlug === 'mixes-bundles-kits' || /(?:^|[^a-z])(mix|mixed|mixes|assort(?:ed|ment)?|bundle|kit|variety|random)(?:$|[^a-z])/i.test(recipeText));
   const images = listingImagesFrom(listing, detail);
-  const tags = listingValues(detail.tags).slice(0, 40);
-  const materials = listingValues(detail.materials).slice(0, 40);
+  const tags = listingValues(detail.tags).map(cleanText).slice(0, 40);
+  const materials = listingValues(detail.materials).map(cleanText).slice(0, 40);
   const existingByListing = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id,external_id,name&limit=1`);
   let product = existingByListing[0];
   let created = false;
@@ -456,6 +474,7 @@ async function importEtsyListings(adminId: string) {
   const batchId = await createImportBatch(adminId, 'listings', { listing_ids: [] });
   const createdPages: Record<string, any>[] = [];
   const existingPages: Record<string, any>[] = [];
+  const failedPages: Record<string, any>[] = [];
   let rows = 0;
   let truncated = false;
   let warning = '';
@@ -480,11 +499,18 @@ async function importEtsyListings(adminId: string) {
       if (!listings.length) break;
       rows += listings.length;
       const newListings = listings.filter((listing) => !knownListingIds.has(String(listing.listing_id || listing.id || '').trim()));
-      const imported = await concurrent(newListings, 2, async (listing) => {
+      const imported = await concurrentSettled(newListings, 2, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
         return importEtsyListing(connection, batchId, listing, detail, availableCategories);
       });
-      imported.forEach((result) => {
+      imported.forEach((entry) => {
+        if (entry.error) {
+          const listingId = String(entry.item.listing_id || entry.item.id || '').trim();
+          failedPages.push({ listing_id: listingId, title: cleanText(entry.item.title || `Etsy listing ${listingId}`), error: entry.error, retry: true });
+          return;
+        }
+        const result = entry.value;
+        if (!result) return;
         knownListingIds.add(String(result.listing_id || '').trim());
         (result.created ? createdPages : existingPages).push(result);
       });
@@ -497,13 +523,14 @@ async function importEtsyListings(adminId: string) {
         break;
       }
     }
-    const metadata = { action: 'listings', created_pages: createdPages, existing_pages: existingPages, inactive: true, truncated, warning: warning || null };
-    await updateImportBatch(batchId, { import_type: 'listings', status: 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, existing: existingPages.length } });
-    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, created_pages: createdPages, existing_pages: existingPages, truncated, warning: warning || null, done: true };
+    const importWarning = [warning, failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need a retry.` : ''].filter(Boolean).join(' ');
+    const metadata = { action: 'listings', created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, inactive: true, truncated, warning: importWarning || null };
+    await updateImportBatch(batchId, { import_type: 'listings', status: 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, existing: existingPages.length, failed: failedPages.length } });
+    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, warning: importWarning || null, done: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Listing import failed.';
-    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', created_pages: createdPages, existing_pages: existingPages, truncated, warning: warning || null, error: message } });
-    return { ok: false, error: message, batch_id: batchId, history_recorded: true, rows, created_pages: createdPages, existing_pages: existingPages, done: true };
+    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, warning: warning || null, error: message } });
+    return { ok: false, error: message, batch_id: batchId, history_recorded: true, rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, done: true };
   }
 }
 async function callback(request: Request) {
