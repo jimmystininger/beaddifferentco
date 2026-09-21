@@ -451,9 +451,6 @@ async function importEtsyListings(adminId: string) {
       const listings = list(page?.results);
       if (!listings.length) break;
       rows += listings.length;
-      const pageListingIds = listings.map((listing) => String(listing.listing_id || listing.id || '').trim()).filter(Boolean);
-      const pageAlreadyKnown = pageListingIds.length > 0 && pageListingIds.every((listingId) => knownListingIds.has(listingId));
-      if (pageAlreadyKnown) break;
       const newListings = listings.filter((listing) => !knownListingIds.has(String(listing.listing_id || listing.id || '').trim()));
       const imported = await concurrent(newListings, 2, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
@@ -465,7 +462,7 @@ async function importEtsyListings(adminId: string) {
       });
       const reportedCount = Number(page?.count);
       const nextOffset = offset + listings.length;
-      if (pageAlreadyKnown || listings.length < 100 || (Number.isFinite(reportedCount) && nextOffset >= reportedCount)) break;
+      if (listings.length < 100 || (Number.isFinite(reportedCount) && nextOffset >= reportedCount)) break;
       if (nextOffset >= 12000) {
         truncated = true;
         warning = 'Etsy stopped the scan at its pagination limit; run it again later to continue from the newest listings.';
