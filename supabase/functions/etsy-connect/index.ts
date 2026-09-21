@@ -438,7 +438,10 @@ async function importEtsyListings(adminId: string) {
     for (let offset = 0; ; offset += 100) {
       let page: Record<string, any>;
       try {
-        page = await etsy(`shops/${connection.shop_id}/listings/active?limit=100&offset=${offset}&sort_on=created&sort_order=desc`, connection.access_token);
+        // Use getListingsByShop rather than findAllActiveListingsByShop. The
+        // latter is API-key-only and Etsy applies its anonymous offset cap;
+        // this shop-scoped operation accepts the listings_r OAuth scope.
+        page = await etsy(`shops/${connection.shop_id}/listings?state=active&limit=100&offset=${offset}&sort_on=created&sort_order=desc`, connection.access_token);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error || '');
         if (offset > 0 && /offset exceeds the maximum allowed/i.test(message)) {
