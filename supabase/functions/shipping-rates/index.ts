@@ -19,6 +19,27 @@ const numberValue = (value: unknown, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+type CacheEntry = { expiresAt: number; value: unknown };
+const tokenCache = new Map<string, CacheEntry>();
+const quoteCache = new Map<string, CacheEntry>();
+const cacheTtlMs = 30_000;
+const tokenTtlMs = 300_000;
+const readCache = <T>(cache: Map<string, CacheEntry>, key: string) => {
+  const entry = cache.get(key);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) cache.delete(key);
+    return null;
+  }
+  return entry.value as T;
+};
+const writeCache = (cache: Map<string, CacheEntry>, key: string, value: unknown, ttl: number) => {
+  if (cache.size >= 500) {
+    const oldest = [...cache.entries()].sort((first, second) => first[1].expiresAt - second[1].expiresAt)[0];
+    if (oldest) cache.delete(oldest[0]);
+  }
+  cache.set(key, { expiresAt: Date.now() + ttl, value });
+};
+
 const providerError = async (response: Response) => {
   const body = await response.text();
   try {
@@ -43,6 +64,9 @@ const upsAddress = (address: Record<string, unknown>, includeName = false) => {
 };
 
 const getUpsToken = async (baseUrl: string, clientId: string, clientSecret: string) => {
+  const cacheKey = `${baseUrl}:${clientId}`;
+  const cached = readCache<string>(tokenCache, `ups:${cacheKey}`);
+  if (cached) return cached;
   const credentials = btoa(`${clientId}:${clientSecret}`);
   const response = await fetch(`${baseUrl}/security/v1/oauth/token`, {
     method: "POST",
@@ -54,10 +78,15 @@ const getUpsToken = async (baseUrl: string, clientId: string, clientSecret: stri
   });
   if (!response.ok) return null;
   const result = await response.json();
-  return textValue(result.access_token, 4000) || null;
+  const token = textValue(result.access_token, 4000) || null;
+  if (token) writeCache(tokenCache, `ups:${cacheKey}`, token, Math.min(tokenTtlMs, Math.max(30_000, numberValue(result.expires_in, 300) * 1000 - 30_000)));
+  return token;
 };
 
 const getUspsToken = async (baseUrl: string, clientId: string, clientSecret: string) => {
+  const cacheKey = `${baseUrl}:${clientId}`;
+  const cached = readCache<string>(tokenCache, `usps:${cacheKey}`);
+  if (cached) return { token: cached, error: "" };
   const response = await fetch(`${baseUrl}/oauth2/v3/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,7 +95,9 @@ const getUspsToken = async (baseUrl: string, clientId: string, clientSecret: str
   if (!response.ok) return { token: null, error: await providerError(response) };
   try {
     const result = await response.json();
-    return { token: textValue(result.access_token, 4000) || null, error: "" };
+    const token = textValue(result.access_token, 4000) || null;
+    if (token) writeCache(tokenCache, `usps:${cacheKey}`, token, Math.min(tokenTtlMs, Math.max(30_000, numberValue(result.expires_in, 300) * 1000 - 30_000)));
+    return { token, error: "" };
   } catch {
     return { token: null, error: "USPS returned an invalid authentication response." };
   }
@@ -87,6 +118,10 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
   if (weight <= 0 || length <= 0 || width <= 0 || height <= 0) {
     return json({ error: "A positive package weight and dimensions are required for USPS postage." }, 400);
   }
+
+  const quoteKey = JSON.stringify({ originPostalCode, destinationPostalCode, weight, length, width, height, acceptedDate });
+  const cachedQuote = readCache<Record<string, unknown>>(quoteCache, `usps:${quoteKey}`);
+  if (cachedQuote) return json(cachedQuote);
 
   const clientId = Deno.env.get("USPS_CLIENT_ID") || "";
   const clientSecret = Deno.env.get("USPS_CLIENT_SECRET") || "";
@@ -159,7 +194,9 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
   }));
   const rates = results.filter((rate): rate is Record<string, unknown> => Boolean(rate));
   if (!rates.length) return json({ error: "USPS could not return a postage or delivery estimate." }, 502);
-  return json({ provider: "usps", rates });
+  const payload = { provider: "usps", rates };
+  writeCache(quoteCache, `usps:${quoteKey}`, payload, cacheTtlMs);
+  return json(payload);
 };
 
 const serviceName = (code: string) => ({
@@ -196,6 +233,10 @@ Deno.serve(async (request) => {
     if (weightOz <= 0 || lengthIn <= 0 || widthIn <= 0 || heightIn <= 0) {
       return json({ error: "A positive package weight and dimensions are required." }, 400);
     }
+
+    const quoteKey = JSON.stringify({ origin: from.postalCode, destination: to.postalCode, weightOz, lengthIn, widthIn, heightIn });
+    const cachedQuote = readCache<Record<string, unknown>>(quoteCache, `ups:${quoteKey}`);
+    if (cachedQuote) return json(cachedQuote);
 
     const clientId = Deno.env.get("UPS_CLIENT_ID") || "";
     const clientSecret = Deno.env.get("UPS_CLIENT_SECRET") || "";
@@ -269,7 +310,9 @@ Deno.serve(async (request) => {
         currency: textValue(total?.CurrencyCode, 3) || "USD",
       };
     }).filter((rate) => rate.amount > 0).sort((first, second) => first.amount - second.amount);
-    return json({ rates });
+    const payload = { rates };
+    writeCache(quoteCache, `ups:${quoteKey}`, payload, cacheTtlMs);
+    return json(payload);
   } catch {
     return json({ error: "Shipping rate request could not be completed." }, 400);
   }
