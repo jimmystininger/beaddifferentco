@@ -88,7 +88,8 @@ The provider-cache batch subsequently deployed the intentional source changes to
 ### Production runtime — passed
 
 - Vercel runtime-error aggregation for the last 7 days returned no runtime errors, and production error/fatal log counts were empty.
-- The current production deployment is READY from merged commit `d3ce115` (PR #97). The live shopping-bag route loaded after deployment with no browser console errors; the existing malformed saved line remained visible with its recovery message, confirming the repair does not silently discard user data. Vercel runtime-error aggregation and production error/fatal route counts remain empty for the last 7 days.
+- The current production deployment is READY from the post-checkout-repair main line (`c98472c`, PRs #103/#104). The live shopping-bag route loaded with no browser console errors; after a complete test address was entered, it returned USPS Ground Advantage ($8.05), Priority Mail ($11.50), a Sep 25, 2026 estimate, and $0.00 Ohio tax. No order was submitted during this browser smoke test.
+- A representative local smoke pass covered the homepage, shop-all, product, shopping bag, reviews, account, and unauthenticated admin routes. All loaded without browser console errors; the admin route correctly redirected to the account-required flow.
 
 ## Remaining audit work
 
