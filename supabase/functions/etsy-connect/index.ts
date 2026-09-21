@@ -416,29 +416,68 @@ async function importEtsyListings(adminId: string) {
   const connection = await importConnection();
   const categoryRows = await database('categories?select=slug,name&active=eq.true&limit=100');
   const availableCategories = new Set(categoryRows.map((row: Record<string, any>) => String(row.slug || '').trim()).filter(Boolean));
+  // Listing scans are newest-first. Once a complete page is already known,
+  // older pages cannot contain a new listing and do not need to be requested.
+  // This also prevents Etsy's offset ceiling from turning an otherwise useful
+  // incremental scan into a failed action.
+  const [importedListingRows, productListingRows] = await Promise.all([
+    database('etsy_import_listings?select=external_listing_id&limit=10000'),
+    database('products?select=etsy_listing_id&etsy_listing_id=not.is.null&limit=10000')
+  ]);
+  const knownListingIds = new Set<string>([
+    ...importedListingRows.map((row: Record<string, any>) => String(row.external_listing_id || '').trim()).filter(Boolean),
+    ...productListingRows.map((row: Record<string, any>) => String(row.etsy_listing_id || '').trim()).filter(Boolean)
+  ]);
   const batchId = await createImportBatch(adminId, 'listings', { listing_ids: [] });
   const createdPages: Record<string, any>[] = [];
   const existingPages: Record<string, any>[] = [];
   let rows = 0;
+  let truncated = false;
+  let warning = '';
   try {
     for (let offset = 0; ; offset += 100) {
-      const page = await etsy(`shops/${connection.shop_id}/listings/active?limit=100&offset=${offset}`, connection.access_token);
+      let page: Record<string, any>;
+      try {
+        page = await etsy(`shops/${connection.shop_id}/listings/active?limit=100&offset=${offset}&sort_on=created&sort_order=desc`, connection.access_token);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || '');
+        if (offset > 0 && /offset exceeds the maximum allowed/i.test(message)) {
+          truncated = true;
+          warning = 'Etsy stopped the scan at its pagination limit; run it again later to continue from the newest listings.';
+          break;
+        }
+        throw error;
+      }
       const listings = list(page?.results);
       if (!listings.length) break;
       rows += listings.length;
-      const imported = await concurrent(listings, 2, async (listing) => {
+      const pageListingIds = listings.map((listing) => String(listing.listing_id || listing.id || '').trim()).filter(Boolean);
+      const pageAlreadyKnown = pageListingIds.length > 0 && pageListingIds.every((listingId) => knownListingIds.has(listingId));
+      if (pageAlreadyKnown) break;
+      const newListings = listings.filter((listing) => !knownListingIds.has(String(listing.listing_id || listing.id || '').trim()));
+      const imported = await concurrent(newListings, 2, async (listing) => {
         const detail = await fetchEtsyListingDetail(connection, listing);
         return importEtsyListing(connection, batchId, listing, detail, availableCategories);
       });
-      imported.forEach((result) => (result.created ? createdPages : existingPages).push(result));
-      if (listings.length < 100) break;
+      imported.forEach((result) => {
+        knownListingIds.add(String(result.listing_id || '').trim());
+        (result.created ? createdPages : existingPages).push(result);
+      });
+      const reportedCount = Number(page?.count);
+      const nextOffset = offset + listings.length;
+      if (pageAlreadyKnown || listings.length < 100 || (Number.isFinite(reportedCount) && nextOffset >= reportedCount)) break;
+      if (nextOffset >= 12000) {
+        truncated = true;
+        warning = 'Etsy stopped the scan at its pagination limit; run it again later to continue from the newest listings.';
+        break;
+      }
     }
-    const metadata = { action: 'listings', created_pages: createdPages, existing_pages: existingPages, inactive: true };
+    const metadata = { action: 'listings', created_pages: createdPages, existing_pages: existingPages, inactive: true, truncated, warning: warning || null };
     await updateImportBatch(batchId, { import_type: 'listings', status: 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, existing: existingPages.length } });
-    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, created_pages: createdPages, existing_pages: existingPages, done: true };
+    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, created_pages: createdPages, existing_pages: existingPages, truncated, warning: warning || null, done: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Listing import failed.';
-    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', created_pages: createdPages, existing_pages: existingPages, error: message } });
+    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', created_pages: createdPages, existing_pages: existingPages, truncated, warning: warning || null, error: message } });
     return { ok: false, error: message, batch_id: batchId, history_recorded: true, rows, created_pages: createdPages, existing_pages: existingPages, done: true };
   }
 }
