@@ -79,6 +79,12 @@ The provider-cache batch subsequently deployed the intentional source changes to
 - The same audit runs in `.github/workflows/repository-gates.yml`; the current repository passes it across 26 HTML routes. Live migration-ledger and storage-reference checks remain intentionally separate because they require credentialed Supabase access.
 - `tools/storage-reference-audit.mjs` is now the canonical read-only storage classifier for credentialed environments. Run it with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; it recursively lists the selected bucket, compares object paths against all current media-bearing tables/settings, reports byte totals, and groups exact duplicate ETags. It never deletes objects and fails closed when credentials are absent or a source query fails.
 
+### Guest test checkout — repaired
+
+- A live rollback test reproduced the checkout failure without leaving an order behind. The deployed `create_test_order` function was writing `orders.customer_email` and `orders.guest_order_token`, but the live `orders` table was missing both columns because the historical guest-checkout migration was absent from the deployed migration ledger.
+- The same function then had a second live-only failure: `RETURNING guest_order_token` was ambiguous with its PL/pgSQL variable after the missing column was restored. A forward migration qualifies the returned column.
+- PR #103 (`59d50c6`) added both immutable reconciliation migrations. Live Supabase now has the two columns, the unique guest-token index, and the profile-link trigger. A realistic order RPC returned a valid order payload inside `BEGIN`/`ROLLBACK`; no test order was persisted. The post-merge Vercel production deployment is Ready.
+
 ### Production runtime — passed
 
 - Vercel runtime-error aggregation for the last 7 days returned no runtime errors, and production error/fatal log counts were empty.
@@ -86,6 +92,6 @@ The provider-cache batch subsequently deployed the intentional source changes to
 
 ## Remaining audit work
 
-1. Reconcile the local migration directory against the live ledger with the Supabase CLI in a credentialed environment.
+1. Reconcile the remaining local migration directory against the live ledger with the Supabase CLI in a credentialed environment; the guest-checkout schema drift is now explicitly repaired by PR #103.
 2. Review the 67 storage orphans in the admin context, then remove only confirmed objects through the Storage API.
 3. Add credentialed CI evidence for migration-name drift and storage-reference checks without exposing Supabase secrets to browser code.
