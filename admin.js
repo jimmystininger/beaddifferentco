@@ -1590,10 +1590,18 @@ async function renderEtsyConnection(){
     const sessionResult=await client.auth.getSession();
     const accessToken=sessionResult.data?.session?.access_token;
     if(!accessToken)throw new Error('Your admin session is missing. Sign in again on this local admin page.');
-    const {data,error}=await client.functions.invoke('etsy-connect',{body:{action},headers:{Authorization:`Bearer ${accessToken}`}});
-    if(error){let detail;try{detail=await error.context?.json();}catch(parseError){}throw new Error(detail?.error||'Unable to reach the Etsy connection service.');}
-    if(data?.error)throw new Error(data.error);
-    return data;
+    let lastError='Unable to reach the Etsy connection service.';
+    for(let attempt=0;attempt<3;attempt+=1){
+      const {data,error}=await client.functions.invoke('etsy-connect',{body:{action},headers:{Authorization:`Bearer ${accessToken}`}});
+      if(!error){if(data?.error)throw new Error(data.error);return data;}
+      let detail;
+      try{const context=error.context;const response=context&&typeof context.clone==='function'?context.clone():context;detail=await response?.json();}catch(parseError){}
+      lastError=detail?.error||error.message||lastError;
+      const retryable=!error.context||/(?:fetch|network|timeout|5\d\d|non-2xx)/i.test(String(lastError));
+      if(!retryable||attempt===2)throw new Error(lastError);
+      await new Promise((resolve)=>setTimeout(resolve,750*(attempt+1)));
+    }
+    throw new Error(lastError);
   };
   const recordEtsyAction=async(type,status,rowCount,matchedCount,appliedCount,metadata={})=>{
     if(!client)return;
