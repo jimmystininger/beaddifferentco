@@ -16,6 +16,24 @@ const numberValue = (value: unknown, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
+type CacheEntry = { expiresAt: number; value: unknown };
+const taxCache = new Map<string, CacheEntry>();
+const cacheTtlMs = 30_000;
+const readCache = <T>(key: string) => {
+  const entry = taxCache.get(key);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) taxCache.delete(key);
+    return null;
+  }
+  return entry.value as T;
+};
+const writeCache = (key: string, value: unknown) => {
+  if (taxCache.size >= 500) {
+    const oldest = [...taxCache.entries()].sort((first, second) => first[1].expiresAt - second[1].expiresAt)[0];
+    if (oldest) taxCache.delete(oldest[0]);
+  }
+  taxCache.set(key, { expiresAt: Date.now() + cacheTtlMs, value });
+};
 const escapeXml = (value: unknown) => textValue(value, 180)
   .replaceAll("&", "&amp;")
   .replaceAll("<", "&lt;")
@@ -46,6 +64,9 @@ const ohioTax = async (payload: Record<string, unknown>) => {
   const addressLine = textValue(address.addressLine1, 100);
   const city = textValue(address.city, 50);
   const taxDate = textValue(payload.taxDate, 40) || new Date().toISOString();
+  const cacheKey = JSON.stringify({ addressLine, city, state, postalCode, taxableAmount, taxDate });
+  const cached = readCache<Record<string, unknown>>(cacheKey);
+  if (cached) return json(cached);
   const soapBody = addressLine && city
     ? `<GetOHSalesTaxByAddress xmlns="https://thefinder.tax.ohio.gov/OHFinderService"><address>${escapeXml(addressLine)}</address><city>${escapeXml(city)}</city><stateAbbreviation>OH</stateAbbreviation><postalCode>${escapeXml(postalCode)}</postalCode><countryCode>US</countryCode><taxAmount>${taxableAmount.toFixed(2)}</taxAmount><taxDate>${escapeXml(taxDate)}</taxDate><requestSFSTInfo>false</requestSFSTInfo></GetOHSalesTaxByAddress>`
     : `<GetOHSalesTaxByZipCode xmlns="https://thefinder.tax.ohio.gov/OHFinderService"><postalCode>${escapeXml(postalCode)}</postalCode><taxAmount>${taxableAmount.toFixed(2)}</taxAmount><taxDate>${escapeXml(taxDate)}</taxDate><requestSFSTInfo>false</requestSFSTInfo></GetOHSalesTaxByZipCode>`;
@@ -68,7 +89,7 @@ const ohioTax = async (payload: Record<string, unknown>) => {
   const county = xmlTag(responseBody, "CountyName");
   const transit = xmlTag(responseBody, "TransitName");
   const jurisdictions = [county, transit].filter(Boolean).join(" · ");
-  return json({
+  const result = {
     provider: "ohio-finder",
     state: "OH",
     amount: Math.max(0, taxAmount),
@@ -76,7 +97,9 @@ const ohioTax = async (payload: Record<string, unknown>) => {
     jurisdiction: jurisdictions || "Ohio",
     taxableAmount,
     taxDate,
-  });
+  };
+  writeCache(cacheKey, result);
+  return json(result);
 };
 
 Deno.serve(async (request) => {
