@@ -1736,11 +1736,12 @@ const installAdminSkuFilterEditors=async(form)=>{
   form.dataset.skuFilterEditorsInstalled='loading';
   let drawToken=0;
   let assignments=[];
+  let assignmentLoadError='';
   const loadAssignments=async()=>{
     const productId=form.dataset.productId;
     if(!productId)return;
     const result=await cloudAdmin().from('product_filter_assignments').select('filter_value_id,inventory_sku_id').eq('product_id',productId);
-    if(result.error)throw result.error;
+    if(result.error){assignmentLoadError=result.error.message||'Existing filter assignments could not be loaded.';assignments=[];return;}
     assignments=(result.data||[]).map((entry)=>({filter_value_id:entry.filter_value_id,inventory_sku_id:entry.inventory_sku_id||''})).filter((entry)=>entry.filter_value_id);
   };
   const draw=async()=>{
@@ -1791,7 +1792,7 @@ const installAdminSkuFilterEditors=async(form)=>{
   const redraw=()=>{void draw().catch(showError);};
   form.addEventListener('sku-list-changed',redraw);
   form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))redraw();});
-  try{await loadAssignments();await draw();form.dataset.skuFilterEditorsInstalled='ready';form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());}
+  try{await loadAssignments();await draw();form.dataset.skuFilterEditorsInstalled='ready';form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());if(assignmentLoadError){const notice=document.createElement('p');notice.className='inventory-help';notice.textContent=`Existing storefront filter selections could not be loaded: ${assignmentLoadError}`;form.querySelector('[data-variant-list]')?.before(notice);}}
   catch(error){form.dataset.skuFilterEditorsInstalled='error';showError(error);}
 };
 window.saveAdminProductFilterAssignments=async(productId,form)=>{
