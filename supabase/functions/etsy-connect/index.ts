@@ -429,7 +429,11 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const listingPayload = { batch_id: batchId, external_listing_id: listingId, title, proposed_product_name: title, proposed_product_sku: etsySku, proposed_single_sku: oneSku, proposed_product_id: product.id, review_status: 'pending', raw_payload: rawPayload, updated_at: new Date().toISOString() };
   if (listingRows[0]) await database(`etsy_import_listings?id=eq.${encodeURIComponent(listingRows[0].id)}`, 'PATCH', listingPayload, 'return=minimal');
   else await database('etsy_import_listings', 'POST', listingPayload);
-  return { listing_id: listingId, product_id: product.id, product_name: title, etsy_sku: etsySku, one_pk_sku: oneSku, pack_size: packSize, created, quantity, url: `admin.html?edit=${encodeURIComponent(product.id)}` };
+  const productUrl = `admin.html?edit=${encodeURIComponent(product.id)}`;
+  const onePkUrl = `admin.html?inventory=sku&sku=${encodeURIComponent(oneSku)}`;
+  const packSkuUrl = canonicalEtsySku !== oneSku ? `admin.html?inventory=sku&sku=${encodeURIComponent(canonicalEtsySku)}` : null;
+  const recipeUrl = canonicalEtsySku !== oneSku ? `admin.html?inventory=adjust&recipe=${encodeURIComponent(canonicalEtsySku)}` : null;
+  return { listing_id: listingId, product_id: product.id, product_name: title, etsy_sku: etsySku, one_pk_sku: oneSku, pack_size: packSize, created, quantity, url: productUrl, links: { product: productUrl, one_pk_sku: onePkUrl, pack_sku: packSkuUrl, recipe: recipeUrl } };
 }
 async function importEtsyListings(adminId: string) {
   const connection = await importConnection();
