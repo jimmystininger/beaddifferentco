@@ -478,6 +478,7 @@ async function importEtsyListings(adminId: string) {
   let rows = 0;
   let truncated = false;
   let warning = '';
+  let continueAvailable = false;
   const maxNewListingsPerRun = 10;
   try {
     for (let offset = 0; ; offset += 100) {
@@ -522,6 +523,7 @@ async function importEtsyListings(adminId: string) {
       });
       if (newListings.length > listingsThisRun.length) {
         truncated = true;
+        continueAvailable = true;
         warning = `Processed ${listingsThisRun.length} new Etsy listings this run; run it again to continue.`;
         break;
       }
@@ -537,7 +539,7 @@ async function importEtsyListings(adminId: string) {
     const importWarning = [warning, failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need a retry.` : ''].filter(Boolean).join(' ');
     const metadata = { action: 'listings', created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, inactive: true, truncated, warning: importWarning || null };
     await updateImportBatch(batchId, { import_type: 'listings', status: 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, existing: existingPages.length, failed: failedPages.length } });
-    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, warning: importWarning || null, done: true };
+    return { batch_id: batchId, history_recorded: true, rows, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, continue_available: continueAvailable, warning: importWarning || null, done: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Listing import failed.';
     await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, warning: warning || null, error: message } });
