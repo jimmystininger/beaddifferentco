@@ -420,13 +420,9 @@ async function importEtsyListings(adminId: string) {
   // older pages cannot contain a new listing and do not need to be requested.
   // This also prevents Etsy's offset ceiling from turning an otherwise useful
   // incremental scan into a failed action.
-  const [importedListingRows, productListingRows] = await Promise.all([
-    database('etsy_import_listings?select=external_listing_id&limit=10000'),
-    database('products?select=etsy_listing_id&etsy_listing_id=not.is.null&limit=10000')
-  ]);
+  const importedListingRows = await database('etsy_import_listings?select=external_listing_id&limit=10000');
   const knownListingIds = new Set<string>([
-    ...importedListingRows.map((row: Record<string, any>) => String(row.external_listing_id || '').trim()).filter(Boolean),
-    ...productListingRows.map((row: Record<string, any>) => String(row.etsy_listing_id || '').trim()).filter(Boolean)
+    ...importedListingRows.map((row: Record<string, any>) => String(row.external_listing_id || '').trim()).filter(Boolean)
   ]);
   const batchId = await createImportBatch(adminId, 'listings', { listing_ids: [] });
   const createdPages: Record<string, any>[] = [];
