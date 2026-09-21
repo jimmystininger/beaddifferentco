@@ -77,6 +77,7 @@ The provider-cache batch subsequently deployed the intentional source changes to
 
 - `tools/repository-audit.mjs` now checks every HTML route for missing local `href`/`src` targets, rejects root-level parallel implementation artifacts, and fails when stale `.vercel/output` is present.
 - The same audit runs in `.github/workflows/repository-gates.yml`; the current repository passes it across 26 HTML routes. Live migration-ledger and storage-reference checks remain intentionally separate because they require credentialed Supabase access.
+- `tools/storage-reference-audit.mjs` is now the canonical read-only storage classifier for credentialed environments. Run it with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; it recursively lists the selected bucket, compares object paths against all current media-bearing tables/settings, reports byte totals, and groups exact duplicate ETags. It never deletes objects and fails closed when credentials are absent or a source query fails.
 
 ### Production runtime — passed
 
