@@ -493,7 +493,37 @@ function renderSettings(){const config=window.productStoreConfig||{};const data=
 async function renderReviews(){
   const memberYear=(value)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':String(date.getFullYear());};
   const reviewPhotos=(review)=>{const photos=Array.isArray(review.photos)?review.photos:[];return photos.slice(0,5).map((photo,index)=>{const safeUrl=safeAdminThemeImageUrl(photo);if(!safeUrl)return'';const safe=adminSafe(safeUrl);return `<a class="admin-review-photo-link" href="${safe}" target="_blank" rel="noreferrer"><img class="admin-review-photo" src="${safe}" alt="Review photo ${index+1}" loading="lazy"></a>`;}).join('');};
-  const profileDialog=(button)=>{const dialog=document.createElement('dialog');dialog.className='profile-dialog admin-review-member-dialog';const name=button.dataset.reviewMemberName||'Member';const email=button.dataset.reviewMemberEmail||'';const year=button.dataset.reviewMemberYear||'';const id=button.dataset.reviewMemberId||'';dialog.innerHTML=`<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>${adminSafe(name)}</h3><dl class="admin-review-member-profile"><div><dt>Email</dt><dd>${adminSafe(email||'Not available')}</dd></div><div><dt>Member since</dt><dd>${adminSafe(year||'Not available')}</dd></div></dl>${id?`<a class="cta admin-review-member-open" href="admin.html?member=${encodeURIComponent(id)}">Open full member record</a>`:''}`;dialog.querySelector('[data-close-review-member]').addEventListener('click',()=>dialog.close());dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();};
+  const profileDialog=async(button)=>{
+    const dialog=document.createElement('dialog');
+    dialog.className='profile-dialog admin-review-member-dialog';
+    const name=button.dataset.reviewMemberName||'Member';
+    const id=button.dataset.reviewMemberId||'';
+    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(name)+'</h3><p class="admin-member-record-status" role="status">Loading full member record…</p>';
+    dialog.querySelector('[data-close-review-member]').addEventListener('click',()=>dialog.close());
+    dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});
+    dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+    document.body.append(dialog);dialog.showModal();
+    if(!id||!window.beadSupabase){dialog.querySelector('[data-member-record]')?.remove();return;}
+    const [profileResult,reviewsResult,ordersResult,notesResult]=await Promise.all([
+      window.beadSupabase.from('profiles').select('id,email,full_name,status,created_at').eq('id',id).maybeSingle(),
+      window.beadSupabase.from('reviews').select('id,review_type,rating,body,photos,status,created_at,products(name)').eq('user_id',id).order('created_at',{ascending:false}),
+      window.beadSupabase.from('orders').select('id,status,total,tracking_number,created_at').eq('user_id',id).order('created_at',{ascending:false}),
+      window.beadSupabase.from('member_notes').select('id,note,created_at').eq('member_id',id).order('created_at',{ascending:false})
+    ]);
+    const failure=profileResult.error||reviewsResult.error||ordersResult.error||notesResult.error;
+    const status=dialog.querySelector('.admin-member-record-status');
+    if(failure){if(status)status.textContent='Unable to load the full member record: '+(failure.message||'Unknown error.');return;}
+    const profile=profileResult.data||{};
+    const year=memberYear(profile.created_at||button.dataset.reviewMemberYear);
+    const reviews=reviewsResult.data||[];
+    const orders=ordersResult.data||[];
+    const notes=notesResult.data||[];
+    const reviewRows=reviews.map((review)=>{const photos=(Array.isArray(review.photos)?review.photos:[]).map((photo,index)=>{const safeUrl=safeAdminThemeImageUrl(photo);return safeUrl?'<a class="admin-review-photo-link" href="'+adminSafe(safeUrl)+'" target="_blank" rel="noreferrer"><img class="admin-review-photo" src="'+adminSafe(safeUrl)+'" alt="Review photo '+(index+1)+'" loading="lazy"></a>':'';}).join('');return'<article class="admin-member-record-item"><strong>'+adminSafe(review.products?.name||'Website review')+' · '+Number(review.rating||0)+'/5</strong><span>'+adminSafe(review.status||'pending')+' · '+adminSafe(review.created_at?new Date(review.created_at).toLocaleDateString():'Unknown date')+'</span><p>'+adminSafe(review.body||'')+'</p>'+(photos?'<div class="admin-review-photos">'+photos+'</div>':'')+'</article>';}).join('')||'<p>No reviews yet.</p>';
+    const orderRows=orders.map((order)=>'<article class="admin-member-record-item"><strong>Order '+adminSafe(String(order.id||'').slice(0,8))+' · $'+Number(order.total||0).toFixed(2)+'</strong><span>'+adminSafe(order.status||'unknown')+' · '+adminSafe(order.created_at?new Date(order.created_at).toLocaleDateString():'Unknown date')+'</span><p>'+adminSafe(order.tracking_number||'No tracking number')+'</p></article>').join('')||'<p>No orders yet.</p>';
+    const noteRows=notes.map((note)=>'<article class="admin-member-record-item"><strong>'+adminSafe(note.created_at?new Date(note.created_at).toLocaleString():'Unknown date')+'</strong><p>'+adminSafe(note.note||'')+'</p></article>').join('')||'<p>No notes yet.</p>';
+    dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-review-member aria-label="Close profile">×</button><p class="kicker">MEMBER PROFILE</p><h3>'+adminSafe(profile.full_name||profile.email||name)+'</h3><div data-member-record><dl class="admin-review-member-profile"><div><dt>Email</dt><dd>'+adminSafe(profile.email||'Not available')+'</dd></div><div><dt>Member since</dt><dd>'+adminSafe(year||'Not available')+'</dd></div><div><dt>Status</dt><dd>'+adminSafe(profile.status||'unknown')+'</dd></div></dl><section class="admin-member-record-section"><h4>Reviews ('+reviews.length+')</h4>'+reviewRows+'</section><section class="admin-member-record-section"><h4>Orders ('+orders.length+')</h4>'+orderRows+'</section><section class="admin-member-record-section"><h4>Private notes ('+notes.length+')</h4>'+noteRows+'</section></div>';
+    dialog.querySelector('[data-close-review-member]').addEventListener('click',()=>dialog.close());
+  };
   const attachMemberButtons=()=>panel.querySelectorAll('[data-review-member]').forEach((button)=>button.addEventListener('click',()=>profileDialog(button)));
   if(!window.beadSupabase){
     const reviews=window.reviewTools?.read()||[];
@@ -1110,7 +1140,7 @@ const optimizeAdminVideo=async(file)=>{if(!file||!file.type.startsWith('video/')
 // their canonical SKU references live in inventory_skus.source_metadata.product_pages.
 const scheduleAdminMediaOrphanCheck=(path,url)=>{if(String(path||'').startsWith('products/'))return;window.setTimeout(async()=>{try{const client=cloudAdmin();if(!client)return;const [imageReference,settingsReference,categoryReference,optionReference,reviewReference]=await Promise.all([client.from('product_images').select('id',{count:'exact',head:true}).eq('url',url),client.from('site_settings').select('value'),client.from('categories').select('id',{count:'exact',head:true}).eq('cover_photo',url),client.from('product_option_values').select('id',{count:'exact',head:true}).eq('image_url',url),client.from('reviews').select('id',{count:'exact',head:true}).contains('photos',[url])]);if(imageReference.error||settingsReference.error||categoryReference.error||optionReference.error||reviewReference.error)return;const settingsJson=(settingsReference.data||[]).map((row)=>JSON.stringify(row.value||{})).join('\\n');if(Number(imageReference.count||0)>0||Number(categoryReference.count||0)>0||Number(optionReference.count||0)>0||Number(reviewReference.count||0)>0||settingsJson.includes(url))return;const removal=await client.storage.from('product-media').remove([path]);if(removal.error)console.warn('Unreferenced admin media cleanup failed.',removal.error);}catch(error){console.warn('Unreferenced admin media check failed.',error);}},5*60*1000);};
 let activeAdminMediaScope=null;const uploadAdminMedia=async(file,folder)=>{if(!file)return null;if(file.type.startsWith('video/')&&file.size>100*1024*1024)throw new Error('Videos must be 100 MB or smaller.');const optimized=file.type.startsWith('video/')?await optimizeAdminVideo(file):await optimizeAdminImage(file);if(optimized.type.startsWith('video/')&&optimized.size>100*1024*1024)throw new Error('Videos must be 100 MB or smaller.');const safeName=optimized.name.toLowerCase().replace(/[^a-z0-9._-]+/g,'-');const path=`${folder}/${Date.now()}-${safeName}`;const result=await cloudAdmin().storage.from('product-media').upload(path,optimized,{upsert:false,contentType:optimized.type||undefined,cacheControl:'31536000'});if(result.error)adminFailure(result.error);const url=cloudAdmin().storage.from('product-media').getPublicUrl(path).data.publicUrl;activeAdminMediaScope?.push({path,url});scheduleAdminMediaOrphanCheck(path,url);return url;};
-const adminProductRows=async()=>{const fields='id,external_id,sku,category_slug,name,search_text,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,estimated_cost,low_stock_threshold,badges,added_at';const rows=await fetchAdminRowsAll(()=>cloudAdmin().from('products').select(fields).order('name'));const ids=rows.map((product)=>product.id).filter(Boolean);if(!ids.length)return rows.map((product)=>({...product,sku:''}));const chunks=[];for(let start=0;start<ids.length;start+=250)chunks.push(ids.slice(start,start+250));const loadRelatedRows=(buildQuery)=>Promise.all(chunks.map((chunk)=>fetchAdminRowsAll(()=>buildQuery(chunk)))).then((results)=>results.flat());const [images,options]=await Promise.all([loadRelatedRows((chunk)=>cloudAdmin().from('product_images').select('id,product_id,url,alt_text,sort_order').in('product_id',chunk).order('sort_order')),loadRelatedRows((chunk)=>cloudAdmin().from('product_options').select('product_id,product_option_values(sku,inventory_sku)').in('product_id',chunk))]);const imagesByProduct=new Map();(images||[]).forEach((image)=>{const list=imagesByProduct.get(image.product_id)||[];list.push(image);imagesByProduct.set(image.product_id,list);});const skusByProduct=new Map();(options||[]).forEach((option)=>{const list=skusByProduct.get(option.product_id)||[];for(const value of option.product_option_values||[]){const sku=String(value.sku||value.inventory_sku||'').trim();if(sku&&!list.includes(sku))list.push(sku);}skusByProduct.set(option.product_id,list);});return rows.map((product)=>({...product,product_images:imagesByProduct.get(product.id)||[],sku:[...(skusByProduct.get(product.id)||[])].filter(Boolean).filter((value,index,array)=>array.findIndex((candidate)=>candidate.toLowerCase()===value.toLowerCase())===index).join(', ')}));};
+const adminProductRows=async()=>{const fields='id,external_id,sku,category_slug,name,search_text,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,estimated_cost,low_stock_threshold,badges,added_at';const rows=await fetchAdminRowsAll(()=>cloudAdmin().from('products').select(fields).order('name'));const ids=rows.map((product)=>product.id).filter(Boolean);if(!ids.length)return rows.map((product)=>({...product,sku:''}));const chunks=[];for(let start=0;start<ids.length;start+=250)chunks.push(ids.slice(start,start+250));const loadRelatedRows=(buildQuery)=>Promise.all(chunks.map((chunk)=>fetchAdminRowsAll(()=>buildQuery(chunk)))).then((results)=>results.flat());const [images,options]=await Promise.all([loadRelatedRows((chunk)=>cloudAdmin().from('product_images').select('id,product_id,url,alt_text,sort_order').in('product_id',chunk).order('sort_order')),loadRelatedRows((chunk)=>cloudAdmin().from('product_options').select('product_id,product_option_values(sku,inventory_sku)').in('product_id',chunk))]);const imagesByProduct=new Map();(images||[]).forEach((image)=>{const list=imagesByProduct.get(image.product_id)||[];list.push(image);imagesByProduct.set(image.product_id,list);});const skusByProduct=new Map();(options||[]).forEach((option)=>{const list=skusByProduct.get(option.product_id)||[];for(const value of option.product_option_values||[]){const sku=String(value.sku||value.inventory_sku||'').trim();if(sku&&!list.includes(sku))list.push(sku);}skusByProduct.set(option.product_id,list);});const allSkus=[...new Set([...skusByProduct.values()].flat())];const skuChunks=[];for(let start=0;start<allSkus.length;start+=250)skuChunks.push(allSkus.slice(start,start+250));const inventoryRows=skuChunks.length?(await Promise.all(skuChunks.map((chunk)=>fetchAdminRowsAll(()=>cloudAdmin().from('inventory_skus').select('sku,price').in('sku',chunk))))).flat():[];const pricesBySku=new Map(inventoryRows.map((row)=>[String(row.sku||'').trim().toLowerCase(),Number(row.price)]));return rows.map((product)=>{const skus=[...(skusByProduct.get(product.id)||[])];const childPrices=skus.map((sku)=>pricesBySku.get(sku.toLowerCase())).filter((price)=>Number.isFinite(price));const price=childPrices.length?Math.min(...childPrices):Number(product.price)||0;return {...product,product_images:imagesByProduct.get(product.id)||[],sku:skus.filter(Boolean).filter((value,index,array)=>array.findIndex((candidate)=>candidate.toLowerCase()===value.toLowerCase())===index).join(', '),price};});};
 const adminProductDetail=async(id)=>{const result=await cloudAdmin().from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,short_description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,estimated_cost,low_stock_threshold,badges,sku_filter_definitions,product_images(id,url,alt_text,media_type,sort_order)').eq('id',id).order('sort_order',{foreignTable:'product_images'}).maybeSingle();if(result.error)adminFailure(result.error);return result.data?[result.data]:[];};
 const adminProductId=(product)=>product.external_id||product.id;
 const adminProductSearch=(fields)=>[fields.name,fields.seo_title,fields.short_description,fields.description,fields.item_details,fields.shipping_details].filter(Boolean).join(' ');
@@ -1792,7 +1822,18 @@ const installAdminSkuFilterEditors=async(form)=>{
   const redraw=()=>{void draw().catch(showError);};
   form.addEventListener('sku-list-changed',redraw);
   form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))redraw();});
-  try{await loadAssignments();await draw();form.dataset.skuFilterEditorsInstalled='ready';form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());if(assignmentLoadError){const notice=document.createElement('p');notice.className='inventory-help';notice.textContent=`Existing storefront filter selections could not be loaded: ${assignmentLoadError}`;form.querySelector('[data-variant-list]')?.before(notice);}}
+  try{
+    // Draw the filter choices as soon as definitions and values are available.
+    // Existing assignments are secondary hydration and must not make the
+    // editor appear incomplete when that read is slow or unavailable.
+    const assignmentsPromise=loadAssignments();
+    await draw();
+    await assignmentsPromise;
+    if(assignments.length)await draw();
+    form.dataset.skuFilterEditorsInstalled='ready';
+    form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());
+    if(assignmentLoadError){const notice=document.createElement('p');notice.className='inventory-help';notice.textContent=`Existing storefront filter selections could not be loaded: ${assignmentLoadError}`;form.querySelector('[data-variant-list]')?.before(notice);}
+  }
   catch(error){form.dataset.skuFilterEditorsInstalled='error';showError(error);}
 };
 window.saveAdminProductFilterAssignments=async(productId,form)=>{
@@ -2025,15 +2066,18 @@ const openCloudItemForm=async(id)=>{
   await cloudItemForm(id);
   const form=document.querySelector('#cloud-item-form');
   if(form){
-    await initializeCanonicalAdminMedia(form);
-    await initializeAdminMediaUploadButton(form);
-    // These hydrators read independent canonical data. Run them together so
-    // the editor does not wait through three sequential Supabase round trips.
-    const restorationPromise=installProductEditorRestorations();
-    const recoveryPromise=recoverAdminProductPageOptions(form).catch((error)=>{form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';});
+    // Paint the editor and the customer-facing filter controls first. Media
+    // upload wiring and canonical recovery are independent hydration work and
+    // must not delay the first usable editor render.
+    installCanonicalProductPageOptions(form);
     const filterPromise=window.installAdminSkuFilterEditors?window.installAdminSkuFilterEditors(form):Promise.resolve();
-    await Promise.all([restorationPromise,recoveryPromise,filterPromise]);
-    await installCanonicalProductPageOptions(form);
+    void Promise.allSettled([
+      initializeCanonicalAdminMedia(form),
+      initializeAdminMediaUploadButton(form),
+      installProductEditorRestorations(),
+      recoverAdminProductPageOptions(form).catch((error)=>{form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';}),
+      filterPromise
+    ]);
     form.addEventListener('input',(event)=>{if(event.target.matches('[data-variant-sku]'))form.dispatchEvent(new Event('sku-list-changed'));});
   }
 };
