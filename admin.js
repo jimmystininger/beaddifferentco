@@ -1192,7 +1192,7 @@ const saveCanonicalInventoryPageOptions=async(form)=>{
   if(!form||!productId)return;
   if(form._productPageOptionsReadyPromise){
     const recovered=await form._productPageOptionsReadyPromise;
-    if(!recovered)return;
+    if(!recovered)throw new Error('Product page option values could not be loaded. Refresh the editor before saving so existing selections stay safe.');
   }
   const definitionNames=[...form.querySelectorAll('[data-product-page-filter-name]')].map((field)=>String(field.value||'').trim()).filter(Boolean).slice(0,3);
   const rows=[...form.querySelectorAll('[data-variant-row]')];
@@ -1577,10 +1577,12 @@ const renderContactMessages=async()=>renderContactMessagesRecovered();
 const withAdminTimeout=(request,label)=>Promise.race([request,new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out. Check that the required Supabase migrations are applied.')),adminRequestTimeoutMs))]);
 async function renderEtsyConnection(){
   const root=document.createElement('section');root.className='admin-card';
-  root.innerHTML='<p class="kicker">SHOP CONNECTION & IMPORTS</p><h2>Etsy</h2><p>Connect Etsy once, then use the ongoing order sync. Historical imports are complete and no longer shown here.</p><p data-etsy-status role="status">Checking connection…</p><p>Register this exact callback URL in your Etsy app settings:</p><p><code data-etsy-callback></code></p><div class="admin-actions"><button type="button" data-etsy-connect disabled>Connect Etsy</button><button type="button" data-etsy-verify hidden>Verify connection</button><button type="button" data-etsy-disconnect hidden>Disconnect</button></div><section class="admin-card etsy-import-tools"><h3>Ongoing Etsy sync</h3><div class="admin-actions"><button type="button" data-etsy-import="orders">Import new orders since last import</button><button type="button" data-etsy-import="listings">Find new Etsy listings</button></div><h3>Etsy financials</h3><p>Backfill payment fees once for historical sales. New-order imports automatically resync the last 30 days of payment fees; the manual resync is safe to run again.</p><div class="admin-actions"><button type="button" data-etsy-financial="backfill_historical_fees">Backfill historical fees</button><button type="button" data-etsy-financial="sync_financials">Resync last 30 days</button></div><p data-etsy-import-status role="status"></p><div data-etsy-batches class="admin-table-wrap"></div></section><p class="inventory-help">The term “Etsy” is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.</p>';
+  root.innerHTML='<p class="kicker">SHOP CONNECTION & IMPORTS</p><h2>Etsy</h2><p>Connect Etsy once, then use the ongoing order sync and fee resync.</p><p data-etsy-status role="status">Checking connection…</p><p>Register this exact callback URL in your Etsy app settings:</p><p><code data-etsy-callback></code></p><div class="admin-actions"><button type="button" data-etsy-connect disabled>Connect Etsy</button><button type="button" data-etsy-verify hidden>Verify connection</button><button type="button" data-etsy-disconnect hidden>Disconnect</button></div><section class="admin-card etsy-import-tools"><h3>Ongoing Etsy sync</h3><div class="admin-actions"><button type="button" data-etsy-import="orders">Import new orders since last import</button><button type="button" data-etsy-financial="sync_financials">Resync last 60 days</button><button type="button" data-etsy-import="listings">Find new Etsy listings</button></div><p>New-order imports automatically run the 60-day fee sync; use the resync button above as a backup if an order import completes without syncing fees.</p><h3>Recent Etsy actions</h3><p>Each order import, fee resync, and Etsy listing scan is recorded below. Showing 5 actions per page, newest first.</p><p data-etsy-import-status role="status"></p><div data-etsy-batches class="admin-table-wrap"></div></section><p class="inventory-help">The term “Etsy” is a trademark of Etsy, Inc. This application uses the Etsy API but is not endorsed or certified by Etsy, Inc.</p>';
   panel.replaceChildren(root);
   const status=root.querySelector('[data-etsy-status]'),connect=root.querySelector('[data-etsy-connect]'),verify=root.querySelector('[data-etsy-verify]'),disconnect=root.querySelector('[data-etsy-disconnect]');
   const client=cloudAdmin();
+  let batchPage=1;
+  const batchPageSize=5;
   root.querySelector('[data-etsy-callback]').textContent='https://zejcuqhihbfpuwsjvmhc.supabase.co/functions/v1/etsy-connect/callback';
   const call=async(action)=>{
     if(!client)throw new Error('Please sign in to your administrator account.');
@@ -1592,20 +1594,38 @@ async function renderEtsyConnection(){
     if(data?.error)throw new Error(data.error);
     return data;
   };
+  const recordEtsyAction=async(type,status,rowCount,matchedCount,appliedCount,metadata={})=>{
+    if(!client)return;
+    try{
+      const userResult=await client.auth.getUser();
+      const userId=userResult.data?.user?.id;
+      if(!userId)return;
+      const kind=type==='listings'?'listings':type==='reviews'?'reviews':'orders';
+      await client.from('etsy_import_batches').insert({created_by:userId,kind,payload:{},expires_at:new Date(Date.now()+30*86400000).toISOString(),import_type:kind,status,source:'etsy_api',row_count:Number(rowCount)||0,matched_count:Number(matchedCount)||0,applied_count:Number(appliedCount)||0,metadata:{action:type==='fees'?'fee_resync':type,...metadata}});
+      batchPage=1;
+    }catch(error){/* History must not prevent a completed Etsy action from being reported. */}
+  };
   const drawBatches=async()=>{
     const target=root.querySelector('[data-etsy-batches]');
     if(!target||!client)return;
-    const result=await client.from('etsy_import_batches').select('id,import_type,status,row_count,matched_count,applied_count,created_at').order('created_at',{ascending:false}).limit(12);
+    const result=await client.from('etsy_import_batches').select('id,kind,import_type,status,row_count,matched_count,applied_count,metadata,created_at').order('created_at',{ascending:false}).limit(100);
     if(result.error){target.innerHTML='<p class="admin-empty">Import history is unavailable until the staged-import migration is applied.</p>';return;}
     const unmatchedResult=await client.from('etsy_import_reviews').select('id,etsy_sku,rating,body,reviewer_name').eq('match_status','unmatched').is('applied_review_id',null).order('created_at',{ascending:false}).limit(100);
-    target.innerHTML='<table class="admin-table"><thead><tr><th>Type</th><th>Status</th><th>Rows</th><th>Matched</th><th>Created</th><th></th></tr></thead><tbody>'+(result.data||[]).map((batch)=>'<tr><td>'+adminSafe(batch.import_type)+'</td><td>'+adminSafe(batch.status)+'</td><td>'+Number(batch.row_count||0)+'</td><td>'+Number(batch.matched_count||0)+'</td><td>'+adminSafe(batch.created_at?new Date(batch.created_at).toLocaleString():'')+'</td><td>'+(batch.import_type==='reviews'?'<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':''):'')+'</td></tr>').join('')+'</tbody></table>';
+    const rows=result.data||[];
+    const pageCount=Math.max(1,Math.ceil(rows.length/batchPageSize));
+    batchPage=Math.min(batchPage,pageCount);
+    const visible=rows.slice((batchPage-1)*batchPageSize,batchPage*batchPageSize);
+    const actionLabel=(batch)=>{const metadata=batch.metadata||{};if(metadata.action==='fee_resync')return 'Fee resync';if(metadata.action==='orders'||batch.import_type==='orders'||batch.kind==='orders')return 'Order import';if(metadata.action==='listings'||batch.import_type==='listings'||batch.kind==='listings')return 'Etsy listings';if(metadata.action==='reviews'||batch.import_type==='reviews'||batch.kind==='reviews')return 'Reviews';if(batch.import_type==='sales_history'||batch.kind==='sales_history')return 'Sales history';return batch.import_type||batch.kind||'Etsy action';};
+    const followUp=(batch)=>{const metadata=batch.metadata||{};if(batch.status==='failed')return '<span class="admin-field-note">Run again</span>';if(actionLabel(batch)==='Etsy listings'){const pages=Array.isArray(metadata.created_pages)?metadata.created_pages:[];if(pages.length)return pages.map((page)=>'<a href="admin.html?edit='+encodeURIComponent(page.product_id||'')+'">'+adminSafe(page.product_name||page.one_pk_sku||'Open product page')+'</a>').join('<br>');if(Number(batch.row_count||0)>0)return '<span class="admin-field-note">Review new listings</span>';}if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0)return '<span class="admin-field-note">Review unmatched SKUs</span>';if(actionLabel(batch)==='Reviews')return '<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':'');return '<span class="admin-field-note">No action needed</span>';};
+    target.innerHTML='<table class="admin-table"><thead><tr><th>Action</th><th>Status</th><th>Rows</th><th>Matched</th><th>Ran</th><th>Follow-up</th></tr></thead><tbody>'+(visible.map((batch)=>'<tr><td>'+adminSafe(actionLabel(batch))+'</td><td>'+adminSafe(batch.status)+'</td><td>'+Number(batch.row_count||0)+'</td><td>'+Number(batch.matched_count||0)+'</td><td>'+adminSafe(batch.created_at?new Date(batch.created_at).toLocaleString():'')+'</td><td>'+followUp(batch)+'</td></tr>').join('')||'<tr><td colspan="6">No Etsy actions recorded yet.</td></tr>')+'</tbody></table><div class="admin-pagination"><button type="button" data-etsy-batch-page="prev" '+(batchPage===1?'disabled':'')+'>Previous</button><span>Page '+batchPage+' of '+pageCount+' · '+rows.length+' actions</span><button type="button" data-etsy-batch-page="next" '+(batchPage===pageCount?'disabled':'')+'>Next</button></div>';
+    target.querySelectorAll('[data-etsy-batch-page]').forEach((button)=>button.onclick=()=>{batchPage=Math.max(1,Math.min(pageCount,batchPage+(button.dataset.etsyBatchPage==='next'?1:-1)));drawBatches();});
     if((unmatchedResult.data||[]).length){target.insertAdjacentHTML('beforeend','<h4>Unmatched reviews</h4><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Reviewer</th><th>SKU</th><th>Rating</th><th>Review</th><th></th></tr></thead><tbody>'+(unmatchedResult.data||[]).map((review)=>'<tr><td>'+adminSafe(review.reviewer_name||'Etsy customer')+'</td><td>'+adminSafe(review.etsy_sku||'—')+'</td><td>'+Number(review.rating||0)+'/5</td><td>'+adminSafe(review.body)+'</td><td><button type="button" data-etsy-delete-review="'+adminSafe(review.id)+'">Delete</button></td></tr>').join('')+'</tbody></table></div>');}
     target.querySelectorAll('[data-etsy-apply-reviews]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');button.disabled=true;importStatus.textContent='Applying matched reviews…';try{const batchId=button.dataset.etsyApplyReviews;const clientResult=await client.functions.invoke('etsy-connect',{body:{action:'apply_matched_reviews',batch_id:batchId}});if(clientResult.error)throw clientResult.error;importStatus.textContent='Applied '+Number(clientResult.data?.applied_count||0)+' matched reviews.';await drawBatches();}catch(error){importStatus.textContent=error.message||'Reviews could not be applied.';button.disabled=false;}});
     target.querySelectorAll('[data-etsy-rematch-reviews]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');button.disabled=true;importStatus.textContent='Rematching staged reviews…';try{const clientResult=await client.functions.invoke('etsy-connect',{body:{action:'rematch_staged_reviews',batch_id:button.dataset.etsyRematchReviews}});if(clientResult.error)throw clientResult.error;importStatus.textContent='Rematched '+Number(clientResult.data?.rematched_count||0)+' reviews and published '+Number(clientResult.data?.applied_count||0)+' product-page copies.';await drawBatches();}catch(error){importStatus.textContent=error.message||'Reviews could not be rematched.';button.disabled=false;}});
     target.querySelectorAll('[data-etsy-delete-review]').forEach((button)=>button.onclick=async()=>{if(!window.confirm('Delete this imported Etsy review?'))return;button.disabled=true;const importStatus=root.querySelector('[data-etsy-import-status]');try{const deleted=await client.functions.invoke('etsy-connect',{body:{action:'delete_imported_review',review_id:button.dataset.etsyDeleteReview}});if(deleted.error)throw deleted.error;importStatus.textContent='Imported review deleted.';await drawBatches();}catch(error){importStatus.textContent=error.message||'Review could not be deleted.';button.disabled=false;}});
   };
-  root.querySelectorAll('[data-etsy-import]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');const type=button.dataset.etsyImport;button.disabled=true;importStatus.textContent='Fetching and staging '+type.replace('_',' ')+'…';try{let offset=0;let done=false;let total=0;let applied=0;do{const response=await client.functions.invoke('etsy-connect',{body:{action:'import_'+type,offset}});if(response.error){let detail;try{detail=await response.error.context?.json();}catch(parseError){}throw new Error(detail?.error||response.error.message||'Etsy import failed.');}const result=response.data||{};if(result.error)throw new Error(result.error);total+=Number(result.row_count||0);applied+=Number(result.applied_count||0);offset=Number(result.next_offset||0);done=result.done!==false;importStatus.textContent='Staged '+total+' rows so far…';}while((type==='sales_history'||type==='orders')&&!done);if(type==='orders'){const cursorKey='etsy-financial-cursor:sync_financials';let cursor=sessionStorage.getItem(cursorKey)||'';let financialDone=false;do{const financial=await client.functions.invoke('etsy-connect',{body:{action:'sync_financials',cursor}});if(financial.error)throw financial.error;cursor=String(financial.data?.next_cursor||'');financialDone=financial.data?.done!==false;if(financialDone)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,cursor);}while(!financialDone);}importStatus.textContent=type==='reviews'?'Staged '+total+' reviews; published '+applied+' matched product-page copies.':'Staged '+total+' rows in bounded batches. Nothing was published or deducted.';await drawBatches();}catch(error){importStatus.textContent=error.message||'Etsy import failed.';}finally{button.disabled=false;}});
-  root.querySelectorAll('[data-etsy-financial]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');button.disabled=true;const action=button.dataset.etsyFinancial;const cursorKey='etsy-financial-cursor:'+action;let cursor=sessionStorage.getItem(cursorKey)||'';let total=0,done=false;importStatus.textContent=action==='backfill_historical_fees'?(cursor?'Resuming historical Etsy fee backfill…':'Backfilling historical Etsy fees…'):'Resyncing recent Etsy fees…';try{do{let response;let attempt=0;do{response=await client.functions.invoke('etsy-connect',{body:{action,cursor}});if(!response.error)break;attempt+=1;if(attempt>=3){let detail;try{detail=await response.error.context?.json();}catch(parseError){}throw new Error(detail?.error||response.error.message||'Etsy financial sync failed.');}await new Promise((resolve)=>setTimeout(resolve,1000*attempt));}while(true);const result=response.data||{};if(result.error)throw new Error(result.error);total+=Number(result.synced_receipts||0);done=result.done!==false;cursor=String(result.next_cursor||'');if(done)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,cursor);importStatus.textContent=result.rate_limited?'Etsy rate limit reached; waiting before continuing…':'Synced fees for '+total+' Etsy receipts in this run…';if(result.rate_limited)await new Promise((resolve)=>setTimeout(resolve,30000));}while(!done);importStatus.textContent='Synced and allocated Etsy payment fees for '+total+' receipts.';}catch(error){sessionStorage.setItem(cursorKey,cursor);importStatus.textContent=(error.message||'Etsy financial sync failed.')+' Progress saved; run again to resume.';}finally{button.disabled=false;}});
+  root.querySelectorAll('[data-etsy-import]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');const type=button.dataset.etsyImport;button.disabled=true;importStatus.textContent='Fetching and staging '+type.replace('_',' ')+'…';let total=0,applied=0,matchedTotal=0,unmatchedTotal=0,feeLines=0,historyRecorded=false;try{let offset=0;let done=false;do{const response=await client.functions.invoke('etsy-connect',{body:{action:'import_'+type,offset}});if(response.error){let detail;try{detail=await response.error.context?.json();}catch(parseError){}throw new Error(detail?.error||response.error.message||'Etsy import failed.');}const result=response.data||{};historyRecorded=historyRecorded||Boolean(result.history_recorded);if(result.error)throw new Error(result.error);total+=Number(result.row_count||result.rows||result.receipts||0);applied+=Number(result.applied_count||result.created_count||0);matchedTotal+=Number(result.matched_count||result.matched||0);unmatchedTotal+=Number(result.unmatched_count||result.unmatched||0);offset=Number(result.next_offset||0);done=result.done!==false;importStatus.textContent='Staged '+total+' rows so far…';}while((type==='sales_history'||type==='orders')&&!done);if(type==='orders'){const cursorKey='etsy-financial-cursor:sync_financials';let cursor=sessionStorage.getItem(cursorKey)||'';let financialDone=false;do{const financial=await client.functions.invoke('etsy-connect',{body:{action:'sync_financials',cursor}});if(financial.error)throw financial.error;if(financial.data?.error)throw new Error(financial.data.error);feeLines+=Number(financial.data?.updated_lines||0);cursor=String(financial.data?.next_cursor||'');financialDone=financial.data?.done!==false;if(financialDone)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,cursor);}while(!financialDone);}if(!historyRecorded)await recordEtsyAction(type,type==='listings'?'staged':'applied',total,matchedTotal,applied+feeLines,{unmatched:unmatchedTotal,fee_lines:feeLines});importStatus.textContent=type==='reviews'?'Staged '+total+' reviews; published '+applied+' matched product-page copies.':type==='orders'?'Imported '+total+' rows and synced fees for '+feeLines+' sale lines.':type==='listings'?'Imported '+applied+' new Etsy product page'+(applied===1?'':'s')+'; all remain inactive for review.':'Staged '+total+' rows in bounded batches. Nothing was published or deducted.';await drawBatches();}catch(error){if(!historyRecorded)await recordEtsyAction(type,'failed',total,matchedTotal,applied,{unmatched:unmatchedTotal,error:String(error.message||'Etsy import failed.')});importStatus.textContent=error.message||'Etsy import failed.';}finally{button.disabled=false;}});
+  root.querySelectorAll('[data-etsy-financial]').forEach((button)=>button.onclick=async()=>{const importStatus=root.querySelector('[data-etsy-import-status]');button.disabled=true;const action=button.dataset.etsyFinancial;const cursorKey='etsy-financial-cursor:v3:'+action;let cursor=sessionStorage.getItem(cursorKey)||'';let total=0,feeLines=0,done=false;importStatus.textContent=action==='backfill_historical_fees'?'Bulk backfilling historical Etsy fees…':'Bulk resyncing recent Etsy fees…';try{do{let response;let attempt=0;do{response=await client.functions.invoke('etsy-connect',{body:{action,cursor}});if(!response.error)break;attempt+=1;if(attempt>=3){let detail;try{detail=await response.error.context?.json();}catch(parseError){}throw new Error(detail?.error||response.error.message||'Etsy financial sync failed.');}await new Promise((resolve)=>setTimeout(resolve,1000*attempt));}while(true);const result=response.data||{};if(result.error)throw new Error(result.error);total+=Number(result.synced_receipts||0);feeLines+=Number(result.updated_lines||0);done=result.done!==false;cursor=String(result.next_cursor||'');if(done)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,cursor);importStatus.textContent='Bulk-synced fees for '+total+' Etsy receipts ('+feeLines+' sale lines updated).';}while(!done);await recordEtsyAction('fees','applied',total,total,feeLines,{fee_lines:feeLines,window:'last 60 days'});importStatus.textContent='Bulk-synced Etsy payment fees for '+total+' receipts.';await drawBatches();}catch(error){if(cursor)sessionStorage.setItem(cursorKey,cursor);await recordEtsyAction('fees','failed',total,total,feeLines,{fee_lines:feeLines,window:'last 60 days',error:String(error.message||'Etsy financial sync failed.')});importStatus.textContent=(error.message||'Etsy financial sync failed.')+(cursor?' Progress saved; run again to resume':'');await drawBatches();}finally{button.disabled=false;}});
   const display=(data)=>{
     status.textContent=data.connected?'Connected to '+data.shop_name+' (shop '+data.shop_id+'). Last verified: '+new Date(data.verified_at).toLocaleString()+'.':'No Etsy shop connected.';
     connect.textContent=data.connected?'Reconnect Etsy':'Connect Etsy';connect.disabled=false;
@@ -1762,7 +1782,10 @@ const stateTaxMetricsObserver=new MutationObserver(()=>{void installStateTaxMetr
 stateTaxMetricsObserver.observe(panel,{childList:true,subtree:true});
 void installStateTaxMetrics();
 const installAdminCategoryFilterAssignments=async()=>{const select=document.querySelector('#cloud-item-category');if(!select||select.dataset.assignmentsLoaded)return;select.dataset.assignmentsLoaded='loading';try{const [categoryResult,assignmentResult]=await Promise.all([cloudAdmin().from('categories').select('slug,name').order('name'),cloudAdmin().from('product_categories').select('product_id,category_slug')]);if(categoryResult.error)throw categoryResult.error;if(assignmentResult.error)throw assignmentResult.error;const slugs=[...new Set([...(categoryResult.data||[]).map((row)=>String(row.slug||'').trim()),...(assignmentResult.data||[]).map((row)=>String(row.category_slug||'').trim())].filter(Boolean))];const existing=new Set([...select.options].map((option)=>option.value));slugs.filter((slug)=>!existing.has(slug)).sort().forEach((slug)=>{const option=document.createElement('option');option.value=slug;option.textContent=(categoryResult.data||[]).find((row)=>row.slug===slug)?.name||slug;select.append(option);});select.dataset.assignmentsLoaded='true';}catch(error){select.dataset.assignmentsLoaded='error';}};const adminCategoryFilterObserver=new MutationObserver(()=>{if(document.querySelector('#cloud-item-category')){void installAdminCategoryFilterAssignments();}});adminCategoryFilterObserver.observe(document.body,{childList:true,subtree:true});
-document.addEventListener('submit',(event)=>{if(!event.target.matches('.admin-item-form'))return;const button=event.target.querySelector('.admin-actions button.cta');if(button){button.disabled=true;button.textContent='Saving…';}},true);
+// Product editors own their submit lifecycle: the reliable editor handler
+// validates hydration, disables the button, and renders any save error. A
+// second document-level listener would disable the button first and make that
+// canonical handler exit before it can save.
 window.addEventListener('admin-product-saved',()=>{const showNotice=()=>{const heading=panel.querySelector('.admin-heading');if(!heading||panel.querySelector('[data-admin-save-notice]'))return false;const notice=document.createElement('p');notice.className='admin-saved';notice.dataset.adminSaveNotice='';notice.textContent='Product saved successfully.';heading.after(notice);window.setTimeout(()=>notice.remove(),5000);return true;};if(showNotice())return;const observer=new MutationObserver(()=>{if(showNotice())observer.disconnect();});observer.observe(panel,{childList:true,subtree:true});window.setTimeout(()=>observer.disconnect(),10000);});
 const adminFilterDefinitionCache=new Map();
 const loadAdminFilterDefinitionData=async(categorySlugs)=>{
@@ -1861,17 +1884,37 @@ const installAdminSkuFilterEditors=async(form)=>{
     notice.textContent=`Storefront filters could not be loaded: ${form.dataset.skuFilterEditorError}`;
     form.querySelector('[data-variant-list]')?.before(notice);
   };
-  const redraw=()=>{void draw().catch(showError);};
-  form.addEventListener('sku-list-changed',redraw);
-  form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))redraw();});
+  const drawWithTransientRetry=async()=>{
+    try{return await draw();}
+    catch(error){
+      if(!(error instanceof TypeError)||!/failed to fetch/i.test(String(error.message||'')))throw error;
+      await new Promise((resolve)=>setTimeout(resolve,250));
+      return draw();
+    }
+  };
+  const redraw=()=>{
+    const refresh=drawWithTransientRetry().then(()=>{
+      form.dataset.skuFilterEditorsInstalled='ready';
+      form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());
+      return true;
+    }).catch((error)=>{
+      form.dataset.skuFilterEditorsInstalled='error';
+      showError(error);
+      throw error;
+    });
+    form._productFilterEditorsRefreshPromise=refresh;
+    return refresh;
+  };
+  form.addEventListener('sku-list-changed',()=>{void redraw().catch(()=>{});});
+  form.addEventListener('change',(event)=>{if(event.target.matches('[name="category_slug"],[data-additional-category]'))void redraw().catch(()=>{});});
   try{
     // Draw the filter choices as soon as definitions and values are available.
     // Existing assignments are secondary hydration and must not make the
     // editor appear incomplete when that read is slow or unavailable.
     const assignmentsPromise=loadAssignments();
-    await draw();
+    await drawWithTransientRetry();
     await assignmentsPromise;
-    if(assignments.length)await draw();
+    if(assignments.length)await drawWithTransientRetry();
     form.dataset.skuFilterEditorsInstalled='ready';
     form.querySelectorAll('[data-sku-filter-editor-error]').forEach((notice)=>notice.remove());
     if(assignmentLoadError){const notice=document.createElement('p');notice.className='inventory-help';notice.textContent=`Existing storefront filter selections could not be loaded: ${assignmentLoadError}`;form.querySelector('[data-variant-list]')?.before(notice);}
@@ -1918,6 +1961,23 @@ window.saveAdminProductFilterAssignments=async(productId,form)=>{
    }
  };
 window.installAdminSkuFilterEditors=installAdminSkuFilterEditors;
+const installProductPageOptionHydrationGuard=(form)=>{
+  if(!form||form.dataset.productPageOptionHydrationGuard)return;
+  form.dataset.productPageOptionHydrationGuard='true';
+  const apply=()=>{
+    const hydrating=form.dataset.productPageOptionsHydrating==='true';
+    const unavailable=form.dataset.productPageOptionsHydrating==='error';
+    form.querySelectorAll('[data-product-page-answer]').forEach((field)=>{
+      field.disabled=hydrating||unavailable;
+      field.placeholder=unavailable?'Saved answer unavailable — refresh editor':hydrating?'Loading saved answer…':'Enter answer';
+      field.title=unavailable?'Saved product-page option values could not be loaded safely. Refresh the editor before saving.':hydrating?'Loading saved product-page option values.':'';
+    });
+  };
+  form.addEventListener('product-page-options-recovered',apply);
+  form.addEventListener('product-page-options-recovery-failed',apply);
+  new MutationObserver(apply).observe(form,{childList:true,subtree:true});
+  apply();
+};
 const adminMediaRows=(form)=>[...form.querySelectorAll('[data-existing-media]')];
 const syncAdminMediaPositions=(form)=>adminMediaRows(form).forEach((row,index)=>{const input=row.querySelector('[data-media-position]');if(input)input.value=String(index+1);});
 const moveAdminMediaRow=(form,row,delta)=>{
@@ -2118,6 +2178,10 @@ const installReliableProductEditorSave=(form,id)=>{
     if(submitButton?.disabled)return;
     if(submitButton){submitButton.disabled=true;submitButton.textContent='Saving…';}
     try{
+      if(form._productFilterEditorsReadyPromise)await form._productFilterEditorsReadyPromise;
+      if(form._productFilterEditorsRefreshPromise)await form._productFilterEditorsRefreshPromise;
+      const missingRequired=[...form.querySelectorAll('[required]')].find((field)=>!field.disabled&&!String(field.value||'').trim());
+      if(missingRequired)throw new Error((missingRequired.labels?.[0]?.textContent||missingRequired.name||'Required field').replace(/\s+/g,' ').trim()+' is required.');
       const fields=Object.fromEntries(new FormData(form));
       await saveCloudProductWithMappings(id,fields,form);
       if(fields.finalize_inventory_setup==='on'&&window.beadSupabase){
@@ -2153,9 +2217,11 @@ const openCloudItemForm=async(id)=>{
     // upload wiring and canonical recovery are independent hydration work and
     // must not delay the first usable editor render.
     installCanonicalProductPageOptions(form);
+    installProductPageOptionHydrationGuard(form);
     installReliableProductEditorSave(form,id);
     const filterPromise=window.installAdminSkuFilterEditors?withAdminEditorTimeout(window.installAdminSkuFilterEditors(form),'Storefront filter hydration'):Promise.resolve();
-    const recoveryPromise=recoverAdminProductPageOptions(form).then(()=>true).catch((error)=>{form.dataset.productPageOptionsHydrating='false';form.dataset.productPageOptionsRecoveryFailed='true';form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';form.querySelector('[data-product-page-options-recovery-error]')?.remove();const notice=document.createElement('p');notice.dataset.productPageOptionsRecoveryError='';notice.className='admin-save-error';notice.textContent='Saved product page option values could not be loaded: '+form.dataset.productPageOptionsRecoveryError;form.querySelector('[data-variant-list]')?.before(notice);return false;});
+    form._productFilterEditorsReadyPromise=filterPromise.then(()=>{if(form.dataset.skuFilterEditorsInstalled==='error')throw new Error('Storefront filters could not be loaded. Refresh the editor before saving so existing selections stay safe.');return true;});
+    const recoveryPromise=recoverAdminProductPageOptions(form).then(()=>true).catch((error)=>{form.dataset.productPageOptionsHydrating='error';form.dataset.productPageOptionsRecoveryFailed='true';form.dataset.productPageOptionsRecoveryError=error.message||'Product page option recovery failed.';form.querySelector('[data-product-page-options-recovery-error]')?.remove();const notice=document.createElement('p');notice.dataset.productPageOptionsRecoveryError='';notice.className='admin-save-error';notice.textContent='Saved product page option values could not be loaded: '+form.dataset.productPageOptionsRecoveryError;form.querySelector('[data-variant-list]')?.before(notice);form.dispatchEvent(new Event('product-page-options-recovery-failed'));return false;});
     form._productPageOptionsReadyPromise=recoveryPromise;
     void Promise.allSettled([
       initializeCanonicalAdminMedia(form),
