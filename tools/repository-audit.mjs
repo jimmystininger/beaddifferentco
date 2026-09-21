@@ -47,6 +47,14 @@ if (fs.existsSync(path.join(repoRoot, '.vercel', 'output'))) {
   failures.push('stale generated output exists: .vercel/output');
 }
 
+const storeSource = fs.readFileSync(path.join(repoRoot, 'store.js'), 'utf8');
+if (!/shipping_address\s*:\s*shippingAddress/.test(storeSource)) {
+  failures.push('checkout payload must map shippingAddress to shipping_address explicitly');
+}
+if (/\bshipping_address\s*,/.test(storeSource)) {
+  failures.push('checkout payload contains undeclared shipping_address shorthand');
+}
+
 if (failures.length) {
   console.error('Repository audit failed:');
   failures.forEach((failure) => console.error(`- ${failure}`));
