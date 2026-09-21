@@ -344,16 +344,29 @@ function listingCategoryFrom(listing: Record<string, any>, detail: Record<string
   return candidates.find(([slug, words]) => available.has(slug) && words.some((word) => text.includes(word)))?.[0] || 'uncategorized';
 }
 async function findOrCreateInventorySku(sku: string, payload: Record<string, unknown>) {
-  const existing = await database(`inventory_skus?sku=eq.${encodeURIComponent(sku)}&select=id,sku&limit=1`);
+  const existing = await database(`inventory_skus?sku=eq.${encodeURIComponent(sku)}&select=id,sku,item_type,hierarchy&limit=1`);
   if (existing[0]) return existing[0];
   try {
     const inserted = await database('inventory_skus', 'POST', payload);
     return inserted[0];
   } catch (error) {
-    const raced = await database(`inventory_skus?sku=eq.${encodeURIComponent(sku)}&select=id,sku&limit=1`);
+    const raced = await database(`inventory_skus?sku=eq.${encodeURIComponent(sku)}&select=id,sku,item_type,hierarchy&limit=1`);
     if (raced[0]) return raced[0];
     throw error;
   }
+}
+async function ensurePhysicalInventorySku(row: Record<string, any>) {
+  const itemType = String(row.item_type || '').trim().toLowerCase();
+  const hierarchy = String(row.hierarchy || '').trim().toLowerCase();
+  if (itemType === 'inventory' && hierarchy === 'single') return row;
+  // A generated 1PK child may already exist from an older/manual catalog
+  // import as a non-inventory SKU. Bundle recipes require physical inventory
+  // children, so normalize this generated child before attaching it.
+  await database(`inventory_skus?id=eq.${encodeURIComponent(String(row.id))}`, 'PATCH', {
+    item_type: 'inventory',
+    hierarchy: 'single'
+  }, 'return=minimal');
+  return { ...row, item_type: 'inventory', hierarchy: 'single' };
 }
 async function fetchEtsyListingDetail(connection: Record<string, any>, listing: Record<string, any>) {
   const listingId = String(listing.listing_id || listing.id || '').trim();
@@ -387,9 +400,11 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     const existingBySku = await database(`products?external_id=eq.${encodeURIComponent(oneSku)}&select=id,external_id,etsy_listing_id,name&limit=1`);
     if (existingBySku[0] && (!existingBySku[0].etsy_listing_id || String(existingBySku[0].etsy_listing_id) === listingId)) product = existingBySku[0];
   }
-  const childInventory = await findOrCreateInventorySku(oneSku, { sku: oneSku, name: title, variant_name: '1PK', quantity_on_hand: quantity * packSize, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: unitPrice, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: etsySku, pack_size: 1, imported_quantity: quantity * packSize, imported_at: new Date().toISOString() } });
+  const childPayload = { sku: oneSku, name: title, variant_name: '1PK', quantity_on_hand: quantity * packSize, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: unitPrice, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: etsySku, pack_size: 1, imported_quantity: quantity * packSize, imported_at: new Date().toISOString() } };
+  let childInventory = await findOrCreateInventorySku(oneSku, childPayload);
   let parentInventory = childInventory;
   if (canonicalEtsySku !== oneSku) {
+    childInventory = await ensurePhysicalInventorySku(childInventory);
     parentInventory = await findOrCreateInventorySku(canonicalEtsySku, { sku: canonicalEtsySku, name: title, variant_name: `${packSize}PK`, quantity_on_hand: quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: listingPrice, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: etsySku, pack_size: packSize, imported_quantity: quantity, imported_at: new Date().toISOString() } });
     await database('inventory_bundle_components?on_conflict=bundle_sku_id,component_sku_id', 'POST', [{ bundle_sku_id: parentInventory.id, component_sku_id: childInventory.id, quantity: packSize, sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
   }
