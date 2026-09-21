@@ -20,7 +20,7 @@ This is an evidence log for the system-wide audit. Source-of-truth behavior rema
 
 ### Migration ledger drift — open, do not delete or replay
 
-The latest live ledger read reports 159 applied migrations; the repository now contains 174 SQL files. Exact `(version, name)` comparison remains non-authoritative because many historical migrations were rebased or renamed: the live ledger has 25 names with no same-name local file, while the local tree has 39 names with no same-name live file (including the now-reconciled historical `guest_checkout_orders` name). The local tree still has duplicate timestamp groups (`20260910013000`, `20260916200000`, and `20260917200000`). This is timestamp/name drift, not evidence that either side can be deleted or replayed safely.
+The latest live ledger read reports 160 applied migrations; the repository now contains 175 SQL files. Exact `(version, name)` comparison remains non-authoritative because many historical migrations were rebased or renamed. The local tree still has duplicate timestamp groups (`20260910013000`, `20260916200000`, and `20260917200000`). This is timestamp/name drift, not evidence that either side can be deleted or replayed safely.
 
 This cannot be safely normalized from the current workspace: the Supabase CLI is not installed, and the available management result exposes the live ledger names but not the original SQL needed to reconstruct missing files. No migration was replayed, deleted, or marked repaired. The next safe action is to run the official `supabase migration repair`/`db pull` workflow from a credentialed environment, review the complete diff, and submit that as its own batch.
 
@@ -44,6 +44,8 @@ The latest live scan confirms 110 objects / 24,638,363 bytes total, 43 reference
 - Performance notices include unused indexes and multiple permissive policies. They require query-traffic evidence and policy-by-policy review; no index or policy was removed opportunistically.
 
 Fresh advisor counts (2026-09-20 23:23 UTC) are: 2 security-definer views (ERROR), 8 anonymous security-definer functions (WARN), 26 authenticated security-definer functions (WARN), 1 disabled leaked-password-protection setting (WARN), 2 RLS-without-policy tables (INFO), 25 unindexed foreign keys (INFO), 47 unused indexes (INFO), and 18 multiple-permissive-policy findings (WARN). The admin RPCs check `private.is_admin()`; the public cart/catalog/newsletter functions are intentionally exposed for the current storefront. The test-checkout RPC additionally requires `test_order=true`, but it can still create a test order and decrement inventory; it must remain gated until real payment checkout replaces it. Enabling leaked-password protection is a Supabase Auth dashboard setting, not a repository migration, and remains an external follow-up.
+
+The follow-up privilege audit found ten app-owned trigger-only functions executable by browser roles. PR #107 (`10ba921`) revoked `public`, `anon`, and `authenticated` EXECUTE grants for those functions while leaving trigger execution and service ownership intact. A rollback test of the checkout trigger path still returned a valid order payload afterward; Supabase-managed storage/realtime trigger functions were left unchanged.
 
 ### Routes and local assets — passed
 
