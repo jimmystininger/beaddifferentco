@@ -8,6 +8,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const resendApiKey = Deno.env.get("RESEND_API_KEY") || "";
 const emailFrom = Deno.env.get("EMAIL_FROM") || Deno.env.get("RESTOCK_EMAIL_FROM") || "";
+const storefrontUrl = (Deno.env.get("STOREFRONT_URL") || "https://beaddifferentco.com").replace(/\/$/, "");
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -23,6 +24,15 @@ const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (
   '"': "&quot;",
   "'": "&#39;",
 }[character] || character));
+const orderTrackingUrl = (carrier: unknown, tracking: unknown) => {
+  const value = textValue(tracking, 200);
+  if (!value) return "";
+  const normalized = textValue(carrier, 80).toLowerCase();
+  if (normalized.includes("usps") || normalized.includes("standard")) return `https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum=${encodeURIComponent(value)}`;
+  if (normalized.includes("ups")) return `https://www.ups.com/track?tracknum=${encodeURIComponent(value)}`;
+  if (normalized.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(value)}`;
+  return "";
+};
 
 async function supabaseRequest(path: string, init: RequestInit = {}) {
   return fetch(`${supabaseUrl}/rest/v1/${path}`, {
@@ -64,7 +74,7 @@ async function sendResendEmail(to: string, subject: string, text: string, html: 
 
 async function sendOrderConfirmation(orderId: string, user: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null, guestOrderToken = "") {
   const ownershipFilter = user ? `user_id=eq.${encodeURIComponent(user.id)}` : `user_id=is.null&guest_order_token=eq.${encodeURIComponent(guestOrderToken)}`;
-  const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&${ownershipFilter}&select=id,status,total,subtotal,discount,shipping_amount,shipping_name,shipping_address,customer_email,carrier,tracking_number,created_at,order_items(product_name,sku,quantity,unit_price,selected_options)`);
+  const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&${ownershipFilter}&select=id,order_number,status,total,subtotal,discount,tax_amount,tax_rate,tax_state,tax_jurisdiction,promo_code,shipping_amount,shipping_cost,shipping_name,shipping_address,customer_email,carrier,tracking_number,created_at,order_items(product_name,sku,quantity,unit_price,selected_options)`);
   if (!response.ok) throw new Error("Unable to load the order.");
   const orders = await response.json();
   const order = orders[0];
@@ -72,13 +82,57 @@ async function sendOrderConfirmation(orderId: string, user: { id: string; email?
   const email = textValue(order.customer_email || user?.email, 320).toLowerCase();
   if (!emailPattern.test(email)) return { sent: 0, skipped: true };
   const name = textValue(order.shipping_name || user?.user_metadata?.full_name, 160);
-  const orderShortId = String(order.id).slice(0, 8);
+  const orderShortId = order.order_number ? `BD-${String(order.order_number).padStart(6, "0")}` : String(order.id).slice(0, 8);
   const items = Array.isArray(order.order_items) ? order.order_items : [];
-  const itemLines = items.map((item: { product_name?: string; quantity?: number; unit_price?: number }) => `${textValue(item.product_name, 200)} × ${Math.max(1, Number(item.quantity) || 1)} — $${(Number(item.unit_price) * Math.max(1, Number(item.quantity) || 1)).toFixed(2)}`).join("\n");
+  const orderedSkus = [...new Set(items.map((item: { sku?: string }) => textValue(item.sku, 120)).filter(Boolean))];
+  const skuNames = new Map<string, string>();
+  if (orderedSkus.length) {
+    const skuFilter = orderedSkus.map((sku) => encodeURIComponent(sku)).join(",");
+    const skuResponse = await supabaseRequest(`inventory_skus?sku=in.(${skuFilter})&select=sku,name`);
+    if (skuResponse.ok) {
+      const skuRows = await skuResponse.json();
+      for (const row of Array.isArray(skuRows) ? skuRows : []) {
+        const sku = textValue(row?.sku, 120);
+        const name = textValue(row?.name, 200);
+        if (sku && name) skuNames.set(sku.toLowerCase(), name);
+      }
+    }
+  }
+  const itemName = (item: { product_name?: string; sku?: string }) => skuNames.get(textValue(item.sku, 120).toLowerCase()) || textValue(item.product_name, 200) || "Item";
+  const itemLines = items.map((item: { product_name?: string; sku?: string; quantity?: number; unit_price?: number }) => `${itemName(item)}${item.sku ? ` (${item.sku})` : ""} × ${Math.max(1, Number(item.quantity) || 1)} — $${(Number(item.unit_price) * Math.max(1, Number(item.quantity) || 1)).toFixed(2)}`).join("\n");
+  const subtotal = Number(order.subtotal || 0);
+  const discount = Number(order.discount || 0);
+  const shipping = Number(order.shipping_amount ?? order.shipping_cost ?? 0);
+  const tax = Number(order.tax_amount || 0);
+  const total = Number(order.total || 0);
+  const shippingAddress = order.shipping_address && typeof order.shipping_address === "object"
+    ? (() => {
+        const address = order.shipping_address as Record<string, unknown>;
+        const city = textValue(address.city, 120);
+        const state = textValue(address.state, 80);
+        const postalCode = textValue(address.postal_code, 40);
+        const cityLine = [city, [state, postalCode].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+        return [
+          textValue(address.recipient_name || address.name, 160),
+          textValue(address.address_line1 || address.line1 || address.address, 200),
+          textValue(address.address_line2 || address.line2, 200),
+          cityLine,
+          textValue(address.country, 80),
+        ].filter(Boolean);
+      })()
+    : [textValue(order.shipping_address, 500)].filter(Boolean);
+  const shippingAddressText = shippingAddress.join("\n");
+  const shippingAddressHtml = shippingAddress.map((line) => escapeHtml(line)).join("<br>");
+  const carrierName = textValue(order.carrier, 80).toLowerCase();
+  const uspsTrackingUrl = carrierName.includes("usps") || carrierName.includes("standard") ? orderTrackingUrl(order.carrier, order.tracking_number) : "";
+  const trackingUrl = `${storefrontUrl}/account.html?view=orders&order=${encodeURIComponent(order.id)}`;
+  const trackingLabel = order.tracking_number ? `Tracking: ${order.carrier ? `${order.carrier} ` : ""}${order.tracking_number}` : "Track your order and view shipping updates from your account.";
   const greeting = `Hello${name ? ` ${name}` : ""},`;
-  const text = `${greeting}\n\nThanks for your order from Bead Different Co. Your test order ${orderShortId} has been received.\n\n${itemLines || "Your order items are listed in your account."}\n\nTotal: $${Number(order.total || 0).toFixed(2)}\n\nWe will email you again when the order status or tracking changes.\n\nThank you,\nBead Different Co.`;
-  const rows = items.map((item: { product_name?: string; quantity?: number; unit_price?: number }) => `<tr><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(item.product_name || "Item")}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:center">${Math.max(1, Number(item.quantity) || 1)}</td><td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right">$${(Number(item.unit_price) * Math.max(1, Number(item.quantity) || 1)).toFixed(2)}</td></tr>`).join("");
-  const html = brandedHtml(`Order ${orderShortId} received`, `<p>${escapeHtml(greeting)}</p><p>Thanks for your order from Bead Different Co. We received it and will keep you updated as it moves through fulfillment.</p><table style="width:100%;border-collapse:collapse;margin:22px 0"><thead><tr><th style="text-align:left;padding-bottom:8px">Item</th><th style="padding-bottom:8px">Qty</th><th style="text-align:right;padding-bottom:8px">Total</th></tr></thead><tbody>${rows}</tbody></table><p style="margin:0"><strong>Order total:</strong> $${Number(order.total || 0).toFixed(2)}</p>`);
+  const text = `${greeting}\n\nThanks for your order from Bead Different Co. Your order ${orderShortId} has been received.\n\nITEMS\n${itemLines || "Your order items are listed in your account."}\n\nORDER SUMMARY\nSubtotal: $${subtotal.toFixed(2)}\nDiscount${order.promo_code ? ` (${order.promo_code})` : ""}: -$${discount.toFixed(2)}\nShipping: $${shipping.toFixed(2)}\nTax: $${tax.toFixed(2)}\nTotal: $${total.toFixed(2)}\n\n${shippingAddressText ? `SHIPPING TO\n${shippingAddressText}\n\n` : ""}${trackingLabel}\n\n${uspsTrackingUrl ? `Track with USPS: ${uspsTrackingUrl}` : `Log in to track your order: ${trackingUrl}`}\n\nThank you,\nBead Different Co.`;
+  const rows = items.map((item: { product_name?: string; sku?: string; quantity?: number; unit_price?: number }) => { const quantity = Math.max(1, Number(item.quantity) || 1); const lineTotal = Number(item.unit_price || 0) * quantity; return `<tr><td style="padding:10px 0;border-bottom:1px solid #eee"><strong>${escapeHtml(itemName(item))}</strong>${item.sku ? `<br><span style="color:#756d6a;font-size:12px">SKU: ${escapeHtml(item.sku)}</span>` : ""}</td><td style="padding:10px 0;border-bottom:1px solid #eee;text-align:center;vertical-align:top">${quantity}</td><td style="padding:10px 0;border-bottom:1px solid #eee;text-align:right;vertical-align:top">$${lineTotal.toFixed(2)}</td></tr>`; }).join("");
+  const summaryRows = `<tr><td style="padding:5px 0">Subtotal</td><td style="padding:5px 0;text-align:right">$${subtotal.toFixed(2)}</td></tr><tr><td style="padding:5px 0">Discount${order.promo_code ? ` (${escapeHtml(order.promo_code)})` : ""}</td><td style="padding:5px 0;text-align:right;color:#8b4261">−$${discount.toFixed(2)}</td></tr><tr><td style="padding:5px 0">Shipping</td><td style="padding:5px 0;text-align:right">$${shipping.toFixed(2)}</td></tr><tr><td style="padding:5px 0">Tax${order.tax_jurisdiction ? ` (${escapeHtml(order.tax_jurisdiction)})` : ""}</td><td style="padding:5px 0;text-align:right">$${tax.toFixed(2)}</td></tr><tr><td style="padding:12px 0 0;border-top:1px solid #ddd;font-weight:700;font-size:17px">Total</td><td style="padding:12px 0 0;border-top:1px solid #ddd;text-align:right;font-weight:700;font-size:17px">$${total.toFixed(2)}</td></tr>`;
+  const addressBlock = shippingAddressText ? `<h2 style="margin:26px 0 8px;font-size:16px">Shipping information</h2><p style="margin:0;color:#756d6a;line-height:1.55">${shippingAddressHtml}</p>` : "";
+  const html = brandedHtml(`Order ${orderShortId} received`, `<p>${escapeHtml(greeting)}</p><p>Thanks for your order from Bead Different Co. We received it and will keep you updated as it moves through fulfillment.</p><h2 style="margin:26px 0 8px;font-size:16px">Items purchased</h2><table style="width:100%;border-collapse:collapse;margin:0 0 18px"><thead><tr><th style="text-align:left;padding:0 0 8px">Item</th><th style="padding:0 0 8px">Qty</th><th style="text-align:right;padding:0 0 8px">Total</th></tr></thead><tbody>${rows}</tbody></table><table style="width:100%;border-collapse:collapse;margin:18px 0">${summaryRows}</table>${addressBlock}<p style="margin:24px 0 0;color:#756d6a">${escapeHtml(trackingLabel)}</p><p style="margin:18px 0 0"><a href="${escapeHtml(uspsTrackingUrl||trackingUrl)}" style="display:inline-block;background:#4b214f;color:#fff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:700">${uspsTrackingUrl ? "Track with USPS ↗" : "Log in to track your order"}</a></p>`);
   await sendResendEmail(email, `Order ${orderShortId} received from Bead Different Co.`, text, html, `order-confirmation/${order.id}`);
   return { sent: 1 };
 }

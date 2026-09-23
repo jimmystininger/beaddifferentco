@@ -138,6 +138,20 @@ const renderSearchPage=()=>{
   const products=searchCatalog(query);
   renderProductCards(products,document.querySelector('#page-products'));
   document.querySelector('#store-empty').hidden=products.length>0;
+  const pagination=document.createElement('div');
+  pagination.className='pagination';
+  const searchState=window.storeSearchPagination;
+  const pageNumber=Number(searchState?.page||1);
+  const pageCount=Math.ceil(Number(searchState?.total||0)/Number(searchState?.pageSize||24));
+  if(pageCount>1){
+    for(let nextPage=1;nextPage<=pageCount;nextPage+=1){
+      const button=document.createElement('button');
+      button.type='button';button.textContent=String(nextPage);button.className=nextPage===pageNumber?'active':'';
+      button.addEventListener('click',()=>{const next=new URL(location.href);next.searchParams.set('page',String(nextPage));location.href=next.toString();});
+      pagination.append(button);
+    }
+    main.querySelector('#page-products').after(pagination);
+  }
   form.addEventListener('submit',(event)=>{event.preventDefault();location.href=`search.html?q=${encodeURIComponent(String(form.elements.q.value||'').trim())}`;});
 };
 
@@ -182,6 +196,17 @@ const renderSaleCollection=async()=>{
     actions.append(view,wishlist);card.append(link,price,actions);return card;
   }));
   empty.hidden=rows.length>0;
+  const salePagination=window.storeSalePagination;
+  if(salePagination?.total>salePagination.pageSize){
+    const pagination=document.createElement('nav');
+    pagination.className='store-pagination';
+    const totalPages=Math.max(1,Math.ceil(salePagination.total/salePagination.pageSize));
+    const pageLink=(label,page,disabled)=>{const button=document.createElement('a');button.className='cta';button.textContent=label;button.href=`sale.html?page=${page}`;if(disabled){button.setAttribute('aria-disabled','true');button.addEventListener('click',(event)=>event.preventDefault());}return button;};
+    pagination.append(pageLink('Previous',Math.max(1,salePagination.page-1),salePagination.page<=1));
+    const summary=document.createElement('span');summary.textContent=`Page ${salePagination.page} of ${totalPages} · ${salePagination.total} sale products`;pagination.append(summary);
+    pagination.append(pageLink('Next',Math.min(totalPages,salePagination.page+1),salePagination.page>=totalPages));
+    main.querySelector('.sale-collection-page').append(pagination);
+  }
   const wished=wishlistItems();
   grid.querySelectorAll('[data-wishlist]').forEach((button)=>{const active=wished.includes(button.dataset.wishlist);button.classList.toggle('active',active);button.setAttribute('aria-label',active?'Remove from favorites':'Add to favorites');button.addEventListener('click',()=>{const next=toggleWishlist(button.dataset.wishlist);button.classList.toggle('active',next);button.setAttribute('aria-label',next?'Remove from favorites':'Add to favorites');});});
 };
@@ -194,6 +219,24 @@ const guestAccountPrompt=(storePage,email)=>{
   prompt.innerHTML=`<h2>Track this order</h2><p>Create an account with ${escapeProductText(email)} to track this order and future orders.</p><a class="cta" href="account.html?signup=1&email=${encodeURIComponent(email)}">Create an account</a>`;
   storePage.append(prompt);
 };
+
+const hydrateConfirmationRewards=async(storePage,account)=>{
+  if(!account||!window.customerAccounts?.rewardStatus)return;
+  try{
+    const reward=await window.customerAccounts.rewardStatus();
+    const host=storePage.querySelector('[data-confirmation-rewards]');
+    if(!host||!reward)return;
+    const threshold=Math.max(.01,Number(reward.threshold)||35);
+    const spend=Math.max(0,Number(reward.spend)||0);
+    const progress=Math.min(threshold,Math.max(0,Number(reward.progress)||0));
+    const discount=Math.min(100,Math.max(.01,Number(reward.discountPercent)||5));
+    const remaining=Math.max(0,threshold-spend);
+    const message=reward.available?'Reward unlocked. It will apply automatically in your cart.':spend>=threshold?'This reward was redeemed. Keep spending to unlock the next one.':`Spend $${remaining.toFixed(2)} more to unlock your reward.`;
+    host.innerHTML=`<p class="kicker">MEMBER REWARDS</p><h2>Your rewards progress</h2><p>Spend <strong>$${spend.toFixed(2)}</strong> of <strong>$${threshold.toFixed(2)}</strong> before tax and shipping to unlock <strong>${discount}% off</strong>.</p><progress max="${threshold}" value="${progress}" aria-label="Reward progress"></progress><p class="order-confirmation-rewards-message">${escapeProductText(message)}</p>`;
+    host.hidden=false;
+  }catch(error){console.warn('Confirmation rewards unavailable.',error);}
+};
+const publicOrderNumber=(order)=>order?.order_number?`BD-${String(order.order_number).padStart(6,'0')}`:String(order?.id||'created');
 
 const syncCheckoutAccountField=(form)=>{
   const account=window.customerAccounts?.current?.();
@@ -271,7 +314,7 @@ const setupShoppingBag=async()=>{
 
   const summary=document.createElement('section');
   summary.className='bag-summary';
-  summary.innerHTML='<h2>Order summary</h2><form class="checkout-form"><section class="checkout-shipping"><h3>Shipping information</h3><p class="checkout-signin-note"></p><label>Saved shipping address<select data-shipping-address><option value="">New address</option></select></label><div data-address-summary class="checkout-address-summary" hidden></div><button type="button" data-edit-address hidden>Edit address</button><fieldset data-address-fields><label>Recipient name<input name="shipping_name" autocomplete="name" required></label><label>Address<input name="address_line1" autocomplete="street-address" required></label><label>Apartment, suite, etc.<input name="address_line2" autocomplete="address-line2"></label><div class="admin-form-grid"><label>City<input name="city" autocomplete="address-level2" required></label><label>State<input name="state" autocomplete="address-level1" maxlength="2" required></label></div><label>ZIP code<input name="postal_code" inputmode="numeric" autocomplete="postal-code" required></label></fieldset></section><section class="checkout-calculator"><section class="checkout-promo-section"><h4>Promotion</h4><div class="checkout-promo-entry"><label>Promo code<input name="promo_code" placeholder="Enter a manual promo code"></label><button type="button" data-apply-checkout-promo>Apply</button></div><p data-checkout-promo-status role="status"></p></section><div data-order-summary></div><button class="cta" type="submit">Place test order</button><p data-checkout-status role="status"></p></section></form>';
+  summary.innerHTML='<h2>Order summary</h2><form class="checkout-form"><section class="checkout-shipping"><h3>Shipping information</h3><p class="checkout-signin-note"></p><label>Saved shipping address<select data-shipping-address><option value="">New address</option></select></label><div data-address-summary class="checkout-address-summary" hidden></div><button type="button" data-edit-address hidden>Edit address</button><fieldset data-address-fields><label>Recipient name<input name="shipping_name" autocomplete="name" required></label><label>Address<input name="address_line1" autocomplete="street-address" required></label><label>Apartment, suite, etc.<input name="address_line2" autocomplete="address-line2"></label><div class="admin-form-grid"><label>City<input name="city" autocomplete="address-level2" required></label><label>State<input name="state" autocomplete="address-level1" maxlength="2" required></label></div><label>ZIP code<input name="postal_code" inputmode="numeric" autocomplete="postal-code" required></label></fieldset></section><section class="checkout-calculator"><section class="checkout-promo-section"><h4>Promotion</h4><div class="checkout-promo-entry"><label>Promo code<input name="promo_code" placeholder="Enter a manual promo code"></label><button type="button" data-apply-checkout-promo>Apply</button></div><p data-checkout-promo-status role="status"></p></section><div data-order-summary></div><button class="cta" type="submit">Place order</button><p data-checkout-status role="status"></p></section></form>';
   storePage.append(summary);
   const form=summary.querySelector('form');
   const orderSummary=summary.querySelector('[data-order-summary]');
@@ -291,6 +334,9 @@ const setupShoppingBag=async()=>{
   let quoteToken=0;
   let quoteTimer=0;
   const quoteCache=new Map();
+  const quoteRequests=new Map();
+  const taxCache=new Map();
+  const taxRequests=new Map();
   const setAddressExpanded=(expanded)=>{addressFields.hidden=!expanded;editAddress.hidden=expanded||!addressSelect.value;addressSummary.hidden=expanded||!addressSelect.value;};
   const addressValue=()=>({recipient_name:String(form.elements.shipping_name.value||'').trim(),address_line1:String(form.elements.address_line1.value||'').trim(),address_line2:String(form.elements.address_line2.value||'').trim(),city:String(form.elements.city.value||'').trim(),state:String(form.elements.state.value||'').trim().toUpperCase(),postal_code:String(form.elements.postal_code.value||'').trim(),country:'US'});
   const addressValid=(address)=>Boolean(address.recipient_name&&address.address_line1&&address.city&&/^[A-Z]{2}$/.test(address.state)&&/^\d{5}(?:-\d{4})?$/.test(address.postal_code));
@@ -326,11 +372,21 @@ const setupShoppingBag=async()=>{
     const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
     const shippingAmount=rate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(rate.amount)||0):0;
     if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH'};return;}
-    try{
-      const result=await window.beadSupabase.functions.invoke('ohio-sales-tax',{body:{address:{addressLine1:address.address_line1,city:address.city,state:'OH',postalCode:address.postal_code},taxableAmount:Math.max(0,totals.subtotal-discount+shippingAmount)}});
-      if(result.error||result.data?.error||result.data?.amount===undefined){taxQuote={amount:0,rate:0,state:'OH'};return;}
-      taxQuote={amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Ohio'};
-    }catch(error){taxQuote={amount:0,rate:0,state:'OH'};}
+    const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
+    const taxKey=JSON.stringify({line1:address.address_line1,city:address.city,postalCode:address.postal_code,taxableAmount});
+    const cached=taxCache.get(taxKey);
+    if(cached){taxQuote=cached;return;}
+    let request=taxRequests.get(taxKey);
+    if(!request){
+      request=window.beadSupabase.functions.invoke('ohio-sales-tax',{body:{address:{addressLine1:address.address_line1,city:address.city,state:'OH',postalCode:address.postal_code},taxableAmount}}).then((result)=>{
+        if(result.error||result.data?.error||result.data?.amount===undefined)return{amount:0,rate:0,state:'OH'};
+        return{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Ohio'};
+      }).catch(()=>({amount:0,rate:0,state:'OH'})).finally(()=>taxRequests.delete(taxKey));
+      taxRequests.set(taxKey,request);
+    }
+    taxQuote=await request;
+    taxCache.set(taxKey,taxQuote);
+    if(taxCache.size>20)taxCache.delete(taxCache.keys().next().value);
   };
   const refreshQuote=async()=>{
     const token=++quoteToken;
@@ -340,7 +396,12 @@ const setupShoppingBag=async()=>{
     const cacheKey=JSON.stringify({postalCode:address.postal_code,weightOz:totals.weightOz,subtotal:totals.subtotal});
     const cached=quoteCache.get(cacheKey);
     if(cached){shippingQuote=cached;await refreshTax();if(token===quoteToken)drawSummary();return;}
-    const result=await window.storeShipping.quote(currentEntries(),address.postal_code);
+    let request=quoteRequests.get(cacheKey);
+    if(!request){
+      request=window.storeShipping.quote(currentEntries(),address.postal_code).finally(()=>quoteRequests.delete(cacheKey));
+      quoteRequests.set(cacheKey,request);
+    }
+    const result=await request;
     if(token!==quoteToken)return;
     shippingQuote=result;
     quoteCache.set(cacheKey,result);
@@ -416,14 +477,20 @@ const setupShoppingBag=async()=>{
     const shippingAmount=selectedRate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(selectedRate.amount)||0):0;
     const submit=form.querySelector('[type="submit"]');
     submit.disabled=true;
-    status.textContent='Creating test order…';
+    status.textContent='Creating your order…';
     try{
+      const confirmationLines=currentEntries().map((entry)=>{const item=findProduct(entry.id);const pricing=linePricing(entry,item);const sku=String(pricing?.sku||pricing?.option?.inventorySku||pricing?.option?.sku||item?.sku||'').trim();const name=String(pricing?.option?.label||sku||item?.name||'Item').trim();const quantity=Math.max(1,Number(entry.quantity)||1);return{name,sku,quantity,unitPrice:Number(pricing?.unitPrice??item?.price)||0};});
+      const confirmationItems=confirmationLines.reduce((total,line)=>total+line.quantity,0);
+      const confirmationItemMarkup=confirmationLines.map((line)=>`<li><div><strong>${escapeProductText(line.name)}</strong><small>${line.sku?`SKU: ${escapeProductText(line.sku)}`:''}</small></div><span>${line.quantity} × $${line.unitPrice.toFixed(2)}</span></li>`).join('');
+      const confirmationEta=selectedRate?.scheduledDeliveryDate?new Date(`${selectedRate.scheduledDeliveryDate}T12:00:00`).toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}):'To be confirmed';
       const order=await window.storeCheckout({shippingName:address.recipient_name,shippingAddress:address,customerEmail:email,promoCode:activePromo?.mode==='manual'?activePromo.code:'',shippingAmount,shippingCost:Number(selectedRate?.amount)||0,shippingMethod:shippingMethod==='priority'?'priority':'standard',taxAmount:Number(taxQuote?.amount)||0,taxRate:Number(taxQuote?.rate)||0,taxState:taxQuote?.state||'',taxJurisdiction:taxQuote?.jurisdiction||'',testOrder:true});
       const wasGuest=!account;
-      storePage.innerHTML=`<p class="kicker">TEST ORDER CONFIRMED</p><h1>Order received</h1><p>Order ${escapeProductText(order?.id||'created')} was created without payment.</p><p>Order updates were sent to ${escapeProductText(email)}.</p><a class="cta" href="shop-all.html">Continue shopping</a>`;
+      const confirmationTotal=Math.max(0,totals.subtotal-promoDiscount(totals)+shippingAmount+Number(taxQuote?.amount||0));
+      storePage.innerHTML=`<section class="order-confirmation" aria-labelledby="order-confirmation-title"><div class="order-confirmation-main"><span class="order-confirmation-mark" aria-hidden="true">✓</span><p class="kicker">ORDER CONFIRMED</p><h1 id="order-confirmation-title">Your order is on its way</h1><p class="order-confirmation-lead">Thanks for your order from Bead Different Co. We’ve received it and will keep you updated as it moves through fulfillment.</p><div class="order-confirmation-number"><span>Order number</span><strong>${escapeProductText(publicOrderNumber(order))}</strong></div><p class="order-confirmation-email">A confirmation has been sent to <strong>${escapeProductText(email)}</strong>.</p><a class="cta" href="shop-all.html">Continue shopping <span aria-hidden="true">→</span></a></div><aside class="order-confirmation-details" aria-label="Order details"><h2>Order details</h2><dl><div><dt>Items</dt><dd>${confirmationItems}</dd></div><div><dt>Shipping</dt><dd>${shippingMethod==='priority'?'Priority':'Standard'}</dd></div><div><dt>Estimated arrival</dt><dd>${escapeProductText(confirmationEta)}</dd></div><div><dt>Payment</dt><dd>Card payment</dd></div><div class="order-confirmation-total"><dt>Order total</dt><dd>$${confirmationTotal.toFixed(2)}</dd></div></dl><p class="order-confirmation-note">We’ll send updates as your order moves through fulfillment.</p></aside><section class="order-confirmation-items" aria-labelledby="order-items-title"><div><p class="kicker">ORDER RECAP</p><h2 id="order-items-title">Items in your order</h2></div><ul>${confirmationItemMarkup}</ul></section></section>`;
+      const confirmationRewards=document.createElement('section');confirmationRewards.className='order-confirmation-rewards';confirmationRewards.dataset.confirmationRewards='true';confirmationRewards.hidden=true;confirmationRewards.setAttribute('aria-live','polite');storePage.querySelector('.order-confirmation')?.append(confirmationRewards);void hydrateConfirmationRewards(storePage,account);
       if(wasGuest)guestAccountPrompt(storePage,email);
       window.dispatchEvent(new Event('bead-order-created'));
-    }catch(error){status.textContent=error.message||'Unable to create test order.';submit.disabled=false;}
+    }catch(error){status.textContent=error.message||'Unable to create your order.';submit.disabled=false;}
   });
   setAddressExpanded(true);drawSummary();renderCart();void restoreSavedPromo();void hydrateAddresses();
   const refresh=()=>{renderCart();if(!summary.isConnected&&currentEntries().length)storePage.append(summary);if(summary.isConnected)drawSummary();};
@@ -510,10 +577,11 @@ const renderManagedPages=()=>{
     const account=window.customerAccounts?.current?.();
     main.innerHTML=`<section class="store-page contact-page"><p class="kicker">WE’RE HERE TO HELP</p><h1>Contact Us</h1><p>Send us a message and we’ll get back to you by email.</p><p class="contact-email-line" ${source.contactEmail?'':'hidden'}>Email: <a data-contact-email href="mailto:${encodeURIComponent(source.contactEmail||'')}">${escapeProductText(source.contactEmail||'')}</a></p><form class="contact-form" data-contact-form><div class="admin-form-grid"><label>Name<input name="name" autocomplete="name" required value="${escapeProductText(account?.fullName||account?.name||'')}"></label><label>Email<input name="email" type="email" autocomplete="email" required value="${escapeProductText(account?.email||'')}"></label></div><label>Subject<input name="subject" required maxlength="160"></label><label>Message<textarea name="message" rows="8" required maxlength="10000"></textarea></label><button class="cta" type="submit">Send message</button><p data-contact-status role="status"></p></form></section>`;
     const form=main.querySelector('[data-contact-form]');
+    const contactParams=new URLSearchParams(location.search);const contactOrder=contactParams.get('order')||'';const contactOrderId=contactParams.get('orderId')||'';const contactTopic=contactParams.get('topic')||'';const priorityOrderRequest=Boolean(contactOrder&&(contactTopic==='cancellation'||contactTopic==='issue'));if(priorityOrderRequest){const isCancellation=contactTopic==='cancellation';form.querySelector('button[type="submit"]').textContent=isCancellation?'Submit cancellation request':'Submit order issue';form.elements.subject.value=isCancellation?`Cancellation request for order ${contactOrder}`:`Problem with order ${contactOrder}`;form.elements.message.value=isCancellation?`I would like to request cancellation of order ${contactOrder}.`:`I need help with order ${contactOrder}.`;form.closest('.contact-page').querySelector('h1').textContent=isCancellation?'Priority cancellation request':'Priority order support';form.closest('.contact-page').querySelector('h1').insertAdjacentHTML('afterend',`<p class="priority-order-notice">This request is sent to our priority order support queue. Someone will reach out as soon as possible.</p>`);}
     const status=main.querySelector('[data-contact-status]');
     const hydrate=async()=>{if(!window.beadSupabase)return;const result=await window.beadSupabase.auth.getUser();const user=result.data?.user;if(!user)return;const profile=await window.beadSupabase.from('profiles').select('email,full_name').eq('id',user.id).maybeSingle();if(profile.data){if(!form.elements.name.value)form.elements.name.value=profile.data.full_name||'';if(!form.elements.email.value)form.elements.email.value=profile.data.email||user.email||'';}};
     void hydrate();
-    form.addEventListener('submit',async(event)=>{event.preventDefault();const fields=Object.fromEntries(new FormData(form));const email=String(fields.email||'').trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){status.textContent='Enter a valid email address.';return;}const submit=form.querySelector('button[type="submit"]');submit.disabled=true;status.textContent='Sending message…';try{let userId=null;if(window.beadSupabase){const userResult=await window.beadSupabase.auth.getUser();userId=userResult.data?.user?.id||null;const result=await window.beadSupabase.from('contact_messages').insert({user_id:userId,name:String(fields.name||'').trim(),email,subject:String(fields.subject||'').trim(),message:String(fields.message||'').trim()});if(result.error)throw result.error;}else{const messages=JSON.parse(localStorage.getItem('beadDifferentContactMessages')||'[]');messages.unshift({...fields,email,created_at:new Date().toISOString(),status:'new'});localStorage.setItem('beadDifferentContactMessages',JSON.stringify(messages));}form.reset();if(account){form.elements.name.value=account.fullName||account.name||'';form.elements.email.value=account.email||email;}status.textContent='Message sent. We’ll reply by email.';}catch(error){status.textContent='Message was not sent: '+(error.message||'Unknown error.');}finally{submit.disabled=false;}});
+form.addEventListener('submit',async(event)=>{event.preventDefault();const fields=Object.fromEntries(new FormData(form));const email=String(fields.email||'').trim().toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){status.textContent='Enter a valid email address.';return;}const submit=form.querySelector('button[type="submit"]');submit.disabled=true;status.textContent='Sending message…';try{let userId=null;if(window.beadSupabase){const userResult=await window.beadSupabase.auth.getUser();userId=userResult.data?.user?.id||null;const payload={user_id:userId,name:String(fields.name||'').trim(),email,subject:String(fields.subject||'').trim(),message:String(fields.message||'').trim()};if(priorityOrderRequest){payload.order_id=contactOrderId||null;payload.order_number=contactOrder;payload.request_type=contactTopic;payload.priority=contactTopic==='cancellation'?'urgent':'high';}const result=await window.beadSupabase.from(priorityOrderRequest?'order_support_requests':'contact_messages').insert(payload);if(result.error)throw result.error;}else{const key=priorityOrderRequest?'beadDifferentOrderSupportRequests':'beadDifferentContactMessages';const messages=JSON.parse(localStorage.getItem(key)||'[]');messages.unshift({...fields,email,order_id:priorityOrderRequest?contactOrderId:null,order_number:priorityOrderRequest?contactOrder:null,request_type:priorityOrderRequest?contactTopic:null,priority:priorityOrderRequest?'high':null,created_at:new Date().toISOString(),status:'new'});localStorage.setItem(key,JSON.stringify(messages));}form.reset();if(account){form.elements.name.value=account.fullName||account.name||'';form.elements.email.value=account.email||email;}status.textContent=priorityOrderRequest?(contactTopic==='cancellation'?'Someone will be in touch regarding your cancellation request as soon as possible.':'Someone will be in touch regarding your order issue as soon as possible.'):'Message sent. We’ll reply by email.';}catch(error){status.textContent='Message was not sent: '+(error.message||'Unknown error.');}finally{submit.disabled=false;}});
   }
 };
 window.siteSettingsReady?.then(()=>renderManagedPages());

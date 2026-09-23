@@ -77,7 +77,7 @@ const orderTrackingUrl = (carrier: unknown, tracking: unknown) => {
   const value = textValue(tracking, 200);
   if (!value) return "";
   const normalized = textValue(carrier, 80).toLowerCase();
-  if (normalized.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tRef=fullpage&tLc=2&text=${encodeURIComponent(value)}`;
+  if (normalized.includes("usps") || normalized.includes("standard")) return `https://tools.usps.com/go/TrackConfirmAction_input?origTrackNum=${encodeURIComponent(value)}`;
   if (normalized.includes("ups")) return `https://www.ups.com/track?tracknum=${encodeURIComponent(value)}`;
   if (normalized.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(value)}`;
   return "";
@@ -118,19 +118,65 @@ async function sendToMany(emails: string[], subject: string, body: string, keyPr
   return { sent, failures };
 }
 
+async function pagedRows(path: string, label: string, pageSize = 1000) {
+  const rows: any[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const response = await supabaseRequest(`${path}${separator}limit=${pageSize}&offset=${offset}`);
+    const page = await requireJsonArray(response, label);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
+async function rowsForIds(table: string, ids: string[], select: string) {
+  const values = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  const rows: any[] = [];
+  for (let offset = 0; offset < values.length; offset += 500) {
+    const chunk = values.slice(offset, offset + 500).map((value) => encodeURIComponent(value)).join(",");
+    const response = await supabaseRequest(`${table}?select=${select}&id=in.(${chunk})`);
+    rows.push(...await requireJsonArray(response, table));
+  }
+  return rows;
+}
+
+async function rowsForEmails(table: string, emails: string[], select: string) {
+  const values = [...new Set(emails.map((email) => String(email || "").trim()).filter(Boolean))];
+  const rows: any[] = [];
+  for (let offset = 0; offset < values.length; offset += 500) {
+    const chunk = values.slice(offset, offset + 500).map((value) => encodeURIComponent(value)).join(",");
+    const response = await supabaseRequest(`${table}?select=${select}&email=in.(${chunk})`);
+    rows.push(...await requireJsonArray(response, table));
+  }
+  return rows;
+}
+
+async function saveSentEmail(email: { orderId?: string; requestId?: string; contactId?: string; emailType: string; recipient: string; subject: string; body: string }) {
+  const response = await supabaseRequest("admin_email_log", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      order_id: email.orderId || null,
+      request_id: email.requestId || null,
+      contact_id: email.contactId || null,
+      email_type: email.emailType,
+      recipient: email.recipient,
+      subject: email.subject,
+      body: email.body,
+    }),
+  });
+  if (!response.ok) console.error("Email sent but copy could not be saved", await response.text());
+}
+
 async function campaignRecipients(audience: string) {
-  const [subscriberResponse, preferenceResponse, profileResponse] = await Promise.all([
-    supabaseRequest("notification_subscribers?active=eq.true&select=email"),
-    supabaseRequest("customer_preferences?marketing_opt_in=eq.true&select=user_id"),
-    supabaseRequest("profiles?select=id,email"),
-  ]);
-  const [subscribers, preferences, profiles] = await Promise.all([
-    requireJsonArray(subscriberResponse, "Subscriber"),
-    requireJsonArray(preferenceResponse, "Member opt-in"),
-    requireJsonArray(profileResponse, "Profile"),
-  ]);
-  const subscriberEmails = normalizeEmails(subscribers.map((entry: { email: string }) => entry.email));
+  const subscribers = audience === "member_optins" ? [] : await pagedRows("notification_subscribers?active=eq.true&select=email&order=email.asc", "Subscriber");
+  const preferences = audience === "nonmember_subscribers" ? [] : await pagedRows("customer_preferences?marketing_opt_in=eq.true&select=user_id&order=user_id.asc", "Member opt-in");
   const optedInIds = new Set(preferences.map((entry: { user_id: string }) => entry.user_id));
+  const subscriberAddresses = [...new Set(subscribers.map((entry: { email: string }) => String(entry.email || "").trim()).filter(Boolean))];
+  const subscriberEmails = normalizeEmails(subscriberAddresses);
+  const profiles = audience === "nonmember_subscribers"
+    ? await rowsForEmails("profiles", subscriberAddresses, "id,email")
+    : await rowsForIds("profiles", [...optedInIds], "id,email");
   const profileEmails = normalizeEmails(profiles.map((entry: { email: string }) => entry.email));
   const memberOptins = normalizeEmails(profiles.filter((entry: { id: string }) => optedInIds.has(entry.id)).map((entry: { email: string }) => entry.email));
   if (audience === "all_subscribers_optins") return normalizeEmails([...subscriberEmails, ...memberOptins]);
@@ -140,8 +186,7 @@ async function campaignRecipients(audience: string) {
     return subscriberEmails.filter((email) => !registeredEmails.has(email));
   }
   if (audience === "waitlist_product") {
-    const response = await supabaseRequest("waitlist_entries?status=eq.waiting&select=profiles(email)");
-    const entries = await requireJsonArray(response, "Waitlist");
+    const entries = await pagedRows("waitlist_entries?status=eq.waiting&select=profiles(email)&order=created_at.desc", "Waitlist");
     return normalizeEmails(entries.map((entry: { profiles?: { email?: string } }) => entry.profiles?.email));
   }
   throw new Error("Unsupported email audience.");
@@ -175,20 +220,60 @@ async function sendCampaign(campaignId: string) {
 }
 
 async function sendOrderUpdate(orderId: string) {
-  const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,status,total,carrier,tracking_number,shipping_name,profiles(email,full_name)`);
-  if (!response.ok) throw new Error("Unable to load the order.");
-  const orders = await response.json();
-  const order = orders[0];
-  const email = order?.profiles?.email;
+  const encodedOrderId = encodeURIComponent(orderId);
+  const response = await supabaseRequest(`orders?id=eq.${encodedOrderId}&select=id,order_number,status,total,carrier,tracking_number,shipping_name,customer_email`);
+  let order: Record<string, any> | undefined;
+  if (response.ok) {
+    const orders = await response.json();
+    order = orders[0];
+  } else {
+    const fallback = await supabaseRequest(`orders?id=eq.${encodedOrderId}&select=id,status,total,carrier,tracking_number,shipping_name,profiles(email,full_name)`);
+    if (!fallback.ok) {
+      const detail = textValue(await fallback.text(), 300);
+      throw new Error(`Unable to load the order (${fallback.status})${detail ? `: ${detail}` : "."}`);
+    }
+    const orders = await fallback.json();
+    order = orders[0];
+  }
+  const email = order?.customer_email || order?.profiles?.email;
   if (!order) throw new Error("Order not found.");
   if (!emailPattern.test(String(email || ""))) return { sent: 0, skipped: true };
-  const orderShortId = String(order.id).slice(0, 8);
+  const orderShortId = order.order_number ? `BD-${String(order.order_number).padStart(6, "0")}` : String(order.id).slice(0, 8);
   const tracking = order.tracking_number ? `\nTracking: ${order.carrier ? `${order.carrier} ` : ""}${order.tracking_number}` : "";
-  const greeting = `Hello${order.profiles?.full_name ? ` ${order.profiles.full_name}` : ""},`;
-  const body = `${greeting}\n\nYour Bead Different Co. order ${orderShortId} has been updated.\n\nStatus: ${order.status}${tracking}\n\nThank you,\nBead Different Co.`;
+  const greeting = `Hello${order.shipping_name ? ` ${order.shipping_name}` : ""},`;
   const trackingUrl = orderTrackingUrl(order.carrier, order.tracking_number);
-  const html = brandedHtml(`Order ${orderShortId} updated`, `<p>${escapeHtml(greeting)}</p><p>Your Bead Different Co. order has been updated.</p><div style="margin:22px 0;padding:16px;background:#f7f3f1;border-radius:10px"><p style="margin:0 0 8px"><strong>Status:</strong> ${escapeHtml(order.status)}</p>${order.tracking_number ? `<p style="margin:0"><strong>Tracking:</strong> ${escapeHtml(`${order.carrier ? `${order.carrier} ` : ""}${order.tracking_number}`)}${trackingUrl ? ` · <a href="${escapeHtml(trackingUrl)}" style="color:#8b4261">Track package</a>` : ""}</p>` : ""}</div>`);
-  return sendToMany([String(email)], `Order ${orderShortId} update from Bead Different Co.`, body, `order-update/${order.id}/${order.status}/${order.tracking_number || "none"}`, html);
+  const body = `${greeting}\n\nYour Bead Different Co. order ${orderShortId} has been updated.\n\nStatus: ${order.status}${tracking}${trackingUrl ? `\nTrack with USPS: ${trackingUrl}` : ""}\n\nThank you,\nBead Different Co.`;
+  const trackingCarrier = textValue(order.carrier, 80).toLowerCase();
+  const trackingButtonLabel = trackingCarrier.includes("usps") || trackingCarrier.includes("standard") ? "Track with USPS ↗" : trackingCarrier.includes("ups") ? "Track with UPS ↗" : trackingCarrier.includes("fedex") ? "Track with FedEx ↗" : "Track shipment ↗";
+  const html = brandedHtml(`Order ${orderShortId} updated`, `<p>${escapeHtml(greeting)}</p><p>Your Bead Different Co. order has been updated.</p><div style="margin:22px 0;padding:16px;background:#f7f3f1;border-radius:10px"><p style="margin:0 0 8px"><strong>Status:</strong> ${escapeHtml(order.status)}</p>${order.tracking_number ? `<p style="margin:0"><strong>Tracking:</strong> ${escapeHtml(`${order.carrier ? `${order.carrier} ` : ""}${order.tracking_number}`)}</p>` : ""}${trackingUrl ? `<p style="margin:18px 0 0"><a href="${escapeHtml(trackingUrl)}" style="display:inline-block;background:#4b214f;color:#fff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:700">${trackingButtonLabel}</a></p>` : ""}</div>`);
+  const subject = `Order ${orderShortId} update from Bead Different Co.`;
+  const result = await sendToMany([String(email)], subject, body, `order-update/${order.id}/${order.status}/${order.tracking_number || "none"}`, html);
+  if (result.sent) await saveSentEmail({ orderId: order.id, emailType: "order_update", recipient: String(email), subject, body });
+  return result;
+}
+
+async function sendRefundReceipt(payload: Record<string, unknown>) {
+  const orderId = textValue(payload.orderId, 80);
+  if (!orderId) throw new Error("Order id is required.");
+  const orderResponse = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,order_number,status,total,refunded_amount,customer_email,shipping_name,profiles(email,full_name)`);
+  if (!orderResponse.ok) throw new Error("Unable to load the refunded order.");
+  const order = (await orderResponse.json())[0];
+  if (!order) throw new Error("Order not found.");
+  const email = String(order.customer_email || order.profiles?.email || "").trim().toLowerCase();
+  if (!emailPattern.test(email)) return { sent: 0, skipped: true };
+  const orderShortId = order.order_number ? `BD-${String(order.order_number).padStart(6, "0")}` : String(order.id).slice(0, 8);
+  const refundAmount = Number(payload.refundAmount || 0).toFixed(2);
+  const remaining = Number(payload.remaining ?? Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0))).toFixed(2);
+  const items = Array.isArray(payload.lineItems) ? payload.lineItems as Array<Record<string, unknown>> : [];
+  const lines = items.map((item) => `${textValue(item.name || item.sku || "Item", 240)} · Qty ${Number(item.quantity || 0)} · $${Number(item.amount || 0).toFixed(2)}`);
+  const greeting = `Hello${order.profiles?.full_name ? ` ${textValue(order.profiles.full_name, 160)}` : ""},`;
+  const body = `${greeting}\n\nWe processed a refund for order ${orderShortId}.\n\nRefund total: $${refundAmount}\nRemaining order balance: $${remaining}${lines.length ? `\n\nAdjusted items:\n${lines.join("\n")}` : ""}\n\nPlease allow up to 10 days for the refund to post to your original payment method.\n\nThank you,\nBead Different Co.`;
+  const lineHtml = lines.length ? `<h3 style="margin:24px 0 8px">Adjusted items</h3><ul style="padding-left:20px">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "";
+  const html = brandedHtml(`Refund for order ${orderShortId}`, `<p>${escapeHtml(greeting)}</p><p>We processed a refund for your order.</p><div style="margin:22px 0;padding:16px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:10px"><p style="margin:0 0 8px"><strong>Refund total:</strong> $${escapeHtml(refundAmount)}</p><p style="margin:0"><strong>Remaining order balance:</strong> $${escapeHtml(remaining)}</p></div>${lineHtml}<p style="color:#756d6a">Please allow up to 10 days for the refund to post to your original payment method.</p>`);
+  const subject = `Refund processed for order ${orderShortId}`;
+  const result = await sendToMany([email], subject, body, `refund-receipt/${order.id}/${crypto.randomUUID()}`, html);
+  if (result.sent) await saveSentEmail({ orderId: order.id, emailType: "refund_receipt", recipient: email, subject, body });
+  return result;
 }
 
 async function sendContactResponse(contactId: string, responseBody: string) {
@@ -213,6 +298,7 @@ async function sendContactResponse(contactId: string, responseBody: string) {
     body: JSON.stringify({ admin_response: body, status: "responded", responded_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
   });
   if (!update.ok) throw new Error("The reply was sent, but the contact message could not be updated.");
+  await saveSentEmail({ contactId: message.id, emailType: "contact_response", recipient: email, subject, body: fullBody });
   return { sent: 1, contactId: message.id };
 }
 
@@ -234,7 +320,9 @@ Deno.serve(async (request) => {
       const subject = textValue(payload.subject, 200);
       const body = textValue(payload.body, 10000);
       if (!recipients.length || recipients.length > 20 || !subject || !body) return json({ error: "A valid recipient, subject, and message are required." }, 400);
-      return json(await sendToMany(recipients, subject, body, `direct/${crypto.randomUUID()}`));
+       const result = await sendToMany(recipients, subject, body, `direct/${crypto.randomUUID()}`);
+       for (const recipient of recipients) if (result.sent) await saveSentEmail({ orderId: textValue(payload.orderId, 80) || undefined, requestId: textValue(payload.requestId, 80) || undefined, emailType: "direct", recipient, subject, body });
+       return json(result);
     }
     if (action === "campaign") {
       const campaignId = textValue(payload.campaignId, 80);
@@ -246,6 +334,7 @@ Deno.serve(async (request) => {
       if (!orderId) return json({ error: "Order id is required." }, 400);
       return json(await sendOrderUpdate(orderId));
     }
+    if (action === "refund_receipt") return json(await sendRefundReceipt(payload));
     if (action === "contact_response") {
       const contactId = textValue(payload.contactId, 80);
       const body = textValue(payload.body, 10000);

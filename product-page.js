@@ -153,25 +153,37 @@ async function hydrateProductReviews(item){
   const section=document.querySelector('.product-page-reviews');
   if(!section)return;
   let reviews=[];
+  let totalReviewCount=0;
+  let summaryAverage=0;
   if(window.beadSupabase&&item.databaseId){
-    const result=await window.beadSupabase.from('reviews').select('rating,body,verified_purchase,created_at').eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false});
-    if(result.error)return;
-    reviews=result.data||[];
+    const result=await window.beadSupabase.rpc('get_product_reviews_page',{p_product_id:item.databaseId,p_page_size:20});
+    if(!result.error){
+      reviews=result.data||[];
+      totalReviewCount=Number(reviews[0]?.review_count)||reviews.length;
+      summaryAverage=Number(reviews[0]?.average_rating)||0;
+    }else{
+      const fallback=await window.beadSupabase.from('reviews').select('rating,body,verified_purchase,created_at',{count:'exact'}).eq('product_id',item.databaseId).eq('review_type','item').eq('status','approved').order('created_at',{ascending:false}).range(0,19);
+      if(fallback.error)return;
+      reviews=fallback.data||[];
+      totalReviewCount=Number(fallback.count)||reviews.length;
+    }
   }else if(window.reviewTools){
     reviews=window.reviewTools.read().filter((review)=>review.productId===item.id&&review.status==='approved');
+    totalReviewCount=reviews.length;
   }
   const ratingFor=(review)=>Math.max(0,Math.min(5,Math.round(Number(review.rating)||0)));
   const starsFor=(review)=>'★'.repeat(ratingFor(review))+'☆'.repeat(5-ratingFor(review));
   const dateFor=(review)=>{const date=new Date(review.created_at||review.createdAt||'');return Number.isNaN(date.getTime())?'Date unavailable':date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});};
   const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
-  const average=reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0;
+  const average=summaryAverage|| (reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0);
   if(!reviews.length){section.innerHTML='<h2>Reviews</h2><p>No approved reviews yet.</p>';return;}
-  const reviewCount=`${reviews.length} review${reviews.length===1?'':'s'}`;
-  section.innerHTML=`<div class="product-review-summary"><button type="button" class="product-review-summary-trigger" aria-haspopup="dialog"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span><span><strong>${average.toFixed(1)}/5</strong> · ${reviewCount}</span><span class="product-review-summary-link">Read reviews →</span></button></div><div class="product-review-list"><h2>Reviews · ${average.toFixed(1)}/5</h2>${reviews.map(reviewMarkup).join('')}</div>`;
+  const reviewCount=`${totalReviewCount} review${totalReviewCount===1?'':'s'}`;
+  const latestNote=totalReviewCount>reviews.length?`<p class="product-review-latest-note">Showing the latest ${reviews.length} reviews.</p>`:'';
+  section.innerHTML=`<div class="product-review-summary"><button type="button" class="product-review-summary-trigger" aria-haspopup="dialog"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span><span><strong>${average.toFixed(1)}/5</strong> · ${reviewCount}</span><span class="product-review-summary-link">Read reviews →</span></button></div><div class="product-review-list"><h2>Reviews · ${average.toFixed(1)}/5</h2>${latestNote}${reviews.map(reviewMarkup).join('')}</div>`;
   const dialog=document.createElement('dialog');
   dialog.className='product-reviews-dialog';
   dialog.setAttribute('aria-labelledby','product-reviews-dialog-title');
-  dialog.innerHTML=`<button type="button" class="product-reviews-dialog-close" data-close-product-reviews aria-label="Close reviews">×</button><div class="product-reviews-dialog-content"><p class="kicker">CUSTOMER FEEDBACK</p><h2 id="product-reviews-dialog-title">Reviews · ${average.toFixed(1)}/5</h2><p class="product-reviews-dialog-summary"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span> ${reviewCount}</p><div class="product-review-dialog-list">${reviews.map(reviewMarkup).join('')}</div></div>`;
+  dialog.innerHTML=`<button type="button" class="product-reviews-dialog-close" data-close-product-reviews aria-label="Close reviews">×</button><div class="product-reviews-dialog-content"><p class="kicker">CUSTOMER FEEDBACK</p><h2 id="product-reviews-dialog-title">Reviews · ${average.toFixed(1)}/5</h2><p class="product-reviews-dialog-summary"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span> ${reviewCount}</p>${latestNote}<div class="product-review-dialog-list">${reviews.map(reviewMarkup).join('')}</div></div>`;
   section.append(dialog);
   const closeDialog=()=>typeof dialog.close==='function'?dialog.close():dialog.removeAttribute('open');
   section.querySelector('.product-review-summary-trigger').addEventListener('click',()=>{if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');});
