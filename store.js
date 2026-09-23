@@ -233,7 +233,9 @@ async function loadCatalog(){
         const failed=results.find((result)=>result.error);data=results.flatMap((result)=>result.data||[]);error=failed?.error||null;
       }
     }else{
-      const result=await fetchStorePages(()=>productQueryFor().order('added_at',{ascending:false}).limit(homepage?12:1000));
+      const result=homepage
+        ?await withStoreTimeout(productQueryFor().order('added_at',{ascending:false}).range(0,11),'Homepage products request')
+        :await fetchStorePages(()=>productQueryFor().order('added_at',{ascending:false}).limit(1000));
       data=result.data||[];error=result.error||null;
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
