@@ -276,14 +276,20 @@ async function syncReceiptFees(connection: Record<string, any>, historical = fal
   });
   const lines: Record<string, any>[] = [];
   // New imports are applied to etsy_sale_lines; older imports remain in
-  // etsy_import_sales. Read the compact identity/amount fields from both so
-  // the same fee sync keeps both ledgers accurate.
+  // etsy_import_sales. Only receipts returned by Etsy can receive fees, so
+  // filter the local reads by those receipt IDs instead of downloading every
+  // sale line in the time window and discarding most of them afterward.
+  const receiptIds = [...feesByReceipt.keys()];
+  const receiptChunks = Array.from({ length: Math.ceil(receiptIds.length / 100) }, (_, index) => receiptIds.slice(index * 100, index * 100 + 100));
   for (const table of ['etsy_sale_lines', 'etsy_import_sales']) {
-    for (let offset = 0; ; offset += 1000) {
-      const fields = table === 'etsy_import_sales' ? 'id,batch_id,external_order_id,external_line_id,gross_revenue' : 'id,external_order_id,external_line_id,etsy_sku,sale_date,status,quantity,refunded_quantity,gross_revenue';
-      const page = await database(`${table}?sale_date=gte.${encodeURIComponent(since)}&sale_date=lt.${encodeURIComponent(until)}&select=${fields}&order=external_order_id.asc,external_line_id.asc&limit=1000&offset=${offset}`);
-      page.forEach((line: Record<string, any>) => lines.push({ ...line, fee_table: table }));
-      if (page.length < 1000) break;
+    for (const receiptChunk of receiptChunks) {
+      const receiptFilter = receiptChunk.map((receiptId) => encodeURIComponent(receiptId)).join(',');
+      for (let offset = 0; ; offset += 1000) {
+        const fields = table === 'etsy_import_sales' ? 'id,batch_id,external_order_id,external_line_id,gross_revenue' : 'id,external_order_id,external_line_id,etsy_sku,sale_date,status,quantity,refunded_quantity,gross_revenue';
+        const page = await database(`${table}?external_order_id=in.(${receiptFilter})&sale_date=gte.${encodeURIComponent(since)}&sale_date=lt.${encodeURIComponent(until)}&select=${fields}&order=external_order_id.asc,external_line_id.asc&limit=1000&offset=${offset}`);
+        page.forEach((line: Record<string, any>) => lines.push({ ...line, fee_table: table }));
+        if (page.length < 1000) break;
+      }
     }
   }
   const linesByReceipt = new Map<string, Record<string, any>[]>();
