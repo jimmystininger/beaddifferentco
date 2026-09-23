@@ -3128,9 +3128,10 @@ const disabledAdminProductDataObserver=new MutationObserver(()=>{
 disabledAdminProductDataObserver.observe(document.body,{childList:true,subtree:true});
 document.querySelectorAll('#cloud-item-form').forEach((form)=>preserveDisabledAdminProductFields(form));
 
-// Product history can grow quickly during setup.  The initial history renderer
-// creates the section, then this canonical enhancement loads the complete
-// product history and presents it in stable, client-side pages.
+// Product history can grow quickly during setup. The initial history renderer
+// creates the section, then this canonical enhancement reads bounded chunks
+// from each history source and merges them into stable pages. This keeps the
+// complete history available without downloading it all on the first view.
 const enhanceAdminInventoryHistoryPagination=async(section)=>{
   if(!section||section.dataset.historyPagination)return;
   const form=section.closest('#cloud-item-form');
@@ -3138,34 +3139,57 @@ const enhanceAdminInventoryHistoryPagination=async(section)=>{
   if(!productId)return;
   section.dataset.historyPagination='loading';
   try{
-    const [changeRows,adjustmentRows]=await Promise.all([
-      fetchAdminRowsAll(()=>cloudAdmin().from('product_change_history').select('id,inventory_sku,field_name,previous_value,new_value,change_type,note,created_at').eq('product_id',productId).order('created_at',{ascending:false})),
-      fetchAdminRowsAll(()=>cloudAdmin().from('inventory_adjustments').select('id,inventory_sku,quantity_delta,quantity_after,note,adjustment_type,cost_impact,created_at').eq('product_id',productId).order('created_at',{ascending:false}))
-    ]);
     if(!section.isConnected)return;
-    const entries=[
-      ...(changeRows||[]).map((entry)=>({...entry,historyType:'change'})),
-      ...(adjustmentRows||[]).map((entry)=>({inventory_sku:entry.inventory_sku,field_name:'Inventory quantity',previous_value:String(Number(entry.quantity_after)-Number(entry.quantity_delta)),new_value:String(entry.quantity_after),change_type:'updated',note:entry.note,adjustment_type:entry.adjustment_type,cost_impact:entry.cost_impact,created_at:entry.created_at,historyType:'adjustment'}))
-    ].sort((first,second)=>Date.parse(second.created_at)-Date.parse(first.created_at));
-    const visibleEntries=entries.filter((entry)=>adminHistoryValue(entry.previous_value)!==adminHistoryValue(entry.new_value));
     const formatEntry=(entry)=>'<li><strong>'+adminSafe(entry.field_name)+'</strong><span>'+adminSafe(entry.inventory_sku||'Product')+' · '+new Date(entry.created_at).toLocaleString()+' · '+adminSafe(entry.change_type)+'</span><p>Previous: '+adminSafe(entry.previous_value??'—')+' → New: '+adminSafe(entry.new_value??'—')+(entry.note?' · '+adminSafe(entry.note):'')+(entry.historyType==='adjustment'?' · Source: '+adminSafe(String(entry.adjustment_type||'manual').replace(/_/g,' '))+(Number(entry.cost_impact)?' · Cost impact: $'+Number(entry.cost_impact).toFixed(2):''):'')+'</p></li>';
     const pageSize=25;
-    let page=1;
+    const chunkSize=50;
+    const state={buffers:{changes:[],adjustments:[]},offsets:{changes:0,adjustments:0},exhausted:{changes:false,adjustments:false},pages:[],page:1,loading:false};
+    const normalizeChanges=(rows)=>rows.map((entry)=>({...entry,historyType:'change'})).filter((entry)=>adminHistoryValue(entry.previous_value)!==adminHistoryValue(entry.new_value));
+    const normalizeAdjustments=(rows)=>rows.map((entry)=>({id:entry.id,inventory_sku:entry.inventory_sku,field_name:'Inventory quantity',previous_value:String(Number(entry.quantity_after)-Number(entry.quantity_delta)),new_value:String(entry.quantity_after),change_type:'updated',note:entry.note,adjustment_type:entry.adjustment_type,cost_impact:entry.cost_impact,created_at:entry.created_at,historyType:'adjustment'})).filter((entry)=>adminHistoryValue(entry.previous_value)!==adminHistoryValue(entry.new_value));
+    const fetchChunk=async(kind)=>{
+      if(state.exhausted[kind])return;
+      const table=kind==='changes'?'product_change_history':'inventory_adjustments';
+      const select=kind==='changes'?'id,inventory_sku,field_name,previous_value,new_value,change_type,note,created_at':'id,inventory_sku,quantity_delta,quantity_after,note,adjustment_type,cost_impact,created_at';
+      const offset=state.offsets[kind];
+      const result=await cloudAdmin().from(table).select(select).eq('product_id',productId).order('created_at',{ascending:false}).order('id',{ascending:false}).range(offset,offset+chunkSize-1);
+      if(result.error)throw result.error;
+      const rows=Array.isArray(result.data)?result.data:[];
+      state.offsets[kind]+=rows.length;
+      if(rows.length<chunkSize)state.exhausted[kind]=true;
+      state.buffers[kind].push(...(kind==='changes'?normalizeChanges(rows):normalizeAdjustments(rows)));
+    };
+    const ensureBuffers=async()=>{
+      const pending=Object.keys(state.buffers).filter((kind)=>!state.exhausted[kind]&&state.buffers[kind].length<pageSize);
+      await Promise.all(pending.map((kind)=>fetchChunk(kind)));
+    };
+    const takeNextPage=async()=>{
+      await ensureBuffers();
+      const entries=[...state.buffers.changes,...state.buffers.adjustments].sort((first,second)=>{const byDate=Date.parse(second.created_at)-Date.parse(first.created_at);return byDate||String(second.id||'').localeCompare(String(first.id||''));});
+      const next=entries.slice(0,pageSize);
+      next.forEach((entry)=>{const source=entry.historyType==='change'?state.buffers.changes:state.buffers.adjustments;const index=source.indexOf(entry);if(index>=0)source.splice(index,1);});
+      state.pages.push(next);
+      return next;
+    };
     const list=document.createElement('ul');
     const pager=document.createElement('div');
     pager.className='admin-pagination';
     section.querySelector('ul')?.replaceWith(list);
     section.append(pager);
-    const draw=()=>{
-      const pageCount=Math.max(1,Math.ceil(visibleEntries.length/pageSize));
-      page=Math.min(page,pageCount);
-      const start=(page-1)*pageSize;
-      list.innerHTML=visibleEntries.length?visibleEntries.slice(start,start+pageSize).map(formatEntry).join(''):'<li>No product changes recorded.</li>';
-      pager.innerHTML='<button type="button" data-history-page="prev" '+(page<=1?'disabled':'')+'>Previous</button><span>Page '+page+' of '+pageCount+' · '+visibleEntries.length+' entries</span><button type="button" data-history-page="next" '+(page>=pageCount?'disabled':'')+'>Next</button>';
-      pager.querySelector('[data-history-page="prev"]').onclick=()=>{if(page>1){page-=1;draw();}};
-      pager.querySelector('[data-history-page="next"]').onclick=()=>{if(page<pageCount){page+=1;draw();}};
+    const draw=async(targetPage=state.page)=>{
+      if(state.loading)return;
+      state.loading=true;
+      try{
+        while(state.pages.length<targetPage){await takeNextPage();if(!state.pages[state.pages.length-1]?.length)break;}
+        state.page=Math.min(targetPage,Math.max(1,state.pages.length));
+        const visibleEntries=state.pages[state.page-1]||[];
+        const hasMore=state.pages.length>state.page||(!state.exhausted.changes||!state.exhausted.adjustments||state.buffers.changes.length||state.buffers.adjustments.length);
+        list.innerHTML=visibleEntries.length?visibleEntries.map(formatEntry).join(''):'<li>No product changes recorded.</li>';
+        pager.innerHTML='<button type="button" data-history-page="prev" '+(state.page<=1?'disabled':'')+'>Previous</button><span>Page '+state.page+(hasMore?' · More available':' · End of history')+'</span><button type="button" data-history-page="next" '+(hasMore?'':'disabled')+'>Next</button>';
+        pager.querySelector('[data-history-page="prev"]').onclick=()=>{if(state.page>1)void draw(state.page-1);};
+        pager.querySelector('[data-history-page="next"]').onclick=()=>{if(hasMore)void draw(state.page+1);};
+      }finally{state.loading=false;}
     };
-    draw();
+    await draw();
     section.dataset.historyPagination='ready';
   }catch(error){
     section.dataset.historyPagination='error';
