@@ -2794,7 +2794,8 @@ document.addEventListener('input',(event)=>{if(event.target.matches('#cloud-item
 // existing product, option, inventory, category-filter, and assignment data.
 (()=>{
   const escapeReport=(value)=>String(value??'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const loadRows=async(table,select)=>{const result=await window.beadSupabase.from(table).select(select).range(0,499);if(result.error)throw result.error;return result.data||[];};
+  const reportRowsCache=new Map();
+  const loadRows=async(table,select,forceFresh=false)=>{const key=table+'|'+select;const cached=reportRowsCache.get(key);if(!forceFresh&&cached&&Date.now()-cached.at<30000)return cached.data;const result=await window.beadSupabase.from(table).select(select).range(0,499);if(result.error)throw result.error;const rows=result.data||[];reportRowsCache.set(key,{at:Date.now(),data:rows});return rows;};
   const install=()=>{
     const tabs=document.querySelector('.inventory-tabs');
     if(!tabs||tabs.dataset.canonicalExceptionsInstalled==='true'||!window.beadSupabase)return;
@@ -2804,19 +2805,19 @@ document.addEventListener('input',(event)=>{if(event.target.matches('#cloud-item
       button.addEventListener('click',()=>void render(key));
     });
   };
-  const render=async(kind)=>{
+  const render=async(kind,forceFresh=false)=>{
     const view=document.querySelector('#inventory-view');if(!view)return;
     view.innerHTML='<div class="admin-empty admin-loading" role="status">Loading canonical report…</div>';
     try{
       const emptyRows=()=>Promise.resolve({data:[],error:null});
       const needsFilterData=kind==='missing-filter-assignments';
       const [products,options,inventory,assignments,filterLinks,definitions]=await Promise.all([
-        loadRows('products','id,name,external_id,sku,category_slug,visible,waitlist_enabled,promo_price,promo_starts_at,promo_ends_at'),
-        loadRows('product_option_values','id,product_id,label,sku,inventory_sku,quantity,product_options!inner(product_id)'),
-        loadRows('inventory_skus','id,sku,name,quantity_on_hand,reorder_point,reserve_quantity,item_type,discontinued,category,price,cost,preferred_vendor'),
-        needsFilterData?loadRows('product_filter_assignments','product_id,filter_value_id,inventory_sku_id'):emptyRows(),
-        needsFilterData?loadRows('storefront_filter_categories','category_slug,filter_id'):emptyRows(),
-        needsFilterData?loadRows('storefront_filter_definitions','id,key,label,active,sort_order,storefront_filter_values(id,filter_id,label,active,sort_order)'):emptyRows()
+        loadRows('products','id,name,external_id,sku,category_slug,visible,waitlist_enabled,promo_price,promo_starts_at,promo_ends_at',forceFresh),
+        loadRows('product_option_values','id,product_id,label,sku,inventory_sku,quantity,product_options!inner(product_id)',forceFresh),
+        loadRows('inventory_skus','id,sku,name,quantity_on_hand,reorder_point,reserve_quantity,item_type,discontinued,category,price,cost,preferred_vendor',forceFresh),
+        needsFilterData?loadRows('product_filter_assignments','product_id,filter_value_id,inventory_sku_id',forceFresh):emptyRows(),
+        needsFilterData?loadRows('storefront_filter_categories','category_slug,filter_id',forceFresh):emptyRows(),
+        needsFilterData?loadRows('storefront_filter_definitions','id,key,label,active,sort_order,storefront_filter_values(id,filter_id,label,active,sort_order)',forceFresh):emptyRows()
       ]);
       const productById=new Map(products.map((row)=>[row.id,row]));
       const inventoryBySku=new Map(inventory.filter((row)=>row.sku).map((row)=>[String(row.sku).trim().toLowerCase(),row]));
@@ -2838,7 +2839,7 @@ document.addEventListener('input',(event)=>{if(event.target.matches('#cloud-item
          const rows=[];inventory.forEach((record)=>{const reasons=[],isParent=String(record.item_type||'Inventory').toLowerCase()==='non-inventory';const qty=available(record);if(record.discontinued===true&&qty>0)reasons.push('Discontinued stock remains');if(!isParent&&qty<=Number(record.reorder_point||0))reasons.push('Low stock');if(!isParent&&!record.cost&&record.cost!==0)reasons.push('Missing cost');if(!record.price&&record.price!==0)reasons.push('Missing price');if(!isParent&&!record.preferred_vendor)reasons.push('Missing vendor');const linked=placements.some((placement)=>String(placement.inventory_sku||placement.sku||'').trim().toLowerCase()===String(record.sku||'').trim().toLowerCase());if(!linked)reasons.push('No product-page placement');if(reasons.length)rows.push([record.name||record.sku,record.sku,qty,reasons.join('; ')]);});
         view.innerHTML=table('Inventory needs attention','Canonical inventory exceptions requiring operational review.',['Item','SKU','Available','Reason'],rows,'No inventory exceptions found.');
       }
-      view.querySelector('[data-report-refresh]')?.addEventListener('click',()=>void render(kind));
+      view.querySelector('[data-report-refresh]')?.addEventListener('click',()=>void render(kind,true));
     }catch(error){view.innerHTML='<div class="admin-empty">Unable to load report: '+escapeReport(error.message||'Unknown database error.')+'</div>';}
   };
   new MutationObserver(install).observe(document.body,{childList:true,subtree:true});
