@@ -1038,6 +1038,9 @@ async function renderInventoryTools(tab='low'){document.body.dataset.inventoryTa
     const needsOptions=['sku','audit'].includes(tab);
      const auditCatalog=tab==='audit';
     const needsOrders=tab==='free-shipping';
+    // Free-shipping profitability is calculated from order rows only. Do not
+    // download the entire canonical inventory table just to render that tab.
+    const needsInventory=tab!=='free-shipping';
     const needsWebsiteSalesMetrics=['sales','packs'].includes(tab);
     const needsEtsySales=['sales','packs','random','audit'].includes(tab);
     const needsManual=['manual','random'].includes(tab);
@@ -1061,7 +1064,7 @@ async function renderInventoryTools(tab='low'){document.body.dataset.inventoryTa
        needsWebsiteSalesMetrics?adminCachedRows('inventory:website-sales-metrics',()=>window.beadSupabase.rpc('admin_website_inventory_sales_metrics')):emptyResult(),
        emptyResult(),
        needsEvents?cachedRows('analytics-events',()=>window.beadSupabase.from('analytics_events').select('event_type,product_id').order('created_at')):emptyResult(),
-       cachedRows('inventory-skus:'+inventoryFields,()=>window.beadSupabase.from('inventory_skus').select(inventoryFields).order('id')),
+       needsInventory?cachedRows('inventory-skus:'+inventoryFields,()=>window.beadSupabase.from('inventory_skus').select(inventoryFields).order('id')):emptyResult(),
        needsEtsySales?cachedRows('bundle-components',()=>window.beadSupabase.from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity').order('sort_order')):emptyResult(),
        needsEtsySales?adminCachedRows('inventory:etsy-sales-metrics',()=>window.beadSupabase.rpc('admin_etsy_inventory_sales_metrics')):emptyResult(),
        needsManual?cachedRows('manual-allocations',()=>window.beadSupabase.from('inventory_manual_pack_allocations').select('id,source_type,etsy_sale_line_id,order_item_id,parent_sku,units,status,allocations,note,created_at').eq('status','pending').order('created_at',{ascending:false})):emptyResult()
