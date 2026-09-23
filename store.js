@@ -53,6 +53,7 @@ const storefrontCategoryRequest=()=>{
 };
 const storefrontListingPage=()=>document.body.dataset.categoryLayout==='true'||['Category','Shop All','New Arrivals','Acrylic Beads','Silicone Beads','Rhinestones','Flatbacks','Pen Supplies','Mixes & Kits','Clearance','Focal Beads'].includes(document.body.dataset.page||'');
 const storefrontCategoryListing={page:1,pageSize:24,total:0,request:storefrontCategoryRequest()};
+const storefrontCategoryPageCache=new Map();
 const mapStorefrontListingRows=(rows,optionRows=[])=>rows.map((item)=>({
   ...item,
   id:item.external_id||item.id,
@@ -86,6 +87,20 @@ async function loadStorefrontCategoryPage(pageNumber=1){
   const client=await ensureSupabaseClient();
   if(!client){catalog=[];window.storeCatalogError=new Error('The live store catalog could not be connected.');return catalog;}
   const page=Math.max(1,Math.floor(Number(pageNumber)||1));
+  const pageCacheKey=JSON.stringify({page,request:storefrontCategoryListing.request});
+  const cachedPage=storefrontCategoryPageCache.get(pageCacheKey);
+  if(cachedPage&&Date.now()-cachedPage.timestamp<60000){
+    catalog=[...(cachedPage.catalog||[])];
+    storefrontCategoryListing.page=page;
+    storefrontCategoryListing.total=Number(cachedPage.total)||0;
+    window.storeCategoryPagination={
+      page:()=>storefrontCategoryListing.page,
+      pageSize:()=>storefrontCategoryListing.pageSize,
+      total:()=>storefrontCategoryListing.total,
+      load:loadStorefrontCategoryPage
+    };
+    return catalog;
+  }
   let result=await withStoreTimeout(client.rpc('get_storefront_category_products_v2',{
     category_slugs:storefrontCategoryListing.request.categorySlugs,
     page_size:storefrontCategoryListing.pageSize,
@@ -96,13 +111,14 @@ async function loadStorefrontCategoryPage(pageNumber=1){
   if(result.error){catalog=[];window.storeCatalogError=result.error;return catalog;}
   const rows=result.data||[];
   catalog=mapStorefrontListingRows(rows);
+  let cachePage=true;
   try{
     const optionResult=await fetchStoreBatches(rows.map((item)=>item.id),(batch)=>client.from('product_options').select('id,product_id,name,required,sort_order,product_option_values(id,inventory_sku_id,sort_order)').in('product_id',batch).order('sort_order'));
     if(!optionResult.error){
       const hydratedOptionRows=await hydrateStorefrontOptionInventory(client,optionResult.data||[]);
       catalog=mapStorefrontListingRows(rows,hydratedOptionRows);
-    }else window.storeCatalogOptionsError=optionResult.error;
-  }catch(error){window.storeCatalogOptionsError=error;}
+    }else{window.storeCatalogOptionsError=optionResult.error;cachePage=false;}
+  }catch(error){window.storeCatalogOptionsError=error;cachePage=false;}
   storefrontCategoryListing.page=page;
   storefrontCategoryListing.total=Number(rows[0]?.total_count)||0;
   window.storeCategoryPagination={
@@ -111,6 +127,7 @@ async function loadStorefrontCategoryPage(pageNumber=1){
     total:()=>storefrontCategoryListing.total,
     load:loadStorefrontCategoryPage
   };
+  if(cachePage)storefrontCategoryPageCache.set(pageCacheKey,{timestamp:Date.now(),catalog:[...catalog],total:storefrontCategoryListing.total});
   return catalog;
 }
 async function loadStorefrontCategoryFilters(categorySlug){

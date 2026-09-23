@@ -1524,7 +1524,10 @@ const renderAdminRecipeSummaries=async(form)=>{if(!form)return;const requestId=S
 const ensureAdminQtySoldBadgeChoice=(form,product=null)=>{const group=form.querySelector('.admin-badge-group-qty-sold-by');if(!group)return;let combined=group.querySelector('input[value="Single Bead & Multi-Pack"]');if(!combined){const label=document.createElement('label');label.className='admin-badge-option admin-badge-option-single-bead-multi-pack';label.innerHTML='<input type="checkbox" name="badges" value="Single Bead & Multi-Pack"> <span class="product-badge badge-single-bead-multi-pack">Single Bead &amp; Multi-Pack</span>';group.append(label);combined=label.querySelector('input');}if(group.dataset.singleBadgeChoice)return;group.dataset.singleBadgeChoice='true';group.addEventListener('change',(event)=>{if(!event.target.matches('input[name="badges"]'))return;if(event.target.checked)group.querySelectorAll('input[name="badges"]').forEach((input)=>{if(input!==event.target)input.checked=false;});});if(product?.badges?.includes('Single Bead & Multi-Pack'))combined.checked=true;};
 const fetchAdminRowsAll=async(buildQuery)=>{
   const signature=String(buildQuery);
-  const cacheable=/\.from\('(products|orders|business_expenses)'/.test(signature)&&!/[.]eq\(|[.]in\(|[.]gte\(|[.]lt\(/.test(signature);
+  // Read-only admin reports reuse the same reference tables across tab
+  // switches. Keep those bounded/paginated reads cached for the same short
+  // window as the existing products/orders/expenses reports.
+  const cacheable=/\.from\('(products|orders|business_expenses|inventory_skus|product_option_values|product_etsy_mappings|product_etsy_mapping_components|inventory_bundle_components)'/.test(signature)&&!/[.]eq\(|[.]in\(|[.]gte\(|[.]lt\(/.test(signature);
   const load=async()=>{const rows=[];for(let page=0;;page+=1){const result=await buildQuery().range(page*1000,page*1000+999);if(result.error)throw result.error;rows.push(...(result.data||[]));if((result.data||[]).length<1000)return{data:rows,error:null};}};
   if(!cacheable)return(await load()).data;
   const result=await adminCachedRows('admin-full:'+signature,load);
