@@ -75,7 +75,7 @@ async function renderPromos(){
   const cloud=Boolean(window.beadSupabase);
   const readLocal=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentPromos')||'[]');}catch(error){return[];}};
   const saveLocal=(promos)=>localStorage.setItem('beadDifferentPromos',JSON.stringify(promos));
-  const loadCloud=async()=>{const result=await cloudAdmin().from('promo_codes').select('id,title,code,discount_type,value,mode,active,starts_at,ends_at,show_homepage_banner,details,banner_text,banner_link,created_at').order('created_at',{ascending:false}).range(0,199);if(result.error)throw result.error;return result.data||[];};
+  const loadCloud=async()=>{const result=await adminCachedRows('admin-promos',()=>cloudAdmin().from('promo_codes').select('id,title,code,discount_type,value,mode,active,starts_at,ends_at,show_homepage_banner,details,banner_text,banner_link,created_at').order('created_at',{ascending:false}).range(0,199));if(result.error)throw result.error;return result.data||[];};
   let promos=cloud?await loadCloud():readLocal();
   let editingIndex=null;
   const discountLabel=(promo)=>promo.mode==='banner'?'Banner only':promo.discount_type==='percent'||promo.type==='percent'?`${Number(promo.value||0)}% off`:`$${Number(promo.value||0).toFixed(2)} off`;
@@ -153,6 +153,7 @@ async function renderPromos(){
             if(fields.create_email_draft==='on'){
               try{await createEmailDraft(result.data||promo);}catch(error){campaignError=error.message||'Unknown error.';}
             }
+            clearAdminRowsCache();
             promos=await loadCloud();
           }else{
             promos[editingIndex]=promo;
@@ -170,6 +171,7 @@ async function renderPromos(){
               if(campaign.error)throw campaign.error;
             }catch(error){campaignError=error.message||'Unknown error.';}
           }
+          clearAdminRowsCache();
           promos=await loadCloud();
         }else{
           promos.push(promo);
@@ -184,9 +186,9 @@ async function renderPromos(){
     panel.querySelectorAll('[data-edit-promo]').forEach((button)=>button.addEventListener('click',()=>{editingIndex=Number(button.dataset.editPromo);draw();panel.querySelector('.promo-form')?.scrollIntoView({block:'start',behavior:'smooth'});panel.querySelector('[name="title"]')?.focus();}));
     panel.querySelector('[data-cancel-promo-edit]')?.addEventListener('click',()=>{editingIndex=null;draw();});
     panel.querySelectorAll('[data-prepare-promo-email]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.preparePromoEmail)];const status=button.parentElement.querySelector(`[data-promo-email-status="${button.dataset.preparePromoEmail}"]`);if(!promo||!status)return;button.disabled=true;status.textContent='Preparing…';try{await createEmailDraft(promo);status.textContent='Draft created. Review it in Email drafts.';}catch(error){status.textContent=`Draft was not created: ${error.message||'Unknown error.'}`;}finally{button.disabled=false;}}));
-    panel.querySelectorAll('[data-toggle-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromo)];if(!promo)return;const active=promo.active===false;if(cloud){const result=await cloudAdmin().from('promo_codes').update({active}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not updated: ${result.error.message}`));return;}promos=await loadCloud();}else{promo.active=active;saveLocal(promos);}editingIndex=null;draw();}));
-    panel.querySelectorAll('[data-toggle-promo-banner]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromoBanner)];if(!promo)return;const show=promo.show_homepage_banner!==true;if(cloud){const result=await cloudAdmin().from('promo_codes').update({show_homepage_banner:show}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo banner was not updated: ${result.error.message}`));return;}promos=await loadCloud();}else{promo.show_homepage_banner=show;saveLocal(promos);}editingIndex=null;draw();}));
-    panel.querySelectorAll('[data-delete-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.deletePromo)];if(!promo)return;if(cloud){const result=await cloudAdmin().from('promo_codes').delete().eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not deleted: ${result.error.message}`));return;}promos=await loadCloud();}else{promos.splice(Number(button.dataset.deletePromo),1);saveLocal(promos);}editingIndex=null;draw();}));
+    panel.querySelectorAll('[data-toggle-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromo)];if(!promo)return;const active=promo.active===false;if(cloud){const result=await cloudAdmin().from('promo_codes').update({active}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not updated: ${result.error.message}`));return;}clearAdminRowsCache();promos=await loadCloud();}else{promo.active=active;saveLocal(promos);}editingIndex=null;draw();}));
+    panel.querySelectorAll('[data-toggle-promo-banner]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.togglePromoBanner)];if(!promo)return;const show=promo.show_homepage_banner!==true;if(cloud){const result=await cloudAdmin().from('promo_codes').update({show_homepage_banner:show}).eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo banner was not updated: ${result.error.message}`));return;}clearAdminRowsCache();promos=await loadCloud();}else{promo.show_homepage_banner=show;saveLocal(promos);}editingIndex=null;draw();}));
+    panel.querySelectorAll('[data-delete-promo]').forEach((button)=>button.addEventListener('click',async()=>{const promo=promos[Number(button.dataset.deletePromo)];if(!promo)return;if(cloud){const result=await cloudAdmin().from('promo_codes').delete().eq('id',promo.id);if(result.error){panel.querySelector('[data-promo-status]')?.replaceChildren(document.createTextNode(`Promo was not deleted: ${result.error.message}`));return;}clearAdminRowsCache();promos=await loadCloud();}else{promos.splice(Number(button.dataset.deletePromo),1);saveLocal(promos);}editingIndex=null;draw();}));
   };
   draw();
 }
