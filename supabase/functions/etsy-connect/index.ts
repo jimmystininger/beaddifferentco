@@ -129,7 +129,7 @@ async function concurrentSettled<T, R>(items: T[], limit: number, task: (item: T
   return output;
 }
 async function importConnection() {
-  const connection = (await database('etsy_connections?id=eq.true'))[0];
+  const connection = (await database('etsy_connections?id=eq.true&select=id,shop_id,access_token,refresh_token,expires_at,refresh_lock_until'))[0];
   if (!connection) throw new Error('Connect Etsy before preparing an import.');
   return refreshConnection(connection);
 }
@@ -554,7 +554,10 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
       return { etsy_sku: variantCanonical, one_pk_sku: variantOneSku, pack_size: variantPackSize, label: variant.label, quantity: variant.quantity, manual_recipe_required: variantManual, recipe_components: [] };
     });
     if (family.length) await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', { sku_filter_definitions: [{ label: 'Quantity', options: Object.fromEntries(family.map((variant) => [variant.one_pk_sku, variant.label || `${variant.pack_size} ${variant.pack_size === 1 ? 'Bead' : 'Beads'}`])) }] }, 'return=minimal');
-    for (const variant of variantRows.slice(1)) {
+    // Repair every Etsy variation, including the first one. Older imports
+    // could leave the first 1PK/parent pair incomplete, and skipping index 0
+    // made that state permanent on every later scan.
+    for (const variant of variantRows) {
       const variantCanonical = normalizeSku(variant.sku);
       if (!variantCanonical) continue;
       const variantOneSku = onePackSkuFor(variantCanonical, listingId, title);
@@ -567,10 +570,10 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
       if (!variantManualRecipe && variantPackSize > 1 && variantCanonical !== variantOneSku) await database('inventory_bundle_components?on_conflict=bundle_sku_id,component_sku_id', 'POST', [{ bundle_sku_id: variantParent.id, component_sku_id: physicalChild.id, quantity: variantPackSize, sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
       if (option?.id) {
         const optionValues = await database(`product_option_values?option_id=eq.${encodeURIComponent(String(option.id))}&inventory_sku_id=eq.${encodeURIComponent(String(physicalChild.id))}&select=id&limit=1`);
-        if (!optionValues[0]) await database('product_option_values', 'POST', { option_id: option.id, label: variant.label || `${variantPackSize} ${variantPackSize === 1 ? 'Bead' : 'Beads'}`, price_delta: 0, sku: variantOneSku, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: 1, quantity: variant.quantity * variantPackSize, low_stock_threshold: 0, unit_type: 'Each', image_url: images[0] || null, sort_order: 0 }, 'return=minimal');
+        if (!optionValues[0]) await database('product_option_values', 'POST', { option_id: option.id, label: variant.label || `${variantPackSize} ${variantPackSize === 1 ? 'Bead' : 'Beads'}`, price_delta: variant.price - listingPrice, sku: variantOneSku, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: 1, quantity: variant.quantity * variantPackSize, low_stock_threshold: 0, unit_type: 'Each', image_url: images[0] || null, sort_order: variantRows.indexOf(variant) }, 'return=minimal');
       }
       const variantMappingRows = await database(`product_etsy_mappings?product_id=eq.${encodeURIComponent(String(product.id))}&etsy_sku=eq.${encodeURIComponent(variantCanonical)}&select=id&limit=1`);
-      const variantMapping = variantMappingRows[0] || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: Math.max(1, variantPackSize), active: true, sort_order: 0 }))[0];
+      const variantMapping = variantMappingRows[0] || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: Math.max(1, variantPackSize), active: true, sort_order: variantRows.indexOf(variant) }))[0];
       if (variantMapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: variantMapping.id, inventory_sku_id: physicalChild.id, inventory_sku: variantOneSku, inventory_units: Math.max(1, variantPackSize), sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
     }
     const existingListingRows = await database(`etsy_import_listings?external_listing_id=eq.${encodeURIComponent(listingId)}&select=id,raw_payload&limit=1`);

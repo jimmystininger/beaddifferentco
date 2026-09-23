@@ -421,7 +421,7 @@ const durableCartToken=()=>{let token=localStorage.getItem(storeKeys.cartToken)|
 const durableCartId=()=>String(localStorage.getItem(storeKeys.cartId)||'').trim();
 const setDurableCartId=(id)=>{if(id)localStorage.setItem(storeKeys.cartId,String(id));};
 async function ensureDurableCart(){const client=await ensureSupabaseClient();if(!client)return null;const token=durableCartToken();const result=await withStoreTimeout(client.rpc('get_or_create_storefront_cart',{p_guest_token:token}),'Cart identity request');if(result.error)throw result.error;const cart=result.data||{};setDurableCartId(cart.id);return{...cart,guestToken:cart.guestToken||token};}
-async function resolveProductId(id){const item=findProduct(id);if(item?.databaseId)return item.databaseId;const {data}=await window.beadSupabase.from('products').select('id').eq('external_id',id).maybeSingle();return data?.id||id;}
+async function resolveProductId(id){const item=findProduct(id);const key=String(id||'').trim();if(item?.databaseId){if(key)storefrontProductIdByExternalId.set(key,item.databaseId);return item.databaseId;}if(!key)return id;const cached=storefrontProductIdByExternalId.get(key);if(cached)return cached;const {data}=await window.beadSupabase.from('products').select('id').eq('external_id',key).maybeSingle();if(data?.id)storefrontProductIdByExternalId.set(key,data.id);return data?.id||id;}
 const notifyStoreSyncError=(error)=>window.dispatchEvent(new CustomEvent('bead-store-sync-error',{detail:{message:error?.message||'Unable to sync saved store data.'}}));
 let storeSyncPending=Promise.resolve();
 const queueStoreSync=(operation)=>{storeSyncPending=storeSyncPending.then(()=>operation()).catch((error)=>{notifyStoreSyncError(error);});return storeSyncPending;};
