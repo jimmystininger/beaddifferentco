@@ -9,6 +9,7 @@ async function invokeStoreEmail(payload){
   }
   if(result.data?.error)throw new Error(result.data.error);
   const data=result.data||{};
+  if(data.skipped)throw new Error('The order does not have a valid customer email address.');
   if(data.failures?.length&&!data.sent)throw new Error(data.failures[0]);
   return data;
 }
@@ -22,6 +23,9 @@ const closeEmailComposer=(dialog)=>{if(dialog?.open)dialog.close();dialog?.remov
 const emailComposer=async(button)=>{
   const to=String(button.dataset.emailTo||'').trim();
   if(!to)return;
+  const requestCard=button.closest('.admin-order-support-request');
+  const requestId=button.dataset.emailRequestId||requestCard?.querySelector('[data-order-support-note-entry]')?.dataset.orderSupportNoteEntry||'';
+  const orderId=button.dataset.emailOrderId||requestCard?.querySelector('[data-open-admin-order]')?.dataset.openAdminOrder||'';
   const recipient=String(button.dataset.emailName||to).replace(/<[^>]*>/g,'').trim()||to;
   const subject=String(button.dataset.emailSubject||'Message from Bead Different Co.').trim();
   const itemLink=String(button.dataset.emailLink||'').trim();
@@ -41,7 +45,10 @@ const emailComposer=async(button)=>{
     sendButton.disabled=true;
     status.textContent='Sending…';
     try{
-      await invokeStoreEmail({action:'direct',to,subject:form.elements.subject.value.trim(),body:form.elements.body.value});
+      const sentSubject=form.elements.subject.value.trim();
+      const sentBody=form.elements.body.value;
+      await invokeStoreEmail({action:'direct',to,subject:sentSubject,body:sentBody,orderId,requestId});
+      if(requestId&&window.beadSupabase){const activity=await window.beadSupabase.from('order_support_request_events').insert({request_id:requestId,order_id:orderId||null,event_type:'email_response',body:`Email sent to ${to}: ${sentSubject}`});if(activity.error)console.warn('Email sent, but request activity was not recorded.',activity.error);}
       status.textContent='Sent with Resend.';
       button.textContent='Sent';
       setTimeout(()=>closeEmailComposer(dialog),700);
