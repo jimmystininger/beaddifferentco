@@ -1528,7 +1528,13 @@ const fetchAdminRowsAll=async(buildQuery)=>{
   // switches. Keep those bounded/paginated reads cached for the same short
   // window as the existing products/orders/expenses reports.
   const cacheable=/\.from\('(products|orders|business_expenses|inventory_skus|product_option_values|product_etsy_mappings|product_etsy_mapping_components|inventory_bundle_components)'/.test(signature)&&!/[.]eq\(|[.]in\(|[.]gte\(|[.]lt\(/.test(signature);
-  const load=async()=>{const rows=[];for(let page=0;;page+=1){const result=await buildQuery().range(page*1000,page*1000+999);if(result.error)throw result.error;rows.push(...(result.data||[]));if((result.data||[]).length<1000)return{data:rows,error:null};}};
+  // The uncategorized report only needs products whose category is blank.
+  // Apply that predicate at the source instead of downloading the complete
+  // catalog and filtering it in the browser.
+  const sourceQuery=signature.includes(".from('products').select('id,external_id,name,sku,category_slug,visible')")
+    ? ()=>buildQuery().or('category_slug.is.null,category_slug.eq.""')
+    : buildQuery;
+  const load=async()=>{const rows=[];for(let page=0;;page+=1){const result=await sourceQuery().range(page*1000,page*1000+999);if(result.error)throw result.error;rows.push(...(result.data||[]));if((result.data||[]).length<1000)return{data:rows,error:null};}};
   if(!cacheable)return(await load()).data;
   const result=await adminCachedRows('admin-full:'+signature,load);
   if(result.error)throw result.error;
