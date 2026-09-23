@@ -15,6 +15,23 @@ const adminCachedRows=async(key,load,ttl=300000)=>{
   return promise;
 };
 const clearAdminRowsCache=()=>adminRowsCache.clear();
+const adminStoreSettingsCache=window.__beadAdminStoreSettingsCache||(window.__beadAdminStoreSettingsCache={value:null,at:0,promise:null});
+const loadAdminStoreSettings=async(force=false)=>{
+  if(!cloudAdmin())return{};
+  const now=Date.now();
+  if(!force&&adminStoreSettingsCache.promise)return adminStoreSettingsCache.promise;
+  if(!force&&adminStoreSettingsCache.value&&now-adminStoreSettingsCache.at<30000)return adminStoreSettingsCache.value;
+  const promise=cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle().then((result)=>{
+    if(result.error)throw result.error;
+    const value=result.data?.value&&typeof result.data.value==='object'?result.data.value:{};
+    adminStoreSettingsCache.value=value;
+    adminStoreSettingsCache.at=Date.now();
+    return value;
+  }).finally(()=>{if(adminStoreSettingsCache.promise===promise)adminStoreSettingsCache.promise=null;});
+  adminStoreSettingsCache.promise=promise;
+  return promise;
+};
+const clearAdminStoreSettingsCache=()=>{adminStoreSettingsCache.value=null;adminStoreSettingsCache.at=0;};
 async function renderPromos(){
   const cloud=Boolean(window.beadSupabase);
   const readLocal=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentPromos')||'[]');}catch(error){return[];}};
@@ -2862,9 +2879,8 @@ const synchronizeActiveAdminThemeSelection=async()=>{
   const select=form?.elements?.theme_preset;
   if(!form||!select||select.dataset.cloudThemeSynchronized)return;
   if(!window.beadSupabase)return;
-  const result=await cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle();
-  if(result.error)return;
-  const value=result.data?.value||{};
+  const value=await loadAdminStoreSettings().catch(()=>null);
+  if(!value)return;
   const admin=value.admin&&typeof value.admin==='object'?value.admin:{};
   const config=value.config&&typeof value.config==='object'?value.config:{};
   const active=normalizeAdminTheme(admin.theme||config.theme);
@@ -3151,9 +3167,8 @@ const hydrateAdminDefaultStoreMedia=()=>{
   const editors=[...document.querySelectorAll('[data-default-hero-editor],[data-default-story-editor],[data-default-footer-logo-editor]')];
   if(!editors.length||!window.beadSupabase||adminDefaultStoreMediaHydration||editors.every((editor)=>editor.dataset.cloudMediaHydrated==='true'))return adminDefaultStoreMediaHydration;
   adminDefaultStoreMediaHydration=(async()=>{
-    const result=await cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle();
-    if(result.error)return;
-    const value=result.data?.value||{};
+    const value=await loadAdminStoreSettings().catch(()=>null);
+    if(!value)return;
     const admin=value.admin&&typeof value.admin==='object'?value.admin:{};
     const config=value.config&&typeof value.config==='object'?value.config:{};
     const snapshot=admin.themeDefaultSnapshot&&typeof admin.themeDefaultSnapshot==='object'?admin.themeDefaultSnapshot:{};
@@ -3178,4 +3193,4 @@ adminDefaultStoreMediaObserver.observe(document.body,{childList:true,subtree:tru
 void hydrateAdminDefaultStoreMedia();
 const adminImportedSkuSectionObserver=new MutationObserver(()=>document.querySelectorAll('.admin-item-form .admin-variant-editor').forEach((section)=>{if(section.dataset.importedSkuSectionOpened)return;section.open=true;section.dataset.importedSkuSectionOpened='true';}));
 adminImportedSkuSectionObserver.observe(document.body,{childList:true,subtree:true});
-document.addEventListener('submit',(event)=>{if(event.target?.id==='settings-form')window.clearStorefrontSiteSettingsCache?.();},true);
+document.addEventListener('submit',(event)=>{if(event.target?.id==='settings-form'){clearAdminStoreSettingsCache();window.clearStorefrontSiteSettingsCache?.();}},true);
