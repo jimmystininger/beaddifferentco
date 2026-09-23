@@ -32,6 +32,45 @@ const loadAdminStoreSettings=async(force=false)=>{
   return promise;
 };
 const clearAdminStoreSettingsCache=()=>{adminStoreSettingsCache.value=null;adminStoreSettingsCache.at=0;};
+const adminOverviewCountsCache=window.__beadAdminOverviewCountsCache||(window.__beadAdminOverviewCountsCache={key:'',value:null,at:0,promise:null});
+const loadAdminOverviewCounts=async(since,defaults)=>{
+  if(!cloudAdmin())return defaults;
+  const key=String(since||'').slice(0,10);
+  const now=Date.now();
+  if(adminOverviewCountsCache.promise&&adminOverviewCountsCache.key===key)return adminOverviewCountsCache.promise;
+  if(adminOverviewCountsCache.value&&adminOverviewCountsCache.key===key&&now-adminOverviewCountsCache.at<15000)return adminOverviewCountsCache.value;
+  const promise=Promise.resolve().then(async()=>{
+    const counts={...defaults};
+    const [orders,members,reviews,waitlist,manualEtsy]=await Promise.all([
+      cloudAdmin().from('orders').select('id',{count:'exact',head:true}).in('status',['pending','paid','processing']),
+      cloudAdmin().from('profiles').select('id',{count:'exact',head:true}).gte('created_at',since),
+      cloudAdmin().from('reviews').select('id',{count:'exact',head:true}).eq('status','pending'),
+      cloudAdmin().from('waitlist_entries').select('id',{count:'exact',head:true}).eq('status','waiting'),
+      cloudAdmin().from('inventory_manual_pack_allocations').select('id',{count:'exact',head:true}).eq('status','pending').eq('source_type','etsy')
+    ]);
+    if(!orders.error)counts.activeOrders=orders.count||0;
+    if(!members.error)counts.newMembers=members.count||0;
+    if(!reviews.error)counts.newReviews=reviews.count||0;
+    if(!waitlist.error)counts.waitlistCount=waitlist.count||0;
+    if(!manualEtsy.error)counts.manualEtsyCount=manualEtsy.count||0;
+    const contacts=await cloudAdmin().from('contact_messages').select('id',{count:'exact',head:true}).eq('status','new');
+    if(!contacts.error)counts.contactCount=contacts.count||0;
+    const [cancellations,issues]=await Promise.all([
+      cloudAdmin().from('order_support_requests').select('id',{count:'exact',head:true}).eq('request_type','cancellation').in('status',['new','in_progress']),
+      cloudAdmin().from('order_support_requests').select('id',{count:'exact',head:true}).eq('request_type','issue').in('status',['new','in_progress'])
+    ]);
+    if(!cancellations.error)counts.cancellationCount=cancellations.count||0;
+    if(!issues.error)counts.issueCount=issues.count||0;
+    return counts;
+  }).then((value)=>{
+    adminOverviewCountsCache.value=value;
+    adminOverviewCountsCache.at=Date.now();
+    return value;
+  }).finally(()=>{if(adminOverviewCountsCache.promise===promise)adminOverviewCountsCache.promise=null;});
+  adminOverviewCountsCache.key=key;
+  adminOverviewCountsCache.promise=promise;
+  return promise;
+};
 async function renderPromos(){
   const cloud=Boolean(window.beadSupabase);
   const readLocal=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentPromos')||'[]');}catch(error){return[];}};
@@ -227,28 +266,8 @@ async function renderOverview(){
   let contactCount=0;
   let cancellationCount=0;
   let issueCount=0;
-  if(cloudAdmin()){
-    const [orders,members,reviews,waitlist,manualEtsy]=await Promise.all([
-      cloudAdmin().from('orders').select('id',{count:'exact',head:true}).in('status',['pending','paid','processing']),
-      cloudAdmin().from('profiles').select('id',{count:'exact',head:true}).gte('created_at',since),
-      cloudAdmin().from('reviews').select('id',{count:'exact',head:true}).eq('status','pending'),
-      cloudAdmin().from('waitlist_entries').select('id',{count:'exact',head:true}).eq('status','waiting'),
-      cloudAdmin().from('inventory_manual_pack_allocations').select('id',{count:'exact',head:true}).eq('status','pending').eq('source_type','etsy')
-    ]);
-    if(!orders.error)activeOrders=orders.count||0;
-    if(!members.error)newMembers=members.count||0;
-    if(!reviews.error)newReviews=reviews.count||0;
-    if(!waitlist.error)waitlistCount=waitlist.count||0;
-    if(!manualEtsy.error)manualEtsyCount=manualEtsy.count||0;
-    const contacts=await cloudAdmin().from('contact_messages').select('id',{count:'exact',head:true}).eq('status','new');
-    if(!contacts.error)contactCount=contacts.count||0;
-    const [cancellations,issues]=await Promise.all([
-      cloudAdmin().from('order_support_requests').select('id',{count:'exact',head:true}).eq('request_type','cancellation').in('status',['new','in_progress']),
-      cloudAdmin().from('order_support_requests').select('id',{count:'exact',head:true}).eq('request_type','issue').in('status',['new','in_progress'])
-    ]);
-    if(!cancellations.error)cancellationCount=cancellations.count||0;
-    if(!issues.error)issueCount=issues.count||0;
-  }
+  const counts=await loadAdminOverviewCounts(since,{waitlistCount,activeOrders,newMembers,newReviews,manualEtsyCount,contactCount,cancellationCount,issueCount});
+  ({waitlistCount,activeOrders,newMembers,newReviews,manualEtsyCount,contactCount,cancellationCount,issueCount}=counts);
   if(activeTab!=='overview')return;
   panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">CONTROL CENTER</p><h2>Store overview</h2><p>Manage products, customer activity, reviews, and fulfillment from one place.</p></div></div><div class="admin-stat-grid"><button class="admin-stat-card" type="button" data-overview-target="waitlist"><b>${waitlistCount}</b><span>Restock requests</span></button><button class="admin-stat-card" type="button" data-overview-target="orders"><b>${activeOrders}</b><span>Active orders</span></button><button class="admin-stat-card" type="button" data-overview-target="members-new"><b>${newMembers}</b><span>New members (30 days)</span></button><button class="admin-stat-card" type="button" data-overview-target="reviews"><b>${newReviews}</b><span>New reviews</span></button><button class="admin-stat-card" type="button" data-overview-target="inventory-manual"><b>${manualEtsyCount}</b><span>Etsy SKUs waiting</span></button><button class="admin-stat-card" type="button" data-overview-target="contacts"><b>${contactCount}</b><span>New contact messages</span></button><button class="admin-stat-card" type="button" data-overview-target="order-cancellations"><b>${cancellationCount}</b><span>Open order cancellations</span></button><button class="admin-stat-card" type="button" data-overview-target="order-issues"><b>${issueCount}</b><span>Open order issues</span></button></div>`;
   const cancellationCard=panel.querySelector('[data-overview-target="order-cancellations"]');const issueCard=panel.querySelector('[data-overview-target="order-issues"]');if(cancellationCard){cancellationCard.dataset.overviewTarget='order-requests';cancellationCard.querySelector('b').textContent=String(cancellationCount+issueCount);cancellationCard.querySelector('span').textContent='Open order requests';}if(issueCard)issueCard.remove();
