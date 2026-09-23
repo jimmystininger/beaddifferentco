@@ -36,9 +36,16 @@ Deno.serve(async (request) => {
   if (!(await isAdmin(request))) return json({ error: 'Admin access required.' }, 403);
   if (!resendApiKey || !restockEmailFrom) return json({ error: 'Restock email delivery is not configured.' }, 503);
 
-  const pendingResponse = await supabaseRequest('waitlist_restock_notifications?status=eq.pending&order=created_at.asc&limit=100');
+  const pendingResponse = await supabaseRequest('waitlist_restock_notifications?status=eq.pending&select=id,waitlist_entry_id,attempt_count&order=created_at.asc&limit=100');
   if (!pendingResponse.ok) return json({ error: 'Unable to load pending restock notifications.' }, 500);
   const pending = await pendingResponse.json();
+  const entryIds = [...new Set(pending.map((notification: { waitlist_entry_id?: string }) => String(notification.waitlist_entry_id || '').trim()).filter(Boolean))];
+  const entryRows = entryIds.length
+    ? await supabaseRequest(`waitlist_entries?id=in.(${entryIds.map((id) => encodeURIComponent(id)).join(',')})&select=id,requested_quantity,requested_total_quantity,selected_options,products(name),profiles(email,full_name),inventory_skus(sku,name)&limit=100`)
+    : new Response('[]', { status: 200 });
+  if (!entryRows.ok) return json({ error: 'Unable to load waitlist entries for notifications.' }, 500);
+  const entries = entryRows.ok ? await entryRows.json() : [];
+  const entryById = new Map(entries.map((entry: { id?: string }) => [String(entry.id || ''), entry]));
   let sent = 0;
   let failed = 0;
 
@@ -50,9 +57,7 @@ Deno.serve(async (request) => {
     });
     if (!claimResponse.ok || !(await claimResponse.json()).length) continue;
 
-    const entryResponse = await supabaseRequest(`waitlist_entries?id=eq.${encodeURIComponent(notification.waitlist_entry_id)}&select=requested_quantity,requested_total_quantity,selected_options,products(name),profiles(email,full_name),inventory_skus(sku,name)`);
-    const entryRows = entryResponse.ok ? await entryResponse.json() : [];
-    const entry = entryRows[0];
+    const entry = entryById.get(String(notification.waitlist_entry_id || ''));
     const email = entry?.profiles?.email;
     if (!email) {
       failed += 1;
