@@ -11,7 +11,8 @@ const hasUnreadReviewResponse=(review)=>{if(!String(review?.admin_response||'').
 const cloudClient=()=>window.beadSupabase||null;
 const cloudReadyClient=async()=>{try{return window.beadSupabase||await window.beadSupabaseReady||null;}catch(error){return null;}};
 const adminAuthRequired=()=>/^admin\.html(?:\?|$)/.test(new URLSearchParams(window.location.search).get('return')||'');
-const cloudUser=async()=>{const client=await cloudReadyClient();if(!client)return null;const {data}=await client.auth.getUser();return data?.user||null;};
+let cloudUserPromise=null;
+const cloudUser=async()=>{const client=await cloudReadyClient();if(!client)return null;if(cloudUserPromise)return cloudUserPromise;cloudUserPromise=client.auth.getUser().then(({data})=>data?.user||null).finally(()=>{cloudUserPromise=null;});return cloudUserPromise;};
 async function profileCredential(value){const bytes=new TextEncoder().encode(value);const digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map((byte)=>byte.toString(16).padStart(2,'0')).join('');}
 function localAddressFields(fields){return {id:fields.id||`address-${Date.now()}`,label:String(fields.label||'Address'),recipient_name:String(fields.recipient_name||''),address_line1:String(fields.address_line1||''),address_line2:String(fields.address_line2||''),city:String(fields.city||''),state:String(fields.state||''),postal_code:String(fields.postal_code||''),country:String(fields.country||'US'),is_default:Boolean(fields.is_default)};}
 function setSession(account){const next={id:account.id,name:account.name||account.full_name||account.email,email:account.email,status:account.status||'active',role:account.role||'customer'};localStorage.setItem(sessionStoreKey,JSON.stringify(next));window.dispatchEvent(new Event('bead-account-changed'));return next;}
