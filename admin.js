@@ -3371,6 +3371,38 @@ const hydrateAdminDefaultStoreMedia=()=>{
 const adminDefaultStoreMediaObserver=new MutationObserver(()=>void hydrateAdminDefaultStoreMedia());
 adminDefaultStoreMediaObserver.observe(document.body,{childList:true,subtree:true});
 void hydrateAdminDefaultStoreMedia();
+let adminCurrentThemeSyncSignature='';
+const synchronizeCurrentAdminTheme=async()=>{
+  const form=panel?.querySelector('[data-theme-form]');
+  const select=form?.elements?.theme_preset;
+  if(!form||!select||select.options.length<2||!window.beadSupabase)return;
+  const value=await loadAdminStoreSettings();
+  const admin=value.admin&&typeof value.admin==='object'?value.admin:{};
+  const config=value.config&&typeof value.config==='object'?value.config:{};
+  const active=normalizeAdminTheme(admin.theme||config.theme);
+  const snapshot=admin.themeDefaultSnapshot&&typeof admin.themeDefaultSnapshot==='object'?admin.themeDefaultSnapshot:{};
+  const defaultActive=JSON.stringify(active)===JSON.stringify(normalizeAdminTheme(snapshot.theme||{}));
+  const presets=Array.isArray(admin.themePresets)?admin.themePresets:[];
+  const activePresetIndex=defaultActive?-1:presets.findIndex((preset)=>JSON.stringify(normalizeAdminTheme(preset?.theme||{}))===JSON.stringify(active));
+  const selectedValue=defaultActive&&select.querySelector('[value="__locked_default__"]')?'__locked_default__':activePresetIndex>=0?String(activePresetIndex):'';
+  const signature=JSON.stringify({active,selectedValue,presets:presets.map((preset)=>preset?.name||'')});
+  if(signature===adminCurrentThemeSyncSignature&&select.value===selectedValue)return;
+  if(selectedValue)select.value=selectedValue;
+  if(selectedValue==='__locked_default__'){
+    form.elements.theme_preset_name.value='';
+  }else if(activePresetIndex>=0){
+    form.elements.theme_preset_name.value=String(presets[activePresetIndex].name||'');
+  }
+  Object.entries(active).forEach(([key,currentValue])=>{if(form.elements[key])form.elements[key].value=currentValue;});
+  const local=adminData();
+  saveAdminData({...local,settings:{...(local.settings||{}),...admin}});
+  window.productStoreConfig={...window.productStoreConfig,...config};
+  localStorage.setItem('beadDifferentProductConfig',JSON.stringify(window.productStoreConfig));
+  adminCurrentThemeSyncSignature=signature;
+};
+const adminCurrentThemeObserver=new MutationObserver(()=>void synchronizeCurrentAdminTheme().catch(()=>{}));
+adminCurrentThemeObserver.observe(panel,{childList:true,subtree:true});
+void synchronizeCurrentAdminTheme().catch(()=>{});
 const adminImportedSkuSectionObserver=new MutationObserver(()=>document.querySelectorAll('.admin-item-form .admin-variant-editor').forEach((section)=>{if(section.dataset.importedSkuSectionOpened)return;section.open=true;section.dataset.importedSkuSectionOpened='true';}));
 adminImportedSkuSectionObserver.observe(document.body,{childList:true,subtree:true});
 document.addEventListener('submit',(event)=>{if(event.target?.id==='settings-form'){clearAdminStoreSettingsCache();window.clearStorefrontSiteSettingsCache?.();}},true);
