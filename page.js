@@ -268,6 +268,7 @@ const setupShoppingBag=async()=>{
   const grid=document.querySelector('#page-products');
   const empty=document.querySelector('#store-empty');
   if(!storePage||!grid||storePage.dataset.shoppingBagSetup)return;
+  await window.catalogMetadataReady?.catch?.(()=>{});
   storePage.dataset.shoppingBagSetup='ready';
   const optionSummary=(entry)=>normalizeCartOptions(entry.selectedOptions).map((option)=>option.label).filter(Boolean).join(' · ');
   const packCountForCart=(pricing)=>{const label=String(pricing?.option?.label||'');const countLabel=label.match(/\((\d+)\s*(?:ct|count|pcs?|pack)\)/i);if(countLabel)return Math.max(1,Number(countLabel[1])||1);const packMatch=String(pricing?.sku||'').match(/-(\d+)PK$/i);return packMatch?Math.max(1,Number(packMatch[1])||1):1;};
@@ -498,6 +499,7 @@ const setupShoppingBag=async()=>{
   window.addEventListener('bead-store-synced',refresh);
   window.addEventListener('bead-catalog-enriched',refresh);
   window.addEventListener('bead-catalog-options-ready',refresh);
+  window.addEventListener('bead-catalog-media-ready',refresh);
   window.addEventListener('bead-inventory-recipes-ready',refresh);
   window.addEventListener('bead-cart-stock-limited',(event)=>{status.textContent=`Only ${Math.max(0,Number(event.detail?.maximum)||0)} of that pack can be purchased with the other items in your cart.`;refresh();});
 };

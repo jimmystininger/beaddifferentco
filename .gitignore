@@ -1,3 +1,5 @@
 .vercel
 .codex/
 .env*
+.npm-cache/
+supabase/.temp/
