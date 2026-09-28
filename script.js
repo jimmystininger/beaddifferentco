@@ -9,3 +9,21 @@ document.querySelectorAll('[data-filter="cup-charms"] img').forEach((image)=>{im
 function applyFilter(filter){if(filter==='new-arrivals'){window.location.href='new-arrivals.html';return;}if(filter==='silicone'||filter==='acrylic'){window.location.href=`category.html?category=${filter}`;return;}if(!view||!filtered){window.location.href=`category.html?category=${encodeURIComponent(filter)}`;return;}const list=visibleCatalog().filter((item)=>filter==='shop-all'||(item.categorySlugs||[item.category]).includes(filter));title.textContent=names[filter]||'All';count.textContent=`${list.length} ${list.length===1?'item':'items'}`;renderProductCards(list,filtered);view.classList.add('active');view.scrollIntoView({block:'start'});}
 (window.catalogMetadataReady||catalogReady).then(()=>{document.querySelectorAll('[data-filter]').forEach((link)=>link.addEventListener('click',()=>applyFilter(link.dataset.filter)));const categoryMatch=(item,filter)=>filter==='shop-all'||(item.categorySlugs||[item.category]).includes(filter);renderProductCards(visibleCatalog().slice(0,6),grid);const featuredGrid=document.querySelector('#featured-product-grid');const featuredSection=document.querySelector('#featured-products');if(featuredGrid&&featuredSection){const featured=visibleCatalog().filter((item)=>item.featured===true);featuredSection.hidden=!featured.length;renderProductCards(featured.slice(0,6),featuredGrid);}const filter=new URLSearchParams(location.hash.slice(1)).get('filter');if(filter)applyFilter(filter);});
 window.addEventListener('hashchange',()=>{const filter=new URLSearchParams(location.hash.slice(1)).get('filter');if(filter)applyFilter(filter);});
+
+const renderHomepageFeaturedContent=()=>{
+  const section=document.querySelector('#featured-products');
+  const copy=document.querySelector('#featured-content-copy');
+  const grid=document.querySelector('#featured-product-grid');
+  if(!section||!copy||!grid)return;
+  const source=window.productStoreConfig||{};
+  copy.textContent=String(source.featuredText||'').trim();
+  const previous=section.querySelector('.featured-prev');
+  const next=section.querySelector('.featured-next');
+  if(!previous||!next||grid.dataset.carouselReady)return;
+  grid.dataset.carouselReady='true';
+  const scrollAmount=()=>Math.max(grid.clientWidth*.8,260);
+  previous.addEventListener('click',()=>grid.scrollBy({left:-scrollAmount(),behavior:'smooth'}));
+  next.addEventListener('click',()=>grid.scrollBy({left:scrollAmount(),behavior:'smooth'}));
+};
+renderHomepageFeaturedContent();
+window.siteSettingsReady?.then(renderHomepageFeaturedContent);
