@@ -52,13 +52,26 @@ const loadAdminStoreSettings=async(force=false)=>{
   const now=Date.now();
   if(!force&&adminStoreSettingsCache.promise)return adminStoreSettingsCache.promise;
   if(!force&&adminStoreSettingsCache.value&&now-adminStoreSettingsCache.at<30000)return adminStoreSettingsCache.value;
-  const promise=cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle().then((result)=>{
-    if(result.error)throw result.error;
-    const value=result.data?.value&&typeof result.data.value==='object'?result.data.value:{};
-    adminStoreSettingsCache.value=value;
-    adminStoreSettingsCache.at=Date.now();
-    return value;
-  }).finally(()=>{if(adminStoreSettingsCache.promise===promise)adminStoreSettingsCache.promise=null;});
+  const promise=(async()=>{
+    let lastError=null;
+    for(let attempt=0;attempt<3;attempt+=1){
+      try{
+        const result=await cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle();
+        if(!result.error){
+          const value=result.data?.value&&typeof result.data.value==='object'?result.data.value:{};
+          adminStoreSettingsCache.value=value;
+          adminStoreSettingsCache.at=Date.now();
+          return value;
+        }
+        lastError=result.error;
+      }catch(error){lastError=error;}
+      const statusCode=Number(lastError?.status||0);
+      const retryable=!statusCode||statusCode>=500||/(?:fetch|network|timeout|5\d\d)/i.test(String(lastError?.message||''));
+      if(!retryable||attempt===2)throw lastError;
+      await new Promise((resolve)=>setTimeout(resolve,250*(attempt+1)));
+    }
+    throw lastError||new Error('Store settings could not be loaded.');
+  })().finally(()=>{if(adminStoreSettingsCache.promise===promise)adminStoreSettingsCache.promise=null;});
   adminStoreSettingsCache.promise=promise;
   return promise;
 };
@@ -1863,7 +1876,7 @@ const installCanonicalSettingsSave=()=>{const form=document.querySelector('#sett
 const renderStoreContent=async()=>{
   if(activeTab!=='content')return;
   let value={};
-  if(window.beadSupabase){const result=await cloudAdmin().from('site_settings').select('value').eq('key','store').maybeSingle();if(result.error)throw result.error;value=result.data?.value||{};}
+  if(window.beadSupabase)value=await loadAdminStoreSettings();
   const admin=value.admin&&typeof value.admin==='object'?value.admin:{};
   const links=admin.socialLinks&&typeof admin.socialLinks==='object'?admin.socialLinks:{};
   const faqItems=Array.isArray(admin.faqItems)?admin.faqItems:[];
@@ -1872,7 +1885,7 @@ const renderStoreContent=async()=>{
   const form=panel.querySelector('[data-content-form]');const list=panel.querySelector('[data-faq-list]');const status=panel.querySelector('[data-content-status]');const featuredSection=document.createElement('section');featuredSection.className='admin-card';featuredSection.innerHTML='<h3>Homepage Featured section</h3><p>This text appears beside the products you mark Featured on the Products/SKUs page.</p><label>Featured text<textarea name="featuredText" rows="6" maxlength="10000">'+adminSafe(admin.featuredText||'')+'</textarea></label>';form.querySelector('section')?.before(featuredSection);
   panel.querySelector('[data-add-faq]').onclick=()=>{const empty=list.querySelector('.admin-empty');empty?.remove();const index=list.querySelectorAll('[data-faq-row]').length;const row=document.createElement('div');row.className='admin-content-faq-row';row.dataset.faqRow='';row.innerHTML=`<label>Question<input name="faq_question_${index}" maxlength="200"></label><label>Answer<textarea name="faq_answer_${index}" rows="4" maxlength="10000"></textarea></label><button type="button" data-remove-faq>Remove question</button>`;list.append(row);row.querySelector('input').focus();};
   list.addEventListener('click',(event)=>{if(event.target.closest('[data-remove-faq]')){event.target.closest('[data-faq-row]').remove();if(!list.querySelector('[data-faq-row]'))list.innerHTML='<p class="admin-empty">No custom questions yet. Add one below.</p>';}});
-  form.addEventListener('submit',async(event)=>{event.preventDefault();const fields=Object.fromEntries(new FormData(form));const nextFaq=[...list.querySelectorAll('[data-faq-row]')].map((row)=>({question:String(row.querySelector('input')?.value||'').trim(),answer:String(row.querySelector('textarea')?.value||'').trim()})).filter((item)=>item.question&&item.answer);const contactEmail=String(fields.contactEmail||'').trim().toLowerCase();if(contactEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)){status.textContent='Enter a valid contact email address or leave it blank.';return;}const nextAdmin={...admin,socialLinks:{facebook:String(fields.facebook||'').trim(),instagram:String(fields.instagram||'').trim(),tiktok:String(fields.tiktok||'').trim(),pinterest:String(fields.pinterest||'').trim(),youtube:String(fields.youtube||'').trim()},contactEmail,storyTitle:String(fields.storyTitle||'').trim()||'Our Story',storyBody:String(fields.storyBody||'').trim(),footerShippingPolicy:String(fields.footerShippingPolicy||'').trim(),featuredText:String(fields.featuredText||'').trim(),faqItems:nextFaq};const nextValue={...value,admin:nextAdmin};const saveButton=form.querySelector('button[type="submit"]');saveButton.disabled=true;status.textContent='Saving store content to the store…';try{if(!window.beadSupabase)throw new Error('The store database is unavailable.');const result=await cloudAdmin().from('site_settings').upsert({key:'store',value:nextValue,updated_at:new Date().toISOString()});if(result.error)throw result.error;const data=adminData();saveAdminData({...data,settings:{...(data.settings||{}),...nextAdmin}});window.siteContent={...nextAdmin};window.productStoreConfig={...(window.productStoreConfig||{}),...nextAdmin};window.applyStoreContent?.(window.siteContent);status.textContent='Store content saved to the store.';}catch(error){status.textContent='Store content was not saved to the store: '+(error.message||'Unknown error.')+' Try again.';}finally{saveButton.disabled=false;}});
+  form.addEventListener('submit',async(event)=>{event.preventDefault();const fields=Object.fromEntries(new FormData(form));const nextFaq=[...list.querySelectorAll('[data-faq-row]')].map((row)=>({question:String(row.querySelector('input')?.value||'').trim(),answer:String(row.querySelector('textarea')?.value||'').trim()})).filter((item)=>item.question&&item.answer);const contactEmail=String(fields.contactEmail||'').trim().toLowerCase();if(contactEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)){status.textContent='Enter a valid contact email address or leave it blank.';return;}const nextAdmin={...admin,socialLinks:{facebook:String(fields.facebook||'').trim(),instagram:String(fields.instagram||'').trim(),tiktok:String(fields.tiktok||'').trim(),pinterest:String(fields.pinterest||'').trim(),youtube:String(fields.youtube||'').trim()},contactEmail,storyTitle:String(fields.storyTitle||'').trim()||'Our Story',storyBody:String(fields.storyBody||'').trim(),footerShippingPolicy:String(fields.footerShippingPolicy||'').trim(),featuredText:String(fields.featuredText||'').trim(),faqItems:nextFaq};const nextValue={...value,admin:nextAdmin};const saveButton=form.querySelector('button[type="submit"]');saveButton.disabled=true;status.textContent='Saving store content to the store…';try{if(!window.beadSupabase)throw new Error('The store database is unavailable.');const result=await cloudAdmin().from('site_settings').upsert({key:'store',value:nextValue,updated_at:new Date().toISOString()});if(result.error)throw result.error;clearAdminStoreSettingsCache();window.clearStorefrontSiteSettingsCache?.();const data=adminData();saveAdminData({...data,settings:{...(data.settings||{}),...nextAdmin}});window.siteContent={...nextAdmin};window.productStoreConfig={...(window.productStoreConfig||{}),...nextAdmin};window.applyStoreContent?.(window.siteContent);status.textContent='Store content saved to the store.';}catch(error){status.textContent='Store content was not saved to the store: '+(error.message||'Unknown error.')+' Try again.';}finally{saveButton.disabled=false;}});
 };
 const renderContactMessagesRecovered=async()=>{
   if(activeTab!=='contacts')return;
