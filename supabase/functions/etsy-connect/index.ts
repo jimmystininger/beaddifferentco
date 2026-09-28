@@ -555,7 +555,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const images = listingImagesFrom(listing, detail);
   const tags = listingValues(detail.tags).map(cleanText).slice(0, 40);
   const materials = listingValues(detail.materials).map(cleanText).slice(0, 40);
-  const existingByListing = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id,external_id,name,category_slug,seo_title&limit=1`);
+  const existingByListing = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id,external_id,name,category_slug,seo_title,short_description,description&limit=1`);
   let product = existingByListing[0];
   let created = false;
   // A listing that already has a product page is not new work. Return its
@@ -565,9 +565,15 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     // Older importer runs stored Etsy's keyword-heavy title as the internal
     // product name. Repair that specific shape on the next scan while keeping
     // the full title in seo_title for search/display metadata.
-    if (String(product.name || '').trim() === title || !String(product.name || '').trim()) {
-      await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', { name: productName, category_slug: categorySlug, seo_title: title }, 'return=minimal');
-    }
+    const productRepair: Record<string, unknown> = {};
+    if (String(product.category_slug || '').trim() !== categorySlug) productRepair.category_slug = categorySlug;
+    if (String(product.seo_title || '').trim() !== title) productRepair.seo_title = title;
+    if (String(product.name || '').trim() === title || !String(product.name || '').trim()) productRepair.name = productName;
+    // Preserve an admin's edits, but backfill missing copy from Etsy so an
+    // older staged page does not render an empty product-description panel.
+    if (description && !String(product.short_description || '').trim()) productRepair.short_description = description.slice(0, 240);
+    if (description && !String(product.description || '').trim()) productRepair.description = description;
+    if (Object.keys(productRepair).length) await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', productRepair, 'return=minimal');
     // Etsy can store several pack SKUs under one listing. Older imports only
     // read the first inventory product, so audit an existing page and add any
     // additional physical child/parent/recipe/mapping rows that are present.

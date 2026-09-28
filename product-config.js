@@ -4,7 +4,7 @@ window.productStoreConfig={
   shippingOriginCity:'',
   shippingOriginState:'OH',
   processingDays:3,
-  freeShippingThreshold:35,
+  freeShippingThreshold:50,
   msrpMarkupPercent:100,
   rewardThreshold:35,
   rewardDiscountPercent:5,
