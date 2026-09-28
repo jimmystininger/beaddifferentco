@@ -165,7 +165,7 @@ async function loadCatalog(){
   const homepage=document.body.dataset.page==='Home';
   const productPageId=document.body.dataset.page==='Product'?(document.body.dataset.productId||new URLSearchParams(location.search).get('id')||''):'';
   const productQueryFor=()=>{
-    let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions');
+    let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions');
     if(document.body.dataset.page!=='Admin')productQuery=productQuery.eq('visible',true);
     if(productPageId){const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;productQuery=productQuery.eq(uuidPattern.test(productPageId)?'id':'external_id',productPageId).neq('id',crypto.randomUUID());}
     return productQuery;
@@ -178,7 +178,7 @@ async function loadCatalog(){
       // unique discriminator and validate the identifier before mapping it.
       const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const filterField=uuidPattern.test(productPageId)?'id':'external_id';
-      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
+      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions';
       const nonce=crypto.randomUUID();
       const response=await withStoreTimeout(fetch(`${window.beadSupabaseUrl}/rest/v1/products?select=${encodeURIComponent(select)}&visible=eq.true&${filterField}=eq.${encodeURIComponent(productPageId)}&id=neq.${nonce}&limit=1`,{headers:{apikey:window.beadSupabasePublishableKey,Authorization:`Bearer ${window.beadSupabasePublishableKey}`,'Cache-Control':'no-cache','Pragma':'no-cache'},cache:'no-store'}),'Product request');
       const responseData=await response.json();
@@ -241,8 +241,21 @@ async function loadCatalog(){
       // downloaded the entire product catalog here made an otherwise harmless
       // route consume a large Supabase response when its page marker was
       // missing or stale.
-      const result=await withStoreTimeout(productQueryFor().order('added_at',{ascending:false}).range(0,homepage?11:23),homepage?'Homepage products request':'Catalog products request');
-      data=result.data||[];error=result.error||null;
+      if(homepage){
+        const [recentResult,featuredResult]=await Promise.all([
+          withStoreTimeout(productQueryFor().order('added_at',{ascending:false}).range(0,11),'Homepage products request'),
+          withStoreTimeout(productQueryFor().eq('featured',true).order('added_at',{ascending:false}).range(0,999),'Featured products request')
+        ]);
+        data=recentResult.data||[];
+        error=recentResult.error||null;
+        if(!featuredResult.error){
+          const existingIds=new Set(data.map((item)=>item.id));
+          data.push(...(featuredResult.data||[]).filter((item)=>!existingIds.has(item.id)));
+        }else window.storeFeaturedProductsError=featuredResult.error;
+      }else{
+        const result=await withStoreTimeout(productQueryFor().order('added_at',{ascending:false}).range(0,23),'Catalog products request');
+        data=result.data||[];error=result.error||null;
+      }
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
   if(error){catalog=[];window.storeCatalogError=error;return catalog;}
