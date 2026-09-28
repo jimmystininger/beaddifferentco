@@ -67,3 +67,24 @@ window.siteSettingsReady.then((value)=>{
   window.applyStoreContent(source);
 });
 if(headerRoot){const primaryNavigation=headerRoot.querySelector('nav.primary');const contactLink=primaryNavigation?.querySelector('a[href="contact.html"]');if(primaryNavigation&&contactLink&&!primaryNavigation.querySelector('a[href="reviews.html"]')){const reviewsLink=document.createElement('a');reviewsLink.href='reviews.html';reviewsLink.textContent='Our Reviews';primaryNavigation.insertBefore(reviewsLink,contactLink);}if(contactLink)contactLink.textContent='Contact Us';}
+const canonicalApplyStoreTheme=window.applyStoreTheme;
+let lastCompleteStoreThemeMedia={};
+window.applyStoreTheme=(theme={},heroUrl,categoryPhotos,logoUrl,storyUrl,pageBackgroundImageUrl,footerLogoUrl)=>{
+  const media={
+    heroUrl:heroUrl===undefined?lastCompleteStoreThemeMedia.heroUrl:heroUrl,
+    categoryPhotos:categoryPhotos===undefined?lastCompleteStoreThemeMedia.categoryPhotos:categoryPhotos,
+    logoUrl:logoUrl===undefined?lastCompleteStoreThemeMedia.logoUrl:logoUrl,
+    storyUrl:storyUrl===undefined?lastCompleteStoreThemeMedia.storyUrl:storyUrl,
+    pageBackgroundImageUrl:pageBackgroundImageUrl===undefined?lastCompleteStoreThemeMedia.pageBackgroundImageUrl:pageBackgroundImageUrl,
+    footerLogoUrl:footerLogoUrl===undefined?lastCompleteStoreThemeMedia.footerLogoUrl:footerLogoUrl
+  };
+  if(Object.values(media).some((value)=>value!==undefined))lastCompleteStoreThemeMedia=media;
+  return canonicalApplyStoreTheme(theme,media.heroUrl,media.categoryPhotos,media.logoUrl,media.storyUrl,media.pageBackgroundImageUrl,media.footerLogoUrl);
+};
+window.siteSettingsReady.then((value)=>{
+  if(value&&Object.keys(value).length)return;
+  try{
+    const fallback=JSON.parse(localStorage.getItem('beadDifferentProductConfig')||'{}');
+    if(fallback&&typeof fallback==='object')window.applyStoreTheme(fallback.theme,fallback.heroUrl,fallback.categoryPhotos,fallback.logoUrl,fallback.storyUrl,fallback.pageBackgroundImageUrl,fallback.footerLogoUrl);
+  }catch(error){}
+});

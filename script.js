@@ -16,7 +16,7 @@ const renderHomepageFeaturedContent=()=>{
   const grid=document.querySelector('#featured-product-grid');
   if(!section||!copy||!grid)return;
   const source=window.productStoreConfig||{};
-  copy.textContent=String(source.featuredText||'').trim();
+  copy.innerHTML=window.sanitizeRichText?window.sanitizeRichText(String(source.featuredText||'')):String(source.featuredText||'').trim();
   const previous=section.querySelector('.featured-prev');
   const next=section.querySelector('.featured-next');
   if(!previous||!next||grid.dataset.carouselReady)return;
@@ -27,3 +27,13 @@ const renderHomepageFeaturedContent=()=>{
 };
 renderHomepageFeaturedContent();
 window.siteSettingsReady?.then(renderHomepageFeaturedContent);
+const decodeFeaturedRichSource=(value)=>{const source=String(value||'');if(!source)return'';const template=document.createElement('template');template.innerHTML=source;const decoded=template.content.textContent||'';return /<(?:h[1-6]|p|strong|em|u|ul|ol|li|blockquote)\b/i.test(decoded)?decoded:source;};const renderHomepageFeaturedRichMarkup=()=>{const copy=document.querySelector('#featured-content-copy');if(!copy)return;const source=decodeFeaturedRichSource(window.productStoreConfig?.featuredText||'');copy.innerHTML=window.sanitizeRichText?window.sanitizeRichText(source):source;};renderHomepageFeaturedRichMarkup();window.siteSettingsReady?.then(renderHomepageFeaturedRichMarkup);
+const renderHomepageFeaturedBackground=()=>{const copy=document.querySelector('#featured-content-copy');if(!copy)return;const url=String(window.productStoreConfig?.featuredBackgroundImageUrl||'').trim();copy.style.setProperty('--featured-copy-background-image',url?`url("${url.replace(/["\\)]/g,'')}" )`:'none');};renderHomepageFeaturedBackground();window.siteSettingsReady?.then(renderHomepageFeaturedBackground);
+const loadHomepageFeaturedContent=async()=>{try{await window.siteSettingsReady;if(!window.beadSupabase)return;const result=await window.beadSupabase.rpc('get_storefront_featured_content');if(result.error||!result.data)return;window.productStoreConfig={...(window.productStoreConfig||{}),...result.data};renderHomepageFeaturedRichMarkup();renderHomepageFeaturedBackground();}catch(error){console.warn('Featured content unavailable.',error);}};loadHomepageFeaturedContent();
+window.setTimeout(()=>{if(window.beadSupabaseReady)window.beadSupabaseReady.then(()=>loadHomepageFeaturedContent()).catch(()=>{});},0);
+const renderHomepageRecentImmediately=()=>{
+  const grid=document.querySelector('#product-grid');
+  if(!grid||typeof visibleCatalog!=='function'||typeof renderProductCards!=='function')return;
+  renderProductCards(visibleCatalog().slice(0,6),grid);
+};
+if(window.catalogReady&&typeof window.catalogReady.then==='function')window.catalogReady.then(renderHomepageRecentImmediately);
