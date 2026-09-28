@@ -5,8 +5,12 @@
   const decodeText=(value)=>{const node=document.createElement('textarea');node.innerHTML=String(value??'');return node.value;};
   const formatDate=(value)=>{const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleDateString();};
   const formatMemberSince=(value)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':String(date.getFullYear());};
-  const reviewPhotoMarkup=(review)=>{const photos=Array.isArray(review.photos)?review.photos:[];const links=photos.slice(0,5).map((photo,index)=>{const safe=escape(photo);return `<a href='${safe}' target='_blank' rel='noopener noreferrer'><img src='${safe}' alt='Review photo ${index+1}' loading='lazy'></a>`;}).join('');return links?`<div class='website-review-photos'>${links}</div>`:'';};
+  const reviewPhotoMarkup=(review)=>{const photos=Array.isArray(review.photos)?review.photos:[];const links=photos.slice(0,5).map((photo,index)=>{const safe=escape(photo);return `<button type='button' class='website-review-photo-button' data-review-photo='${safe}' aria-label='Open review photo ${index+1}'><img src='${safe}' alt='Review photo ${index+1}' loading='lazy'></button>`;}).join('');return links?`<div class='website-review-photos'>${links}</div>`:'';};
   const stars=(rating)=>{const value=Math.max(0,Math.min(5,Number(rating)||0));return '★'.repeat(Math.round(value))+'☆'.repeat(5-Math.round(value));};
+  const imageDialog=document.querySelector('[data-review-image-dialog]'),imageDialogPhoto=imageDialog?.querySelector('[data-review-image]'),closeImageDialog=()=>{if(imageDialog?.open)imageDialog.close();if(imageDialogPhoto)imageDialogPhoto.removeAttribute('src');};
+  imageDialog?.addEventListener('click',(event)=>{if(event.target===imageDialog)closeImageDialog();});
+  imageDialog?.querySelector('[data-close-review-image]')?.addEventListener('click',closeImageDialog);
+  list?.addEventListener('click',(event)=>{const button=event.target.closest('[data-review-photo]');if(!button||!imageDialog||!imageDialogPhoto)return;imageDialogPhoto.src=button.dataset.reviewPhoto;imageDialog.showModal();});
   openForm?.addEventListener('click',async()=>{let signedIn=Boolean(window.customerAccounts?.current?.());if(window.beadSupabase){const {data}=await window.beadSupabase.auth.getUser();signedIn=Boolean(data?.user);}if(!signedIn){const status=document.querySelector('#review-status');status.className='review-status-error';status.textContent='Please sign in to leave a review.';return;}formPanel.hidden=false;formPanel.scrollIntoView({behavior:'smooth',block:'start'});});
   closeForm?.addEventListener('click',()=>{formPanel.hidden=true;});
   let reviews=[],selectedRating=0,page=1,totalReviews=0,reviewCounts={};

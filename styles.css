@@ -731,7 +731,13 @@ body[data-page="Admin"] .promo-form label button{margin-top:8px}
 #website-review-list{display:grid;gap:16px;margin:28px 0}
 .review-rating-summary{padding:18px;border:1px solid color-mix(in srgb,var(--site-banner-color,#e482a4) 35%,var(--site-page-background-color,#fffdfb) 65%);border-radius:10px;background:color-mix(in srgb,var(--site-accent-background-color,#fff1f5) 55%,var(--site-page-background-color,#fffdfb) 45%)}.review-rating-summary h2{margin:0 0 6px}.review-rating-summary p{margin:0 0 12px}.review-rating-breakdown{display:flex;flex-wrap:wrap;gap:8px 18px;color:color-mix(in srgb,var(--site-header-text-color,#111) 72%,transparent 28%);font-size:14px}
 .website-review-photos{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-.website-review-photos img{width:110px;height:110px;object-fit:cover;border-radius:8px}
+.website-review-photo-button{display:inline-flex;padding:0;border:0;border-radius:8px;background:none;cursor:zoom-in}
+.website-review-photo-button img{display:block;width:110px;height:110px;object-fit:cover;border-radius:8px}
+.website-review-photo-button:focus-visible{outline:3px solid var(--site-banner-color,#e482a4);outline-offset:3px}
+.review-image-dialog{position:relative;width:min(900px,calc(100vw - 32px));max-width:900px;max-height:calc(100vh - 32px);padding:18px;border:0;border-radius:12px;background:var(--site-page-background-color,#fffdfb);box-shadow:0 20px 70px #0008}
+.review-image-dialog::backdrop{background:#111b}
+.review-image-dialog img{display:block;width:auto;max-width:100%;height:auto;max-height:calc(100vh - 68px);margin:auto;object-fit:contain}
+.review-image-dialog-close{position:absolute;top:6px;right:8px;width:34px;height:34px;border:0;border-radius:50%;background:var(--site-page-background-color,#fffdfb);color:var(--site-header-text-color,#111);font-size:26px;line-height:1;cursor:pointer}
 .review-page #review-form{margin-top:28px}
 .review-page .product-review{overflow-wrap:anywhere}
 .profile-order-tracking{grid-column:1 / -1;display:flex;align-items:center;flex-wrap:wrap;gap:8px;border-top:1px solid #eee;padding-top:10px;font-size:12px}.profile-order-tracking strong{color:#111;text-transform:uppercase;letter-spacing:.08em;font-size:10px}.profile-order-tracking span{color:#555;overflow-wrap:anywhere}.profile-order-tracking a{color:#8b4261;font-weight:700;text-decoration:none}.profile-order-tracking-pending{color:#777}
