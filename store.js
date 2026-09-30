@@ -244,7 +244,7 @@ async function loadCatalog(){
       if(homepage){
         const [recentResult,featuredResult]=await Promise.all([
           withStoreTimeout(productQueryFor().order('added_at',{ascending:false}).range(0,11),'Homepage products request'),
-          withStoreTimeout(productQueryFor().eq('featured',true).order('added_at',{ascending:false}).range(0,999),'Featured products request')
+          withStoreTimeout(productQueryFor().eq('featured',true).order('added_at',{ascending:false}).range(0,23),'Featured products request')
         ]);
         data=recentResult.data||[];
         error=recentResult.error||null;
