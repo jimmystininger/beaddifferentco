@@ -275,6 +275,7 @@ const setupShoppingBag=async()=>{
   const linePricing=(entry,item)=>window.storeCartPricing(item,entry);
   const lineNeedsOption=(entry,item,pricing)=>Boolean(item?.options?.some((option)=>option.required)&&!pricing?.option);
   const invalidEntries=()=>validBagItems().filter((entry)=>{const item=findProduct(entry.id);return item&&lineNeedsOption(entry,item,linePricing(entry,item));});
+  const unavailableEntries=()=>validBagItems().filter((entry)=>{const item=findProduct(entry.id);return !item||!isProductVisible(item);});
   const currentEntries=()=>validBagItems().filter((entry)=>findProduct(entry.id));
   const renderCart=()=>{
     const allEntries=validBagItems();
@@ -317,6 +318,15 @@ const setupShoppingBag=async()=>{
   summary.className='bag-summary';
   summary.innerHTML='<h2>Order summary</h2><form class="checkout-form"><section class="checkout-shipping"><h3>Shipping information</h3><p class="checkout-signin-note"></p><label>Saved shipping address<select data-shipping-address><option value="">New address</option></select></label><div data-address-summary class="checkout-address-summary" hidden></div><button type="button" data-edit-address hidden>Edit address</button><fieldset data-address-fields><label>Recipient name<input name="shipping_name" autocomplete="name" required></label><label>Address<input name="address_line1" autocomplete="street-address" required></label><label>Apartment, suite, etc.<input name="address_line2" autocomplete="address-line2"></label><div class="admin-form-grid"><label>City<input name="city" autocomplete="address-level2" required></label><label>State<input name="state" autocomplete="address-level1" maxlength="2" required></label></div><label>ZIP code<input name="postal_code" inputmode="numeric" autocomplete="postal-code" required></label></fieldset></section><section class="checkout-calculator"><section class="checkout-promo-section"><h4>Promotion</h4><div class="checkout-promo-entry"><label>Promo code<input name="promo_code" placeholder="Enter a manual promo code"></label><button type="button" data-apply-checkout-promo>Apply</button></div><p data-checkout-promo-status role="status"></p></section><div data-order-summary></div><button class="cta" type="submit">Place order</button><p data-checkout-status role="status"></p></section></form>';
   storePage.append(summary);
+  const invalidCartDialog=document.createElement('dialog');
+  invalidCartDialog.className='profile-dialog cart-invalid-dialog';
+  invalidCartDialog.setAttribute('aria-labelledby','cart-invalid-dialog-title');
+  invalidCartDialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-invalid-cart aria-label="Close">×</button><p class="kicker">CART UPDATE</p><h3 id="cart-invalid-dialog-title">Item unavailable</h3><p>We could not place this order because the following cart item is no longer available:</p><ul data-invalid-cart-items></ul><div class="profile-dialog-actions"><button type="button" class="cta" data-close-invalid-cart>Return to cart</button></div>';
+  storePage.append(invalidCartDialog);
+  const closeInvalidCart=()=>{if(typeof invalidCartDialog.close==='function')invalidCartDialog.close();else invalidCartDialog.removeAttribute('open');};
+  invalidCartDialog.querySelectorAll('[data-close-invalid-cart]').forEach((button)=>button.addEventListener('click',closeInvalidCart));
+  invalidCartDialog.addEventListener('click',(event)=>{if(event.target===invalidCartDialog)closeInvalidCart();});
+  const openInvalidCartDialog=(entries)=>{const list=invalidCartDialog.querySelector('[data-invalid-cart-items]');if(!list)return;const labels=[...new Set(entries.map((entry)=>{const item=findProduct(entry.id);return String(item?.name||entry.productName||item?.sku||entry.productSku||`Product ${entry.id}`).trim();}).filter(Boolean))];list.innerHTML=labels.map((label)=>`<li>${escapeProductText(label)}</li>`).join('');if(typeof invalidCartDialog.showModal==='function'){if(!invalidCartDialog.open)invalidCartDialog.showModal();}else invalidCartDialog.setAttribute('open','');};
   const form=summary.querySelector('form');
   const orderSummary=summary.querySelector('[data-order-summary]');
   const promoEntry=summary.querySelector('.checkout-promo-entry');
@@ -460,6 +470,8 @@ const setupShoppingBag=async()=>{
   form.addEventListener('submit',async(event)=>{
     event.preventDefault();
     const invalid=invalidEntries();
+    const unavailable=unavailableEntries();
+    if(unavailable.length){status.textContent='';drawSummary();openInvalidCartDialog(unavailable);return;}
     if(invalid.length){status.textContent=`Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.`;drawSummary();return;}
     const address=addressValue();
     if(!addressValid(address)){status.textContent='Complete the shipping address first.';setAddressExpanded(true);return;}
@@ -491,7 +503,7 @@ const setupShoppingBag=async()=>{
       const confirmationRewards=document.createElement('section');confirmationRewards.className='order-confirmation-rewards';confirmationRewards.dataset.confirmationRewards='true';confirmationRewards.hidden=true;confirmationRewards.setAttribute('aria-live','polite');storePage.querySelector('.order-confirmation')?.append(confirmationRewards);void hydrateConfirmationRewards(storePage,account);
       if(wasGuest)guestAccountPrompt(storePage,email);
       window.dispatchEvent(new Event('bead-order-created'));
-    }catch(error){status.textContent=error.message||'Unable to create your order.';submit.disabled=false;}
+    }catch(error){const unavailableAfterServerCheck=unavailableEntries();if(unavailableAfterServerCheck.length||/A product in your cart is no longer available/i.test(error?.message||'')){status.textContent='';drawSummary();openInvalidCartDialog(unavailableAfterServerCheck.length?unavailableAfterServerCheck:validBagItems());}else status.textContent=error.message||'Unable to create your order.';submit.disabled=false;}
   });
   setAddressExpanded(true);drawSummary();renderCart();void restoreSavedPromo();void hydrateAddresses();
   const refresh=()=>{renderCart();if(!summary.isConnected&&currentEntries().length)storePage.append(summary);if(summary.isConnected)drawSummary();};
