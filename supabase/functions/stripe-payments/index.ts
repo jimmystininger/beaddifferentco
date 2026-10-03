@@ -40,7 +40,11 @@ async function database(path: string, method = "GET", body?: unknown) {
 
 async function rpc(name: string, args: Record<string, unknown>) {
   const rows = await database(`rpc/${name}`, "POST", args);
-  return Array.isArray(rows) ? rows[0] : rows;
+  const value = Array.isArray(rows) ? rows[0] : rows;
+  if (value && typeof value === "object" && name in value && Object.keys(value).length === 1) {
+    return value[name];
+  }
+  return value;
 }
 
 async function userFrom(request: Request) {
@@ -206,7 +210,7 @@ async function createCheckout(request: Request, body: Record<string, any>) {
   const payload = { ...(body.order_payload || {}), user_id: user?.id || null };
   const order = await rpc("create_stripe_pending_order", { order_payload: payload, owner_user_id: user?.id || null });
   try {
-    const stripeTax = await calculateStripeTax(order);
+    const stripeTax = await calculateStripeTax({ ...order, shipping_address: payload.shipping_address || {} });
     if (cents(stripeTax.amount) !== cents(order.tax_amount)) throw new Error("Stripe Tax changed. Refresh your checkout and try again.");
     const form = stripeForm({
       mode: "payment",
