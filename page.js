@@ -356,7 +356,6 @@ const setupShoppingBag=async()=>{
   const quoteCache=new Map();
   const quoteRequests=new Map();
   const taxCache=new Map();
-  const taxRequests=new Map();
   const setAddressExpanded=(expanded)=>{addressFields.hidden=!expanded;editAddress.hidden=expanded||!addressSelect.value;addressSummary.hidden=expanded||!addressSelect.value;};
   const addressValue=()=>({recipient_name:String(form.elements.shipping_name.value||'').trim(),address_line1:String(form.elements.address_line1.value||'').trim(),address_line2:String(form.elements.address_line2.value||'').trim(),city:String(form.elements.city.value||'').trim(),state:String(form.elements.state.value||'').trim().toUpperCase(),postal_code:String(form.elements.postal_code.value||'').trim(),country:'US'});
   const addressValid=(address)=>Boolean(address.recipient_name&&address.address_line1&&address.city&&/^[A-Z]{2}$/.test(address.state)&&/^\d{5}(?:-\d{4})?$/.test(address.postal_code));
@@ -393,20 +392,14 @@ const setupShoppingBag=async()=>{
     const discount=promoDiscount(totals);
     const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
     const shippingAmount=rate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(rate.amount)||0):0;
-    if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'};return;}
     const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
     const taxKey=JSON.stringify({line1:address.address_line1,city:address.city,postalCode:address.postal_code,taxableAmount});
     const cached=taxCache.get(taxKey);
     if(cached){taxQuote=cached;return;}
-    let request=taxRequests.get(taxKey);
-    if(!request){
-      request=window.beadSupabase.functions.invoke('ohio-sales-tax',{body:{address:{addressLine1:address.address_line1,city:address.city,state:'OH',postalCode:address.postal_code},taxableAmount}}).then((result)=>{
-        if(result.error||result.data?.error||result.data?.amount===undefined)return{amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'};
-        return{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Ohio'};
-      }).catch(()=>({amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'})).finally(()=>taxRequests.delete(taxKey));
-      taxRequests.set(taxKey,request);
-    }
-    taxQuote=await request;
+    if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'};return;}
+    const result=await window.beadSupabase.functions.invoke('stripe-payments',{body:{action:'calculate_tax',tax_payload:{shipping_address:address,taxable_amount:Math.max(0,totals.subtotal-discount),shipping_amount}}}).catch(()=>({error:true}));
+    taxQuote=result.error||result.data?.error||result.data?.amount===undefined?{amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'}:{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Stripe Tax'};
+    if(!taxQuote.error&&!taxQuote.rate)taxQuote.error='Stripe Tax needs an active Ohio registration before tax can be collected.';
     taxCache.set(taxKey,taxQuote);
     if(taxCache.size>20)taxCache.delete(taxCache.keys().next().value);
   };

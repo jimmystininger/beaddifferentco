@@ -82,6 +82,61 @@ async function stripeRequest(path: string, form: URLSearchParams, idempotencyKey
   return payload;
 }
 
+function taxAddress(form: URLSearchParams, address: Record<string, any>) {
+  form.set("customer_details[address][line1]", text(address.address_line1, 120));
+  if (address.address_line2) form.set("customer_details[address][line2]", text(address.address_line2, 120));
+  form.set("customer_details[address][city]", text(address.city, 80));
+  form.set("customer_details[address][state]", text(address.state, 2).toUpperCase());
+  form.set("customer_details[address][postal_code]", text(address.postal_code, 10));
+  form.set("customer_details[address][country]", "US");
+  form.set("customer_details[address_source]", "shipping");
+}
+
+async function calculateStripeTax(order: Record<string, any>) {
+  const address = (order.shipping_address || {}) as Record<string, any>;
+  const state = text(address.state, 2).toUpperCase();
+  const taxableItems = checkoutLineItems(order);
+  const shippingAmount = cents(order.shipping_amount);
+  if (state !== "OH" || (!taxableItems.length && !shippingAmount)) return { amount: 0, rate: 0, state: "", jurisdiction: "Stripe Tax" };
+  const form = stripeForm({ currency: "usd", "shipping_cost[amount]": shippingAmount, "shipping_cost[tax_code]": "txcd_92010001" });
+  taxAddress(form, address);
+  taxableItems.forEach((line, index) => {
+    form.set(`line_items[${index}][amount]`, String(line.amount));
+    form.set(`line_items[${index}][reference]`, `${text(order.id, 80)}-${index}`);
+    form.set(`line_items[${index}][tax_code]`, "txcd_99999999");
+  });
+  const calculation = await stripeRequest("tax/calculations", form);
+  const amount = Math.max(0, Number(calculation.tax_amount_exclusive || 0) / 100);
+  const taxableBase = taxableItems.reduce((sum, line) => sum + line.amount, 0) + shippingAmount;
+  return {
+    amount,
+    rate: taxableBase > 0 ? amount / (taxableBase / 100) : 0,
+    state: "OH",
+    jurisdiction: "Stripe Tax",
+    calculation_id: text(calculation.id, 80),
+  };
+}
+
+async function calculateTaxPreview(body: Record<string, any>) {
+  const taxPayload = body.tax_payload || {};
+  const address = (taxPayload.shipping_address || {}) as Record<string, any>;
+  const taxableAmount = Math.max(0, Number(taxPayload.taxable_amount) || 0);
+  const shippingAmount = Math.max(0, Number(taxPayload.shipping_amount) || 0);
+  const state = text(address.state, 2).toUpperCase();
+  if (state !== "OH" || (!taxableAmount && !shippingAmount)) return json({ amount: 0, rate: 0, state: "", jurisdiction: "Stripe Tax" });
+  const form = stripeForm({ currency: "usd", "shipping_cost[amount]": cents(shippingAmount), "shipping_cost[tax_code]": "txcd_92010001" });
+  taxAddress(form, address);
+  if (taxableAmount) {
+    form.set("line_items[0][amount]", String(cents(taxableAmount)));
+    form.set("line_items[0][reference]", "cart");
+    form.set("line_items[0][tax_code]", "txcd_99999999");
+  }
+  const calculation = await stripeRequest("tax/calculations", form);
+  const amount = Math.max(0, Number(calculation.tax_amount_exclusive || 0) / 100);
+  const taxableBase = cents(taxableAmount) + cents(shippingAmount);
+  return json({ amount, rate: taxableBase > 0 ? amount / (taxableBase / 100) : 0, state: "OH", jurisdiction: "Stripe Tax", calculation_id: text(calculation.id, 80) });
+}
+
 function cents(value: unknown) {
   return Math.max(0, Math.round((Number(value) || 0) * 100));
 }
@@ -139,6 +194,8 @@ async function createCheckout(request: Request, body: Record<string, any>) {
   const payload = { ...(body.order_payload || {}), user_id: user?.id || null };
   const order = await rpc("create_stripe_pending_order", { order_payload: payload, owner_user_id: user?.id || null });
   try {
+    const stripeTax = await calculateStripeTax(order);
+    if (cents(stripeTax.amount) !== cents(order.tax_amount)) throw new Error("Stripe Tax changed. Refresh your checkout and try again.");
     const form = stripeForm({
       mode: "payment",
       customer_email: text(order.customer_email, 180),
@@ -183,6 +240,7 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
   try {
     const body = await request.json();
+    if (body?.action === "calculate_tax") return await calculateTaxPreview(body);
     if (body?.action === "create_checkout") return await createCheckout(request, body);
     if (body?.action === "refund_order") return await createRefund(request, body);
     return json({ error: "Unsupported payment action." }, 400);
