@@ -4,6 +4,7 @@ const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const stripeSecret = Deno.env.get("STRIPE_SECRET_KEY") || "";
 const storefrontUrl = (Deno.env.get("STOREFRONT_URL") || "https://www.beaddifferentco.com").replace(/\/$/, "");
+const ohioTestTaxRate = 0.0575;
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, stripe-signature",
@@ -92,6 +93,17 @@ function taxAddress(form: URLSearchParams, address: Record<string, any>) {
   form.set("customer_details[address_source]", "shipping");
 }
 
+function stripeTaxResult(calculation: Record<string, any>, taxableBase: number) {
+  const stripeAmount = Math.max(0, Number(calculation.tax_amount_exclusive || 0));
+  const useTestFallback = stripeSecret.startsWith("sk_test_") && stripeAmount === 0 && taxableBase > 0;
+  const amountCents = useTestFallback ? Math.round(taxableBase * ohioTestTaxRate) : stripeAmount;
+  return {
+    amount: amountCents / 100,
+    rate: useTestFallback ? ohioTestTaxRate : taxableBase > 0 ? amountCents / taxableBase : 0,
+    useTestFallback,
+  };
+}
+
 async function calculateStripeTax(order: Record<string, any>) {
   const address = (order.shipping_address || {}) as Record<string, any>;
   const state = text(address.state, 2).toUpperCase();
@@ -106,11 +118,11 @@ async function calculateStripeTax(order: Record<string, any>) {
     form.set(`line_items[${index}][tax_code]`, "txcd_99999999");
   });
   const calculation = await stripeRequest("tax/calculations", form);
-  const amount = Math.max(0, Number(calculation.tax_amount_exclusive || 0) / 100);
   const taxableBase = taxableItems.reduce((sum, line) => sum + line.amount, 0) + shippingAmount;
+  const tax = stripeTaxResult(calculation, taxableBase);
   return {
-    amount,
-    rate: taxableBase > 0 ? amount / (taxableBase / 100) : 0,
+    amount: tax.amount,
+    rate: tax.rate,
     state: "OH",
     jurisdiction: "Stripe Tax",
     calculation_id: text(calculation.id, 80),
@@ -132,9 +144,9 @@ async function calculateTaxPreview(body: Record<string, any>) {
     form.set("line_items[0][tax_code]", "txcd_99999999");
   }
   const calculation = await stripeRequest("tax/calculations", form);
-  const amount = Math.max(0, Number(calculation.tax_amount_exclusive || 0) / 100);
   const taxableBase = cents(taxableAmount) + cents(shippingAmount);
-  return json({ amount, rate: taxableBase > 0 ? amount / (taxableBase / 100) : 0, state: "OH", jurisdiction: "Stripe Tax", calculation_id: text(calculation.id, 80) });
+  const tax = stripeTaxResult(calculation, taxableBase);
+  return json({ amount: tax.amount, rate: tax.rate, state: "OH", jurisdiction: tax.useTestFallback ? "Ohio test rate" : "Stripe Tax", calculation_id: text(calculation.id, 80) });
 }
 
 function cents(value: unknown) {
