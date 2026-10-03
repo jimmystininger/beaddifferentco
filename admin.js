@@ -1664,14 +1664,16 @@ const saveCanonicalInventoryFields=async(productId,fields)=>{
     const update={
       name:value.name,
       price:value.price,
-      cost:value.cost,
       unit_type:value.unitType,
-      weight_value:value.weight,
-      weight_unit:value.weightUnit,
       preferred_vendor:value.vendor,
       taxable:value.taxable,
       updated_at:new Date().toISOString()
     };
+    if(!parent){
+      update.cost=value.cost;
+      update.weight_value=value.weight;
+      update.weight_unit=value.weightUnit;
+    }
     if(!locked&&!parent){
       update.quantity_on_hand=value.quantity;
       update.reorder_point=value.reorderPoint;
@@ -1692,7 +1694,8 @@ const saveCanonicalInventoryFields=async(productId,fields)=>{
   };
   for(const {value,record,update,locked,parent} of writes){
     const persisted=persistedById.get(record.id)||{};
-    for(const field of ['name','price','cost','unit_type','weight_value','weight_unit','preferred_vendor','taxable']){
+    const editableFields=parent?['name','price','unit_type','preferred_vendor','taxable']:['name','price','cost','unit_type','weight_value','weight_unit','preferred_vendor','taxable'];
+    for(const field of editableFields){
       if(mismatch(persisted[field],update[field]))throw new Error('Canonical inventory field did not round-trip for '+value.sku+': '+field+'.');
     }
     if(!locked&&!parent){
@@ -3487,3 +3490,4 @@ const mergeStorefrontContentCache=(source={})=>{try{const record=JSON.parse(sess
 let storeContentCacheBridgeAttempts=0;const storeContentCacheBridgeTimer=window.setInterval(()=>{installStoreContentCacheBridge();storeContentCacheBridgeAttempts+=1;if(window.applyStoreContent?.__storeContentCacheBridge||storeContentCacheBridgeAttempts>=20)window.clearInterval(storeContentCacheBridgeTimer);},250);
 const ensureAdminDefaultThemeOption=()=>{document.querySelectorAll('[data-theme-form] select[name="theme_preset"]').forEach((select)=>{if(!select.querySelector('option[value="__locked_default__"]')){const option=document.createElement('option');option.value='__locked_default__';option.textContent='Default (locked)';select.insertBefore(option,select.options[1]||null);}const syncApplyButton=()=>{const saveButton=select.form?.querySelector('button[type="submit"]');if(saveButton&&select.value==='__locked_default__')saveButton.disabled=false;};if(!select.dataset.defaultThemeApplyRepair){select.dataset.defaultThemeApplyRepair='true';select.addEventListener('change',syncApplyButton);}syncApplyButton();});};
 if(document.body){const adminDefaultThemeObserver=new MutationObserver(()=>ensureAdminDefaultThemeOption());adminDefaultThemeObserver.observe(document.body,{childList:true,subtree:true});ensureAdminDefaultThemeOption();}
+document.addEventListener('click',async(event)=>{const button=event.target.closest('[data-order-refund-full],[data-order-refund-partial]');if(!button||!window.beadSupabase)return;event.preventDefault();event.stopImmediatePropagation();const orderId=button.dataset.orderRefundFull||button.dataset.orderRefundPartial;const full=Boolean(button.dataset.orderRefundFull);const card=button.closest('.admin-order-card');const input=card?.querySelector(`[data-order-refund-amount="${CSS.escape(orderId)}"]`);const amount=full?null:Number(input?.value||0);if(!full&&!(amount>0)){alert('Enter a partial refund amount first.');return;}if(full&&!confirm('Refund the remaining balance for this order?'))return;const reason=prompt('Refund reason:');if(reason===null)return;button.disabled=true;const status=card?.querySelector(`[data-order-action-status="${CSS.escape(orderId)}"]`);if(status)status.textContent='Processing refund…';try{const result=await window.beadSupabase.functions.invoke('stripe-payments',{body:{action:'refund_order',order_id:orderId,amount,full,reason}});if(result.error){let detail=null;try{detail=await result.error.context?.json();}catch(error){}throw new Error(detail?.error||result.error.message||'Refund failed.');}if(status)status.textContent=`Refund recorded: $${Number(result.data?.refund_amount||amount||0).toFixed(2)}.`;window.dispatchEvent(new CustomEvent('admin-order-changed',{detail:{orderId}}));setTimeout(()=>document.querySelector('[data-admin-tab="orders"]')?.click(),500);}catch(error){if(status)status.textContent='Refund failed: '+(error.message||'Unknown error.');button.disabled=false;}},true);

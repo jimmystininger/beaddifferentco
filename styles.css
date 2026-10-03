@@ -930,3 +930,10 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .category-grid img{display:block;width:100%;height:auto;aspect-ratio:1/1;object-fit:cover;background:var(--site-page-background-color,#fffdfb)}
 .promo-schedule-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}.promo-schedule-fields label{display:grid;gap:6px;min-width:0}
 @media(max-width:560px){.promo-schedule-fields{grid-template-columns:1fr}}
+
+.category-filter-region .category-filter{display:grid;gap:8px;font-size:15px;font-weight:700}
+.category-filter-region .category-filter select,.category-filters a,.product-page-canonical-filters .product-option select{min-height:48px;padding:12px 18px;border:1px solid var(--site-header-text-color,#111);border-radius:10px;background:var(--site-page-background-color,#fffdfb);color:var(--site-header-text-color,#111);font:16px Arial,sans-serif}
+.category-filter-region .category-filter select,.product-page-canonical-filters .product-option select{min-width:240px;cursor:pointer}
+.category-filters a{display:inline-flex;align-items:center;font-weight:700;text-decoration:none}
+.category-filter-clear{min-height:48px;padding:12px 18px;border-radius:10px;font-size:15px}
+@media(max-width:560px){.category-filter-region .category-filter,.category-filter-region .category-filter select,.product-page-canonical-filters .product-option,.product-page-canonical-filters .product-option select{width:100%;min-width:0}.category-filter-region .category-filter select,.product-page-canonical-filters .product-option select{font-size:16px}}
