@@ -327,6 +327,15 @@ const setupShoppingBag=async()=>{
   invalidCartDialog.querySelectorAll('[data-close-invalid-cart]').forEach((button)=>button.addEventListener('click',closeInvalidCart));
   invalidCartDialog.addEventListener('click',(event)=>{if(event.target===invalidCartDialog)closeInvalidCart();});
   const openInvalidCartDialog=(entries)=>{const list=invalidCartDialog.querySelector('[data-invalid-cart-items]');if(!list)return;const labels=[...new Set(entries.map((entry)=>{const item=findProduct(entry.id);return String(item?.name||entry.productName||item?.sku||entry.productSku||`Product ${entry.id}`).trim();}).filter(Boolean))];list.innerHTML=labels.map((label)=>`<li>${escapeProductText(label)}</li>`).join('');if(typeof invalidCartDialog.showModal==='function'){if(!invalidCartDialog.open)invalidCartDialog.showModal();}else invalidCartDialog.setAttribute('open','');};
+  const checkoutErrorDialog=document.createElement('dialog');
+  checkoutErrorDialog.className='profile-dialog checkout-error-dialog';
+  checkoutErrorDialog.setAttribute('aria-labelledby','checkout-error-dialog-title');
+  checkoutErrorDialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-checkout-error aria-label="Close">×</button><p class="kicker">CHECKOUT UPDATE</p><h3 id="checkout-error-dialog-title">We couldn’t complete checkout</h3><p data-checkout-error-copy></p><div class="profile-dialog-actions"><button type="button" class="cta" data-close-checkout-error>Close</button></div>';
+  storePage.append(checkoutErrorDialog);
+  const closeCheckoutError=()=>{if(typeof checkoutErrorDialog.close==='function')checkoutErrorDialog.close();else checkoutErrorDialog.removeAttribute('open');};
+  checkoutErrorDialog.querySelectorAll('[data-close-checkout-error]').forEach((button)=>button.addEventListener('click',closeCheckoutError));
+  checkoutErrorDialog.addEventListener('click',(event)=>{if(event.target===checkoutErrorDialog)closeCheckoutError();});
+  const openCheckoutErrorDialog=(message)=>{const copy=checkoutErrorDialog.querySelector('[data-checkout-error-copy]');if(copy)copy.textContent=message||'Please try again.';if(typeof checkoutErrorDialog.showModal==='function'){if(!checkoutErrorDialog.open)checkoutErrorDialog.showModal();}else checkoutErrorDialog.setAttribute('open','');};
   const form=summary.querySelector('form');
   const orderSummary=summary.querySelector('[data-order-summary]');
   const promoEntry=summary.querySelector('.checkout-promo-entry');
@@ -365,24 +374,26 @@ const setupShoppingBag=async()=>{
     const selectedRate=shippingMethod==='priority'?priority:standard;
     const shippingAmount=selectedRate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(selectedRate.amount)||0):0;
     const taxAmount=Number(taxQuote?.amount)||0;
+    const summaryAddress=addressValue();
+    const taxBlocked=summaryAddress.state==='OH'&&addressValid(summaryAddress)&&(!taxQuote||taxQuote.error||!(Number(taxQuote.rate)>0));
     const total=Math.max(0,totals.subtotal-discount+shippingAmount+taxAmount);
     const eta=selectedRate?.scheduledDeliveryDate;
     const dateLabel=eta?new Date(eta+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'Quote pending';
     const promoMarkup=activePromo?`<div class="checkout-promo-applied"><span>Promo code · ${escapeProductText(activePromo.code||'Automatic promotion')} · ${escapeProductText(promoLabel(activePromo))}</span><strong>-$${discount.toFixed(2)}</strong><button type="button" data-remove-checkout-promo>Remove</button></div>`:'';
-    orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${selectedRate?(shippingMethod==='standard'&&shippingQuote.free?'Free':'$'+shippingAmount.toFixed(2)):'Quote pending'}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div></div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
+    orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${selectedRate?(shippingMethod==='standard'&&shippingQuote.free?'Free':'$'+shippingAmount.toFixed(2)):'Quote pending'}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div></div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?.error?'Unavailable':taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
     const checkoutButton=form.querySelector('button[type="submit"]');
-    if(checkoutButton){checkoutButton.disabled=invalid.length>0;checkoutButton.title=invalid.length?'Resolve highlighted cart items before checkout.':'';}
+    if(checkoutButton){checkoutButton.disabled=invalid.length>0||taxBlocked;checkoutButton.title=invalid.length?'Resolve highlighted cart items before checkout.':taxBlocked?'Tax must be calculated before checkout.':'';}
     orderSummary.querySelector('[data-checkout-shipping-method]')?.addEventListener('change',(event)=>{shippingMethod=event.target.value==='priority'?'priority':'standard';void refreshQuote();});
     orderSummary.querySelector('[data-remove-checkout-promo]')?.addEventListener('click',()=>{activePromo=window.storePromos.auto(currentTotals().subtotal);savedPromoCode='';window.storeCart?.clearPromo?.();form.elements.promo_code.value='';promoStatus.textContent=activePromo?'Automatic promotion reapplied.':'Promotion removed.';drawSummary();});
   };
   const refreshTax=async()=>{
     const address=addressValue();
-    if(address.state!=='OH'||!addressValid(address)){taxQuote=address.state==='OH'?{amount:0}:{amount:0,rate:0,state:''};return;}
+    if(address.state!=='OH'||!addressValid(address)){taxQuote=address.state==='OH'?null:{amount:0,rate:0,state:''};return;}
     const totals=currentTotals();
     const discount=promoDiscount(totals);
     const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
     const shippingAmount=rate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(rate.amount)||0):0;
-    if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH'};return;}
+    if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'};return;}
     const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
     const taxKey=JSON.stringify({line1:address.address_line1,city:address.city,postalCode:address.postal_code,taxableAmount});
     const cached=taxCache.get(taxKey);
@@ -390,9 +401,9 @@ const setupShoppingBag=async()=>{
     let request=taxRequests.get(taxKey);
     if(!request){
       request=window.beadSupabase.functions.invoke('ohio-sales-tax',{body:{address:{addressLine1:address.address_line1,city:address.city,state:'OH',postalCode:address.postal_code},taxableAmount}}).then((result)=>{
-        if(result.error||result.data?.error||result.data?.amount===undefined)return{amount:0,rate:0,state:'OH'};
+        if(result.error||result.data?.error||result.data?.amount===undefined)return{amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'};
         return{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Ohio'};
-      }).catch(()=>({amount:0,rate:0,state:'OH'})).finally(()=>taxRequests.delete(taxKey));
+      }).catch(()=>({amount:0,rate:0,state:'OH',error:'Ohio sales tax is temporarily unavailable. Please try again.'})).finally(()=>taxRequests.delete(taxKey));
       taxRequests.set(taxKey,request);
     }
     taxQuote=await request;
@@ -474,16 +485,17 @@ const setupShoppingBag=async()=>{
     if(unavailable.length){status.textContent='';drawSummary();openInvalidCartDialog(unavailable);return;}
     if(invalid.length){status.textContent=`Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.`;drawSummary();return;}
     const address=addressValue();
-    if(!addressValid(address)){status.textContent='Complete the shipping address first.';setAddressExpanded(true);return;}
+    if(!addressValid(address)){status.textContent='';openCheckoutErrorDialog('Complete the shipping address before placing your order.');setAddressExpanded(true);return;}
+    if(address.state==='OH'&&(!taxQuote||taxQuote.error||!(Number(taxQuote.rate)>0))){status.textContent='';openCheckoutErrorDialog('Ohio sales tax could not be calculated right now. Please try again before placing your order.');drawSummary();return;}
     const account=window.customerAccounts?.current?.();
     const email=account?.email||String(form.elements.customer_email?.value||'').trim();
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){status.textContent='Enter an email address for order updates.';return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){status.textContent='';openCheckoutErrorDialog('Enter an email address for order updates.');return;}
     if(activePromo?.mode==='manual'){
       try{
         const verified=await window.storePromos.findAsync(activePromo.code);
         if(!verified||verified.mode!=='manual'){activePromo=window.storePromos.auto(currentTotals().subtotal);savedPromoCode='';window.storeCart?.clearPromo?.();promoStatus.textContent='That promo code is no longer available.';drawSummary();return;}
         activePromo=verified;
-      }catch(error){status.textContent='Unable to verify the promo code right now.';return;}
+      }catch(error){status.textContent='';openCheckoutErrorDialog('Unable to verify the promo code right now.');return;}
     }
     const totals=currentTotals();
     const selectedRate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
@@ -503,7 +515,7 @@ const setupShoppingBag=async()=>{
       const confirmationRewards=document.createElement('section');confirmationRewards.className='order-confirmation-rewards';confirmationRewards.dataset.confirmationRewards='true';confirmationRewards.hidden=true;confirmationRewards.setAttribute('aria-live','polite');storePage.querySelector('.order-confirmation')?.append(confirmationRewards);void hydrateConfirmationRewards(storePage,account);
       if(wasGuest)guestAccountPrompt(storePage,email);
       window.dispatchEvent(new Event('bead-order-created'));
-    }catch(error){const unavailableAfterServerCheck=unavailableEntries();if(unavailableAfterServerCheck.length||/A product in your cart is no longer available/i.test(error?.message||'')){status.textContent='';drawSummary();openInvalidCartDialog(unavailableAfterServerCheck.length?unavailableAfterServerCheck:validBagItems());}else status.textContent=error.message||'Unable to create your order.';submit.disabled=false;}
+    }catch(error){const unavailableAfterServerCheck=unavailableEntries();if(unavailableAfterServerCheck.length||/A product in your cart is no longer available/i.test(error?.message||'')){status.textContent='';drawSummary();openInvalidCartDialog(unavailableAfterServerCheck.length?unavailableAfterServerCheck:validBagItems());}else{status.textContent='';openCheckoutErrorDialog(error.message||'Unable to create your order.');}submit.disabled=false;}
   });
   setAddressExpanded(true);drawSummary();renderCart();void restoreSavedPromo();void hydrateAddresses();
   const refresh=()=>{renderCart();if(!summary.isConnected&&currentEntries().length)storePage.append(summary);if(summary.isConnected)drawSummary();};

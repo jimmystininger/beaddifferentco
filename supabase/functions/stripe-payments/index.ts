@@ -22,8 +22,17 @@ async function database(path: string, method = "GET", body?: unknown) {
     headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json", Prefer: "return=representation" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (!response.ok) throw new Error(`Payment storage request failed (${response.status}).`);
   const payload = await response.text();
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const parsed = JSON.parse(payload);
+      detail = text(parsed?.message || parsed?.hint || parsed?.details || parsed?.error, 240);
+    } catch {
+      detail = '';
+    }
+    throw new Error(detail ? `Payment storage request failed (${response.status}): ${detail}` : `Payment storage request failed (${response.status}).`);
+  }
   if (!payload.trim()) return [];
   return JSON.parse(payload);
 }
