@@ -14,6 +14,7 @@ const deliveryProcessingLabel=(days)=>`${Number(days)||0} business-day processin
 const productDeliveryCache=new Map();
 const productDeliveryInFlight=new Map();
 const productDeliveryCacheTtlMs=10*60*1000;
+const productDeliveryWeightToOz=(value,unit)=>{const amount=Number(value)||0;switch(String(unit||'oz').trim().toLowerCase()){case'lb':case'lbs':case'pound':case'pounds':return amount*16;case'g':case'gram':case'grams':return amount/28.349523125;case'kg':case'kilogram':case'kilograms':return amount*35.27396195;default:return amount;}};
 
 function addShippingIcon(className,svg){const icon=document.createElement('span');icon.className=`shipping-row-icon ${className}`;icon.setAttribute('aria-hidden','true');icon.innerHTML=svg;return icon;}
 function enhanceProductShippingCard(){const shipping=document.querySelector('[data-delivery-form]');if(!shipping||shipping.dataset.iconsReady)return;shipping.dataset.iconsReady='true';const heading=shipping.querySelector('.shipping-estimate-heading');const destination=shipping.querySelector('.shipping-delivery');const estimate=shipping.querySelector('.shipping-estimate-result');const truck='<svg viewBox="0 0 24 24" focusable="false"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7zM7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>';const pin='<svg viewBox="0 0 24 24" focusable="false"><path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.2"/></svg>';const calendar='<svg viewBox="0 0 24 24" focusable="false"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>';if(heading&&!heading.querySelector('.shipping-row-icon')){heading.classList.add('shipping-row');heading.prepend(addShippingIcon('shipping-truck-icon',truck));}if(destination&&!destination.querySelector('.shipping-row-icon')){destination.classList.add('shipping-row');destination.prepend(addShippingIcon('',pin));}if(estimate&&!estimate.querySelector('.shipping-row-icon')){estimate.classList.add('shipping-row');estimate.prepend(addShippingIcon('',calendar));}}
@@ -29,7 +30,7 @@ async function refreshProductDeliveryEstimate(main,item){
   const zip=input.value.trim();
   if(!deliveryZipPattern.test(zip)){arrival.textContent='Enter a valid ZIP code to see an estimate.';return;}
   const config=window.productStoreConfig||{};
-  const weightOz=Math.max(0.01,Number(item.weight)||1);
+  const weightOz=Math.max(0.01,productDeliveryWeightToOz(item.weight,item.weightUnit)||1);
   const cacheKey=JSON.stringify({zip,weightOz,origin:String(config.shippingOriginPostalCode||''),processingDays:Number(config.processingDays)||0});
   const applyResult=(result)=>{
     if(!result||result.error){arrival.textContent=result?.error||'Delivery estimates are unavailable right now.';return;}
