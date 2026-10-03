@@ -16,6 +16,8 @@ const numberValue = (value: unknown, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
+const finderUsername = Deno.env.get("OHIO_FINDER_USERNAME") || "";
+const finderPassword = Deno.env.get("OHIO_FINDER_PASSWORD") || "";
 type CacheEntry = { expiresAt: number; value: unknown };
 const taxCache = new Map<string, CacheEntry>();
 const cacheTtlMs = 30_000;
@@ -67,17 +69,21 @@ const ohioTax = async (payload: Record<string, unknown>) => {
   const cacheKey = JSON.stringify({ addressLine, city, state, postalCode, taxableAmount, taxDate });
   const cached = readCache<Record<string, unknown>>(cacheKey);
   if (cached) return json(cached);
+  if (!finderUsername || !finderPassword) {
+    return json({ error: "Ohio tax provider credentials are not configured." }, 503);
+  }
   const soapBody = addressLine && city
     ? `<GetOHSalesTaxByAddress xmlns="https://thefinder.tax.ohio.gov/OHFinderService"><address>${escapeXml(addressLine)}</address><city>${escapeXml(city)}</city><stateAbbreviation>OH</stateAbbreviation><postalCode>${escapeXml(postalCode)}</postalCode><countryCode>US</countryCode><taxAmount>${taxableAmount.toFixed(2)}</taxAmount><taxDate>${escapeXml(taxDate)}</taxDate><requestSFSTInfo>false</requestSFSTInfo></GetOHSalesTaxByAddress>`
     : `<GetOHSalesTaxByZipCode xmlns="https://thefinder.tax.ohio.gov/OHFinderService"><postalCode>${escapeXml(postalCode)}</postalCode><taxAmount>${taxableAmount.toFixed(2)}</taxAmount><taxDate>${escapeXml(taxDate)}</taxDate><requestSFSTInfo>false</requestSFSTInfo></GetOHSalesTaxByZipCode>`;
   const action = addressLine && city ? "GetOHSalesTaxByAddress" : "GetOHSalesTaxByZipCode";
+  const securityHeader = `<wsse:Security soap:mustUnderstand="1" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"><wsse:UsernameToken><wsse:Username>${escapeXml(finderUsername)}</wsse:Username><wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">${escapeXml(finderPassword)}</wsse:Password></wsse:UsernameToken></wsse:Security>`;
   const response = await fetch("https://thefinder.tax.ohio.gov/OHFinderService/OHFinderService.asmx", {
     method: "POST",
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
       SOAPAction: `"https://thefinder.tax.ohio.gov/OHFinderService/${action}"`,
     },
-    body: `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>${soapBody}</soap:Body></soap:Envelope>`,
+    body: `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Header>${securityHeader}</soap:Header><soap:Body>${soapBody}</soap:Body></soap:Envelope>`,
   });
   const responseBody = await response.text();
   if (!response.ok) return json({ error: `Ohio returned HTTP ${response.status}.` }, 502);
