@@ -168,7 +168,7 @@ const saleCollectionVariants=(item)=>{
 
 const renderSaleCollection=async()=>{
   if(window.catalogMetadataReady)await window.catalogMetadataReady;
-  main.innerHTML='<section class="store-page sale-collection-page"><p class="kicker">SHOP THE SAVINGS</p><h1>Sale Collection</h1><p class="sale-collection-intro">Only individual items currently on sale are shown here. Choose the exact color or pack size to see its sale price.</p><div class="product-grid sale-collection-grid" id="sale-collection-products"></div><p class="store-empty" id="sale-collection-empty" role="status">No sale items are currently available.</p></section>';
+  main.innerHTML='<section class="store-page sale-collection-page"><p class="kicker">SHOP THE SAVINGS</p><h1>Sale Collection</h1><div class="product-grid sale-collection-grid" id="sale-collection-products"></div><p class="store-empty" id="sale-collection-empty" role="status">No sale items are currently available.</p></section>';
   const grid=main.querySelector('#sale-collection-products');
   const empty=main.querySelector('#sale-collection-empty');
   const rows=visibleCatalog().flatMap(saleCollectionVariants);

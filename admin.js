@@ -2325,9 +2325,10 @@ const restoreAdminRequestedBehavior=()=>{
 const adminRestorationObserver=new MutationObserver(()=>restoreAdminRequestedBehavior());
 adminRestorationObserver.observe(document.body,{childList:true,subtree:true});
 restoreAdminRequestedBehavior();
+const syncFeatureButton=(button,featured)=>{button.dataset.featured=String(featured);button.textContent=featured?'UNFEATURE':'FEATURE';button.setAttribute('aria-label',featured?'Unfeature product':'Feature product');};
 document.addEventListener('click',async(event)=>{
   const featureButton=event.target.closest?.('[data-toggle-featured]');
-  if(featureButton){event.preventDefault();event.stopImmediatePropagation();const current=featureButton.dataset.featured==='true';const result=await cloudAdmin().from('products').update({featured:!current}).eq('id',featureButton.dataset.toggleFeatured);if(result.error){renderCloudError(result.error);return;}renderItems();return;}
+  if(featureButton){event.preventDefault();event.stopImmediatePropagation();const current=featureButton.dataset.featured==='true';const next=!current;syncFeatureButton(featureButton,next);featureButton.dataset.featuredPending='true';featureButton.disabled=true;try{const result=await cloudAdmin().from('products').update({featured:next}).eq('id',featureButton.dataset.toggleFeatured);if(result.error){syncFeatureButton(featureButton,current);renderCloudError(result.error);return;}}catch(error){syncFeatureButton(featureButton,current);renderCloudError(error);}finally{featureButton.disabled=false;delete featureButton.dataset.featuredPending;}return;}
   const clearButton=event.target.closest?.('[data-theme-category-clear]');
   if(clearButton)event.preventDefault();
 },true);
