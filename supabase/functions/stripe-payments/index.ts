@@ -3,7 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const stripeSecret = Deno.env.get("STRIPE_SECRET_KEY") || "";
-const storefrontUrl = (Deno.env.get("STOREFRONT_URL") || "https://www.beaddifferentco.com").replace(/\/$/, "");
+const storefrontUrl = (Deno.env.get("STOREFRONT_URL") || "https://beaddifferentco.com").replace(/\/$/, "");
 const ohioTestTaxRate = 0.0575;
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -208,6 +208,7 @@ function appendLineItems(form: URLSearchParams, order: Record<string, any>) {
 async function createCheckout(request: Request, body: Record<string, any>) {
   const user = await userFrom(request);
   const payload = { ...(body.order_payload || {}), user_id: user?.id || null };
+  try { await rpc("expire_pending_stripe_orders", {}); } catch (error) { console.warn("Pending Stripe order cleanup unavailable.", error); }
   const order = await rpc("create_stripe_pending_order", { order_payload: payload, owner_user_id: user?.id || null });
   try {
     const stripeTax = await calculateStripeTax({ ...order, shipping_address: payload.shipping_address || {} });

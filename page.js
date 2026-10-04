@@ -172,30 +172,44 @@ const renderSaleCollection=async()=>{
   const grid=main.querySelector('#sale-collection-products');
   const empty=main.querySelector('#sale-collection-empty');
   const rows=visibleCatalog().flatMap(saleCollectionVariants);
-  grid.replaceChildren(...rows.map(({item,value,sku,originalPrice,pricing,variantLabel})=>{
+  const products=[...rows.reduce((groups,entry)=>{
+    const key=String(entry.item.id||entry.item.externalId||entry.item.name||'');
+    const group=groups.get(key)||{item:entry.item,variants:[]};
+    group.variants.push(entry);
+    groups.set(key,group);
+    return groups;
+  },new Map()).values()];
+  grid.replaceChildren(...products.map(({item,variants})=>{
     const card=document.createElement('article');
     card.className='product-card sale-collection-card';
-    const href=`product.html?id=${encodeURIComponent(item.id)}&sku=${encodeURIComponent(sku)}&sale=1`;
+    const firstSku=variants[0].sku;
+    const href=`product.html?id=${encodeURIComponent(item.id)}&sku=${encodeURIComponent(firstSku)}&sale=1`;
     const link=document.createElement('a');
     link.className='product-card-link';link.href=href;
     const imageWrap=document.createElement('div');imageWrap.className='product-card-image-wrap';
-    const image=value.imageUrl||item.image;
-    if(image){const imageElement=document.createElement('img');imageElement.loading='lazy';imageElement.className='product-card-image';imageElement.src=image;imageElement.alt=`${item.name} — ${variantLabel}`;imageWrap.append(imageElement);}
+    const image=variants.find((entry)=>entry.value.imageUrl)?.value.imageUrl||item.image;
+    if(image){const imageElement=document.createElement('img');imageElement.loading='lazy';imageElement.className='product-card-image';imageElement.src=image;imageElement.alt=item.name;imageWrap.append(imageElement);}
     const badges=document.createElement('div');badges.className='product-badges product-card-badges product-card-badges-bottom';
     const saleBadge=document.createElement('span');saleBadge.className='product-badge product-badge-on-sale';saleBadge.textContent='On Sale';badges.append(saleBadge);imageWrap.append(badges);
     link.append(imageWrap);
     const title=document.createElement('h3');title.textContent=item.name;link.append(title);
-    const variant=document.createElement('p');variant.className='sale-collection-variant';variant.textContent=variantLabel;link.append(variant);
-    const price=document.createElement('strong');
-    const original=document.createElement('s');original.className='product-card-original-price';original.textContent=`$${originalPrice.toFixed(2)}`;
-    const current=document.createElement('span');current.className='product-card-promo-price';current.textContent=`$${Number(pricing.price).toFixed(2)}`;
-    price.append(original,' ',current);
+    const options=document.createElement('div');options.className='sale-collection-options';
+    variants.forEach(({sku,originalPrice,pricing,variantLabel})=>{
+      const option=document.createElement('div');option.className='sale-collection-option';
+      const copy=document.createElement('div');copy.className='sale-collection-option-copy';
+      const label=document.createElement('strong');label.textContent=variantLabel;copy.append(label);
+      const price=document.createElement('span');price.className='sale-collection-option-price';
+      const original=document.createElement('s');original.className='product-card-original-price';original.textContent=`$${originalPrice.toFixed(2)}`;
+      const current=document.createElement('span');current.className='product-card-promo-price';current.textContent=`$${Number(pricing.price).toFixed(2)}`;
+      price.append(original,' ',current);copy.append(price);
+      const optionLink=document.createElement('a');optionLink.className='cta sale-collection-option-link';optionLink.href=`product.html?id=${encodeURIComponent(item.id)}&sku=${encodeURIComponent(sku)}&sale=1`;optionLink.textContent='View option';
+      option.append(copy,optionLink);options.append(option);
+    });
     const actions=document.createElement('div');actions.className='product-actions';
-    const view=document.createElement('a');view.className='cta';view.href=href;view.textContent='View sale option';
     const wishlist=document.createElement('button');wishlist.type='button';wishlist.className='wishlist-button';wishlist.dataset.wishlist=item.id;wishlist.setAttribute('aria-label','Add to favorites');wishlist.textContent='♡';
-    actions.append(view,wishlist);card.append(link,price,actions);return card;
+    actions.append(wishlist);card.append(link,options,actions);return card;
   }));
-  empty.hidden=rows.length>0;
+  empty.hidden=products.length>0;
   const salePagination=window.storeSalePagination;
   if(salePagination?.total>salePagination.pageSize){
     const pagination=document.createElement('nav');
