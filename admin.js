@@ -2309,6 +2309,27 @@ async function renderEtsyConnection(){
     const attentionCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const pages=listingPageCount(batch);const failed=Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0;return failed?failed+(failed===1?' retry':' retries'):pages?pages+' to review':'None';}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.lines)+' fee lines updated';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return Number(metadata.unmatched||0)?displayCount(metadata.unmatched)+' unmatched sale line'+(Number(metadata.unmatched)===1?'':'s'):Number(metadata.inventory_updated||0)+' inventory updates';}return Number(batch.matched_count||0)?displayCount(batch.matched_count)+' matched':'None';};
     const historyTabs='<div class="admin-etsy-history-tabs"><button type="button" data-etsy-history-view="active" '+(historyView==='active'?'aria-current="page"':'')+'>Needs review</button><button type="button" data-etsy-history-view="completed" '+(historyView==='completed'?'aria-current="page"':'')+'>Completed archive</button></div>';
     target.innerHTML=historyTabs+'<table class="admin-table"><thead><tr><th>Action</th><th>Status</th><th>Result</th><th>Needs attention</th><th>Ran</th><th>Follow-up</th></tr></thead><tbody>'+(visible.map((batch)=>'<tr><td>'+adminSafe(actionLabel(batch))+'</td><td>'+adminSafe(historyView==='completed'?'completed':batch.status)+'</td><td>'+adminSafe(resultCell(batch))+'</td><td>'+adminSafe(attentionCell(batch))+'</td><td>'+adminSafe(batch.created_at?new Date(batch.created_at).toLocaleString():'')+'</td><td>'+followUp(batch)+(historyView==='completed'?'<button type="button" data-etsy-restore-reviewed="'+adminSafe(batch.id)+'">Restore to needs review</button>':'<button type="button" data-etsy-mark-reviewed="'+adminSafe(batch.id)+'">Mark reviewed</button>')+'</td></tr>').join('')||'<tr><td colspan="6">'+(historyView==='completed'?'No completed Etsy actions yet.':'Nothing needs review.')+'</td></tr>')+'</tbody></table><div class="admin-pagination"><button type="button" data-etsy-batch-page="prev" '+(batchPage===1?'disabled':'')+'>Previous</button><span>Page '+batchPage+' of '+pageCount+' · '+rows.length+' actions</span><button type="button" data-etsy-batch-page="next" '+(batchPage===pageCount?'disabled':'')+'>Next</button></div>';
+    target.querySelectorAll('.admin-etsy-recipe-summary li').forEach((item)=>{
+      if(item.querySelector('[data-etsy-convert-child]'))return;
+      const parentSku=String(item.querySelector('strong')?.textContent||'').trim();
+      if(!parentSku)return;
+      const recipeLink=document.createElement('a');
+      recipeLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(parentSku);
+      recipeLink.target='_blank';
+      recipeLink.rel='noopener';
+      recipeLink.dataset.etsyRecipeEdit='';
+      recipeLink.textContent='Edit recipe';
+      item.append(recipeLink);
+      const status=document.createElement('small');
+      status.className='admin-etsy-recipe-status';
+      status.textContent='Recipe ready — edit or convert to child SKU';
+      item.append(status);
+      const convert=document.createElement('button');
+      convert.type='button';
+      convert.dataset.etsyConvertChild=parentSku;
+      convert.textContent='Convert to child SKU';
+      item.append(convert);
+    });
     const listingPagesForReview=visible.filter((batch)=>actionLabel(batch)==='Etsy listings').flatMap((batch)=>Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages:[]);
     target.querySelectorAll('.admin-etsy-created-links').forEach((block,index)=>{
       const page=listingPagesForReview[index];
@@ -2330,6 +2351,7 @@ async function renderEtsyConnection(){
         const parentSku=String(item.querySelector('strong')?.textContent||'').trim();
         const row=familyRows.find((candidate)=>String(candidate.etsy_sku||'').trim()===parentSku);
         if(!row)return;
+        if(item.querySelector('[data-etsy-convert-child]'))return;
         const recipeLink=document.createElement('a');
         recipeLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(parentSku);
         recipeLink.target='_blank';
