@@ -954,3 +954,9 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .homepage-promo-details-close{position:absolute;top:16px;right:16px;width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:var(--site-header-text-color,#111);font:400 30px/1 Arial,sans-serif;cursor:pointer}
 .homepage-promo-details-close:hover{background:var(--site-accent-background-color,#fff1f5)}
 @media(max-width:560px){.homepage-promo-details-dialog{width:calc(100% - 24px);max-height:calc(100dvh - 24px);border-radius:14px}.homepage-promo-details-content{padding:28px 22px 24px}.homepage-promo-details-content h2{font-size:32px}.homepage-promo-details-copy{font-size:15px}.homepage-promo-details-link{width:100%;margin-top:20px}}
+
+.admin-etsy-recipe-summary li{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;min-width:0}
+.admin-etsy-recipe-summary li strong{flex:1 1 190px;min-width:0}
+.admin-etsy-recipe-summary li>span:not(.admin-etsy-recipe-status){flex:1 1 220px;min-width:0}
+.admin-etsy-recipe-summary li a,.admin-etsy-recipe-summary li button{flex:0 0 auto;max-width:100%;margin:0;white-space:nowrap}
+.admin-etsy-recipe-summary li>.admin-etsy-recipe-status{flex:1 1 100%;order:5;min-width:0;overflow-wrap:anywhere}
