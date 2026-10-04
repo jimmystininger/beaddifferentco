@@ -365,6 +365,7 @@ const setupShoppingBag=async()=>{
   const currentTotals=()=>window.storeShipping.totals(currentEntries());
   const promoDiscount=(totals)=>window.storePromos.discount(activePromo,totals.promoEligibleSubtotal);
   const promoLabel=(promo)=>window.storePromos.discountLabel?.(promo)||'';
+  const promoFreeShipping=(promo)=>window.storePromos.freeShipping?.(promo)===true;
   const drawSummary=()=>{
     const totals=currentTotals();
     const invalid=invalidEntries();
@@ -372,7 +373,8 @@ const setupShoppingBag=async()=>{
     const standard=shippingQuote?.standard;
     const priority=shippingQuote?.priority;
     const selectedRate=shippingMethod==='priority'?priority:standard;
-    const shippingAmount=selectedRate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(selectedRate.amount)||0):0;
+    const freeShipping=shippingMethod==='standard'&&(shippingQuote?.free||promoFreeShipping(activePromo));
+    const shippingAmount=selectedRate?(freeShipping?0:Number(selectedRate.amount)||0):0;
     const taxAmount=Number(taxQuote?.amount)||0;
     const summaryAddress=addressValue();
     const taxBlocked=summaryAddress.state==='OH'&&addressValid(summaryAddress)&&(!taxQuote||taxQuote.error||!(Number(taxQuote.rate)>0));
@@ -380,10 +382,14 @@ const setupShoppingBag=async()=>{
     const total=Math.max(0,totals.subtotal-discount+shippingAmount+taxAmount);
     const eta=selectedRate?.scheduledDeliveryDate;
     const dateLabel=eta?new Date(eta+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):shippingQuote?.error?'Unavailable':'Quote pending';
-    const shippingStatus=selectedRate?(shippingMethod==='standard'&&shippingQuote.free?'Free':'$'+shippingAmount.toFixed(2)):shippingQuote?.error?'Unavailable':'Quote pending';
+    const shippingStatus=selectedRate?(freeShipping?'Free':'$'+shippingAmount.toFixed(2)):shippingQuote?.error?'Unavailable':'Quote pending';
     const shippingErrorMarkup=shippingQuote?.error?`<p class="checkout-quote-error" role="alert">${escapeProductText(shippingQuote.error)}</p>`:'';
     const promoMarkup=activePromo?`<div class="checkout-promo-applied"><span>Promo code · ${escapeProductText(activePromo.code||'Automatic promotion')} · ${escapeProductText(promoLabel(activePromo))}</span><strong>-$${discount.toFixed(2)}</strong><button type="button" data-remove-checkout-promo>Remove</button></div>`:'';
     orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${shippingStatus}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div>${shippingErrorMarkup}</div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?.error?'Unavailable':taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
+    const promoSavings=orderSummary.querySelector('.checkout-promo-applied strong');
+    if(promoSavings&&promoFreeShipping(activePromo))promoSavings.textContent='Free standard shipping';
+    const standardOption=orderSummary.querySelector('[data-checkout-shipping-method] option[value="standard"]');
+    if(standardOption&&freeShipping)standardOption.textContent='USPS Ground Advantage — Free';
     const checkoutButton=form.querySelector('button[type="submit"]');
     if(checkoutButton){checkoutButton.disabled=invalid.length>0||shippingBlocked||taxBlocked;checkoutButton.title=invalid.length?'Resolve highlighted cart items before checkout.':shippingBlocked?'Shipping must be calculated before checkout.':taxBlocked?'Tax must be calculated before checkout.':'';}
     orderSummary.querySelector('[data-checkout-shipping-method]')?.addEventListener('change',(event)=>{shippingMethod=event.target.value==='priority'?'priority':'standard';void refreshQuote();});
@@ -395,7 +401,7 @@ const setupShoppingBag=async()=>{
     const totals=currentTotals();
     const discount=promoDiscount(totals);
     const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
-    const shippingAmount=rate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(rate.amount)||0):0;
+    const shippingAmount=rate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(rate.amount)||0):0;
     const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
     const taxKey=JSON.stringify({line1:address.address_line1,city:address.city,postalCode:address.postal_code,taxableAmount});
     const cached=taxCache.get(taxKey);
@@ -508,7 +514,7 @@ const setupShoppingBag=async()=>{
     }
     const totals=currentTotals();
     const selectedRate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
-    const shippingAmount=selectedRate?(shippingMethod==='standard'&&shippingQuote.free?0:Number(selectedRate.amount)||0):0;
+    const shippingAmount=selectedRate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(selectedRate.amount)||0):0;
     const submit=form.querySelector('[type="submit"]');
     submit.disabled=true;
     status.textContent='Creating your order…';

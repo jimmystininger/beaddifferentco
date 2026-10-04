@@ -725,7 +725,7 @@ async function importEtsyListings(adminId: string, runId = '', startOffset = 0) 
   // creates/updates several inventory, product, option, image, and mapping
   // rows; processing a large batch in one worker can hit Supabase's resource
   // limit before the continuation cursor is returned to the browser.
-  const maxNewListingsPerRun = 1;
+  const maxNewListingsPerRun = 5;
   const maxListingPagesPerRun = 3;
   let pagesScanned = 0;
   try {

@@ -242,12 +242,63 @@ async function createRefund(request: Request, body: Record<string, any>) {
   const remaining = Math.max(0, cents(order.total) - cents(order.refunded_amount));
   const amount = body.full === true ? remaining : cents(body.amount);
   if (!amount || amount > remaining) return json({ error: `Refund must be between $0.01 and $${(remaining / 100).toFixed(2)}.` }, 400);
+  const refundKind = text(body.refund_kind, 40);
+  const applyLocalRefund = async (stripeRefundId: string | null) => {
+    if (refundKind === "satisfaction") {
+      return rpc("process_stripe_satisfaction_refund", { order_id_value: order.id, amount_value: amount / 100, reason_value: reason || null, stripe_refund_id_value: stripeRefundId });
+    }
+    return rpc("apply_stripe_refund", { order_id_value: order.id, refund_amount_value: amount / 100, reason_value: reason || null, stripe_refund_id_value: stripeRefundId });
+  };
   if (!order.stripe_payment_intent_id || order.payment_status === "unpaid") {
-    const applied = await rpc("apply_stripe_refund", { order_id_value: order.id, refund_amount_value: amount / 100, reason_value: reason || null, stripe_refund_id_value: null });
+    const applied = await applyLocalRefund(null);
     return json(applied);
   }
   const refund = await stripeRequest("refunds", stripeForm({ payment_intent: order.stripe_payment_intent_id, amount, "metadata[order_id]": order.id, reason: "requested_by_customer" }), `bead-refund-${order.id}-${amount}-${Date.now()}`);
-  const applied = await rpc("apply_stripe_refund", { order_id_value: order.id, refund_amount_value: amount / 100, reason_value: reason || null, stripe_refund_id_value: refund.id });
+  const applied = await applyLocalRefund(refund.id);
+  return json({ ...applied, stripe_refund_id: refund.id });
+}
+
+async function createReturnRefund(request: Request, body: Record<string, any>) {
+  if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
+  const orderId = text(body.order_id, 80);
+  const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
+  const reason = text(body.reason, 240);
+  const refundShipping = body.refund_shipping === true;
+  const preview = await rpc("process_stripe_order_return", {
+    order_id_value: orderId,
+    line_items: lineItems,
+    reason_value: reason || null,
+    refund_shipping: refundShipping,
+    expected_amount: null,
+    stripe_refund_id_value: null,
+    dry_run: true,
+  });
+  const amount = cents(preview?.refund_amount);
+  if (!amount) return json({ error: "The selected return has no refundable balance." }, 400);
+  const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,total,refunded_amount,payment_status,stripe_payment_intent_id`);
+  const order = orders[0];
+  if (!order) return json({ error: "Order not found." }, 404);
+  if (!order.stripe_payment_intent_id || order.payment_status === "unpaid") {
+    return json(await rpc("process_stripe_order_return", {
+      order_id_value: orderId,
+      line_items: lineItems,
+      reason_value: reason || null,
+      refund_shipping: refundShipping,
+      expected_amount: amount / 100,
+      stripe_refund_id_value: null,
+      dry_run: false,
+    }));
+  }
+  const refund = await stripeRequest("refunds", stripeForm({ payment_intent: order.stripe_payment_intent_id, amount, "metadata[order_id]": orderId, reason: "requested_by_customer" }), `bead-return-${orderId}-${amount}-${Date.now()}`);
+  const applied = await rpc("process_stripe_order_return", {
+    order_id_value: orderId,
+    line_items: lineItems,
+    reason_value: reason || null,
+    refund_shipping: refundShipping,
+    expected_amount: amount / 100,
+    stripe_refund_id_value: refund.id,
+    dry_run: false,
+  });
   return json({ ...applied, stripe_refund_id: refund.id });
 }
 
@@ -259,6 +310,7 @@ Deno.serve(async (request) => {
     if (body?.action === "calculate_tax") return await calculateTaxPreview(body);
     if (body?.action === "create_checkout") return await createCheckout(request, body);
     if (body?.action === "refund_order") return await createRefund(request, body);
+    if (body?.action === "refund_return") return await createReturnRefund(request, body);
     return json({ error: "Unsupported payment action." }, 400);
   } catch (error) {
     return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe payment request failed." }, 400);
