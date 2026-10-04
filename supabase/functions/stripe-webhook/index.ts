@@ -56,6 +56,26 @@ async function verifyWebhook(body: string, signature: string) {
   return (parts.v1 || []).some((value) => safeEqual(value, expected));
 }
 
+async function refundOrderId(refund: Record<string, any>, fallbackOrderId: string | null = null) {
+  if (refund.metadata?.order_id) return refund.metadata.order_id;
+  if (fallbackOrderId) return fallbackOrderId;
+  const paymentIntent = typeof refund.payment_intent === "string" ? refund.payment_intent : refund.payment_intent?.id;
+  if (!paymentIntent) return null;
+  const orders = await database(`orders?stripe_payment_intent_id=eq.${encodeURIComponent(paymentIntent)}&select=id`);
+  return orders[0]?.id || null;
+}
+
+async function finalizeRefund(refund: Record<string, any>, status: string, fallbackOrderId: string | null = null) {
+  const orderId = await refundOrderId(refund, fallbackOrderId);
+  await rpc("finalize_stripe_refund", {
+    stripe_refund_id_value: refund.id,
+    order_id_value: orderId,
+    amount_value: Number(refund.amount || 0) / 100,
+    status_value: status,
+    reason_value: status === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${status}.`, 240),
+  });
+}
+
 async function handleWebhook(request: Request) {
   const body = await request.text();
   if (!await verifyWebhook(body, request.headers.get("stripe-signature") || "")) return json({ error: "Invalid Stripe signature." }, 400);
@@ -76,6 +96,9 @@ async function handleWebhook(request: Request) {
   } else if (event.type === "payment_intent.payment_failed") {
     const orderId = object.metadata?.order_id;
     if (orderId) await rpc("release_stripe_order", { order_id_value: orderId, reason_value: text(object.last_payment_error?.message || "Stripe payment failed.", 240) });
+  } else if (event.type === "refund.updated" || event.type === "refund.failed") {
+    const status = event.type === "refund.failed" ? "failed" : text(object.status || "pending", 30).toLowerCase();
+    await finalizeRefund(object, status);
   } else if (event.type === "charge.refunded") {
     const paymentIntent = typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id;
     if (paymentIntent) {
@@ -83,9 +106,7 @@ async function handleWebhook(request: Request) {
       const orderId = orders[0]?.id;
       const refunds = Array.isArray(object.refunds?.data) ? object.refunds.data : [];
       for (const refund of refunds) {
-        if (orderId && refund.status === "succeeded") {
-          await rpc("apply_stripe_refund", { order_id_value: orderId, refund_amount_value: Number(refund.amount || 0) / 100, reason_value: "Refund processed in Stripe.", stripe_refund_id_value: refund.id });
-        }
+        if (refund.status === "succeeded") await finalizeRefund({ ...refund, payment_intent: paymentIntent }, "succeeded", orderId || null);
       }
     }
   }

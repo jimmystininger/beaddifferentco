@@ -254,9 +254,21 @@ async function createRefund(request: Request, body: Record<string, any>) {
     const applied = await applyLocalRefund(null);
     return json(applied);
   }
-  const refund = await stripeRequest("refunds", stripeForm({ payment_intent: order.stripe_payment_intent_id, amount, "metadata[order_id]": order.id, reason: "requested_by_customer" }), `bead-refund-${order.id}-${amount}-${Date.now()}`);
-  const applied = await applyLocalRefund(refund.id);
-  return json({ ...applied, stripe_refund_id: refund.id });
+  const refund = await stripeRequest("refunds", stripeForm({
+    payment_intent: order.stripe_payment_intent_id,
+    amount,
+    "metadata[order_id]": order.id,
+    "metadata[refund_kind]": refundKind === "satisfaction" ? "satisfaction" : "order",
+    reason: "requested_by_customer",
+  }), `bead-refund-${order.id}-${amount}-${Date.now()}`);
+  const recorded = await rpc("record_stripe_refund_request", {
+    order_id_value: order.id,
+    stripe_refund_id_value: refund.id,
+    amount_value: amount / 100,
+    reason_value: reason || null,
+    metadata_value: { refund_kind: refundKind === "satisfaction" ? "satisfaction" : "order" },
+  });
+  return json({ ...recorded, stripe_refund_id: refund.id, refund_amount: amount / 100 });
 }
 
 async function createReturnRefund(request: Request, body: Record<string, any>) {
@@ -290,17 +302,25 @@ async function createReturnRefund(request: Request, body: Record<string, any>) {
       dry_run: false,
     }));
   }
-  const refund = await stripeRequest("refunds", stripeForm({ payment_intent: order.stripe_payment_intent_id, amount, "metadata[order_id]": orderId, reason: "requested_by_customer" }), `bead-return-${orderId}-${amount}-${Date.now()}`);
-  const applied = await rpc("process_stripe_order_return", {
+  const refund = await stripeRequest("refunds", stripeForm({
+    payment_intent: order.stripe_payment_intent_id,
+    amount,
+    "metadata[order_id]": orderId,
+    "metadata[refund_kind]": "return",
+    reason: "requested_by_customer",
+  }), `bead-return-${orderId}-${amount}-${Date.now()}`);
+  const recorded = await rpc("record_stripe_refund_request", {
     order_id_value: orderId,
-    line_items: lineItems,
-    reason_value: reason || null,
-    refund_shipping: refundShipping,
-    expected_amount: amount / 100,
     stripe_refund_id_value: refund.id,
-    dry_run: false,
+    amount_value: amount / 100,
+    reason_value: reason || null,
+    metadata_value: {
+      refund_kind: "return",
+      line_items: lineItems,
+      refund_shipping: refundShipping,
+    },
   });
-  return json({ ...applied, stripe_refund_id: refund.id });
+  return json({ ...recorded, stripe_refund_id: refund.id, refund_amount: amount / 100 });
 }
 
 Deno.serve(async (request) => {
