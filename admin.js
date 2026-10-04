@@ -2218,7 +2218,7 @@ async function renderEtsyConnection(){
       const buttons=[...target.querySelectorAll('[data-etsy-convert-child]')];
       const skus=[...new Set(buttons.map((button)=>String(button.dataset.etsyConvertChild||'').trim()).filter(Boolean))];
       if(!skus.length)return;
-      const inventoryResult=await client.from('inventory_skus').select('id,sku,item_type').in('sku',skus);
+      const inventoryResult=await client.from('inventory_skus').select('id,sku,item_type,source_metadata').in('sku',skus);
       if(inventoryResult.error)return;
       const records=inventoryResult.data||[];
       const recordBySku=new Map(records.map((record)=>[String(record.sku||'').trim().toLowerCase(),record]));
@@ -2229,7 +2229,8 @@ async function renderEtsyConnection(){
       buttons.forEach((button)=>{
         const sku=String(button.dataset.etsyConvertChild||'').trim();
         const record=recordBySku.get(sku.toLowerCase());
-        if(!record||String(record.item_type||'Inventory').toLowerCase()==='non-inventory'||recipeIds.has(String(record.id)))return;
+        const converted=record&&String(record.item_type||'').toLowerCase()==='inventory'&&String(record.source_metadata?.disposition||'').toLowerCase()==='inventory'&&!recipeIds.has(String(record.id));
+        if(!converted)return;
         const item=button.closest('li');
         if(!item||item.dataset.etsyConversionState==='converted')return;
         item.dataset.etsyConversionState='converted';
@@ -2316,7 +2317,7 @@ async function renderEtsyConnection(){
       pageNote.className='admin-field-note admin-etsy-page-status';
       pageNote.textContent=page.product_page_existed||page.created===false?'Existing product page updated with Etsy data.':'Product page created from Etsy data.';
       block.append(pageNote);
-      const familyRows=Array.isArray(page.family_skus)?page.family_skus:[];
+      const familyRows=Array.isArray(page.family_skus)&&page.family_skus.length?page.family_skus:[...((page.one_pk_sku?[{one_pk_sku:page.one_pk_sku,pack_size:1}]:[])),...((page.etsy_sku&&page.etsy_sku!==page.one_pk_sku?[{etsy_sku:page.etsy_sku,one_pk_sku:page.one_pk_sku,pack_size:Math.max(1,Number(String(page.etsy_sku).match(/-(\d+)PK$/i)?.[1])||1)}]:[]))];
       block.querySelector('.admin-etsy-sku-family')?.querySelectorAll('span').forEach((entry)=>{
         const row=familyRows.find((candidate)=>String(entry.textContent||'').includes(String(candidate.etsy_sku||candidate.one_pk_sku||'')));
         if(!row||entry.querySelector('.admin-etsy-sku-status'))return;
