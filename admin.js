@@ -3110,9 +3110,22 @@ document.addEventListener('input',(event)=>{if(event.target.matches('#cloud-item
     const tabs=document.querySelector('.inventory-tabs');
     if(!tabs||tabs.dataset.canonicalExceptionsInstalled==='true'||!window.beadSupabase)return;
     tabs.dataset.canonicalExceptionsInstalled='true';
+    const reportLabels={
+      'waitlist-exceptions':['Not waitlistable','Product-page SKUs that cannot accept a restock request.'],
+      'missing-filter-assignments':['Missing filter assignments','Active category filters with no value assigned to the SKU.'],
+      'inventory-attention':['Inventory needs attention','Canonical inventory exceptions requiring operational review.']
+    };
+    const showLauncher=(key)=>{
+      const view=document.querySelector('#inventory-view');
+      if(!view)return;
+      const detail=reportLabels[key]||['Inventory report','Run the selected inventory report.'];
+      view.innerHTML='<div class="admin-heading"><div><h3>Report ready to run</h3><p>Click Run report when you want to load this report. No report data is requested while this screen is open.</p></div></div><div class="admin-report-launch-list"><article class="admin-card admin-report-launch"><div><h4>'+detail[0]+'</h4><p>'+detail[1]+'</p></div><div class="admin-report-launch-actions"><button type="button" data-run-canonical-report>Run report</button><button type="button" data-run-canonical-fresh>Run fresh report</button></div></article></div>';
+      view.querySelector('[data-run-canonical-report]').onclick=()=>void render(key);
+      view.querySelector('[data-run-canonical-fresh]').onclick=()=>void render(key,true);
+    };
     [['waitlist-exceptions','Not waitlistable'],['missing-filter-assignments','Missing filter assignments'],['inventory-attention','Inventory needs attention']].forEach(([key,label])=>{
       const button=document.createElement('button');button.type='button';button.dataset.inventoryTab=key;button.textContent=label;tabs.append(button);
-      button.addEventListener('click',()=>void render(key));
+      button.addEventListener('click',()=>showLauncher(key));
     });
   };
   const render=async(kind,forceFresh=false)=>{
