@@ -2214,6 +2214,35 @@ async function renderEtsyConnection(){
   const drawBatches=async()=>{
     const target=root.querySelector('[data-etsy-batches]');
     if(!target||!client)return;
+    const syncEtsyConversionStates=async()=>{
+      const buttons=[...target.querySelectorAll('[data-etsy-convert-child]')];
+      const skus=[...new Set(buttons.map((button)=>String(button.dataset.etsyConvertChild||'').trim()).filter(Boolean))];
+      if(!skus.length)return;
+      const inventoryResult=await client.from('inventory_skus').select('id,sku,item_type').in('sku',skus);
+      if(inventoryResult.error)return;
+      const records=inventoryResult.data||[];
+      const recordBySku=new Map(records.map((record)=>[String(record.sku||'').trim().toLowerCase(),record]));
+      const ids=records.map((record)=>record.id).filter(Boolean);
+      const recipeResult=ids.length?await client.from('inventory_bundle_components').select('bundle_sku_id').in('bundle_sku_id',ids):{data:[],error:null};
+      if(recipeResult.error)return;
+      const recipeIds=new Set((recipeResult.data||[]).map((row)=>String(row.bundle_sku_id)));
+      buttons.forEach((button)=>{
+        const sku=String(button.dataset.etsyConvertChild||'').trim();
+        const record=recordBySku.get(sku.toLowerCase());
+        if(!record||String(record.item_type||'Inventory').toLowerCase()==='non-inventory'||recipeIds.has(String(record.id)))return;
+        const item=button.closest('li');
+        if(!item||item.dataset.etsyConversionState==='converted')return;
+        item.dataset.etsyConversionState='converted';
+        item.querySelectorAll('a[href*="recipe"]').forEach((link)=>link.remove());
+        button.remove();
+        const detail=item.querySelector(':scope > span');
+        if(detail)detail.textContent='Converted child SKU — premade stock is tracked directly.';
+        const status=item.querySelector('.admin-etsy-recipe-status');
+        if(status)status.textContent='Converted to child SKU';
+        const summary=item.closest('.admin-etsy-recipe-summary');
+        if(summary&&summary.querySelectorAll('li').length&&[...summary.querySelectorAll('li')].every((row)=>row.dataset.etsyConversionState==='converted'))summary.querySelector(':scope > strong').textContent='SKU status';
+      });
+    };
     if(!target.dataset.compactListingLabels){
       const compactListingLabels=()=>target.querySelectorAll('.admin-etsy-created-links').forEach((block)=>{
         const heading=block.querySelector('strong');
@@ -2331,14 +2360,20 @@ async function renderEtsyConnection(){
         if(!lookup.data?.id)throw new Error('The canonical inventory SKU was not found.');
         const result=await cloudAdmin().rpc('convert_inventory_sku_to_child',{inventory_sku_id_value:lookup.data.id});
         if(result.error)throw result.error;
-        item?.querySelectorAll('a[href*="recipe"]').forEach((link)=>link.remove());
-        button.remove();
-        if(status)status.textContent='Converted to child SKU — recipe removed; premade stock is tracked directly.';
+        const saved=await cloudAdmin().from('inventory_skus').select('item_type').eq('id',lookup.data.id).maybeSingle();
+        if(saved.error)throw saved.error;
+        const remaining=await cloudAdmin().from('inventory_bundle_components').select('bundle_sku_id').eq('bundle_sku_id',lookup.data.id).limit(1);
+        if(remaining.error)throw remaining.error;
+        if(String(saved.data?.item_type||'').toLowerCase()!=='inventory'||(remaining.data||[]).length)throw new Error('The conversion did not persist. The recipe is still attached to this SKU.');
+        if(status)status.textContent='Converted to child SKU. Refreshing saved state…';
+        invalidateEtsyHistory();
+        await drawBatches();
       }catch(error){
         button.disabled=false;
         if(status)status.textContent='Conversion failed: '+(error.message||'Unknown database error.');
       }
     });
+    await syncEtsyConversionStates();
     target.querySelectorAll('[data-etsy-batch-page]').forEach((button)=>button.onclick=()=>{batchPage=Math.max(1,Math.min(pageCount,batchPage+(button.dataset.etsyBatchPage==='next'?1:-1)));drawBatches();});
     target.querySelectorAll('[data-etsy-history-view]').forEach((button)=>button.onclick=()=>{historyView=button.dataset.etsyHistoryView;batchPage=1;void drawBatches();});
     const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?(Array.isArray(metadata.created_pages)?metadata.created_pages.map((page)=>String(page.listing_id||'')).filter(Boolean):[]):[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id);if(update.error)throw update.error;}};
