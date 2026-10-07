@@ -64,7 +64,7 @@
 .category-carousel{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px}.carousel-arrow{width:34px;height:48px;border:1px solid #111;border-radius:18px;background:#fff;font-size:32px;line-height:1;cursor:pointer;z-index:1}.category-carousel .category-grid{min-width:0}.category-carousel .category-grid a{flex-basis:clamp(150px,12vw,205px)}
 .store-nav-shell{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;border-bottom:1px solid #eee}.store-nav-shell .store-nav{border-bottom:0;min-width:0}.store-nav-arrow{width:30px;height:34px;border:0;background:#fff;font-size:28px;line-height:1;cursor:pointer;z-index:1}.store-nav-shell .store-nav{scroll-snap-type:x mandatory}.store-nav-shell .store-nav a{scroll-snap-align:start}
 @media(max-width:700px){body:not([data-page="Admin"]) .announcement{font-family:Arial,sans-serif;font-size:11px;letter-spacing:1.5px}body:not([data-page="Admin"]) .header{font-family:Arial,sans-serif}body:not([data-page="Admin"]) .primary{font-family:Arial,sans-serif;font-size:14px;letter-spacing:1px}body:not([data-page="Admin"]) .store-nav{font-family:Arial,sans-serif;font-size:13px}body:not([data-page="Admin"]) .category-layout .store-nav a{font-size:12px;line-height:1.2}}
-@media(max-width:700px){body:not([data-category-layout="true"]) #site-header>.store-nav-shell{display:none}}
+@media(max-width:700px){body:not([data-category-layout="true"]):not([data-page="Home"]) #site-header>.store-nav-shell{display:none}}
 .shared-header-page>.store-nav-shell{display:none}
 .store-search-form{display:flex;gap:12px;max-width:620px;margin:0 0 34px}.store-search-form input{flex:1;min-width:0;border:1px solid #bbb;border-radius:24px;padding:13px 18px;font:16px Arial}.store-search-form .cta{border:0;cursor:pointer}
 .search{display:flex;align-items:center;gap:8px}.search .search-icon{font:25px/1 Arial}.search input{width:205px;border:0;outline:0;background:transparent;font:14px Arial;color:#111}.search input::placeholder{color:#777}.search input::-webkit-search-cancel-button{cursor:pointer}
@@ -966,3 +966,7 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .admin-etsy-recipe-summary li>span:not(.admin-etsy-recipe-status){flex:1 1 220px;min-width:0}
 .admin-etsy-recipe-summary li a,.admin-etsy-recipe-summary li button{flex:0 0 auto;max-width:100%;margin:0;white-space:nowrap}
 .admin-etsy-recipe-summary li>.admin-etsy-recipe-status{flex:1 1 100%;order:5;min-width:0;overflow-wrap:anywhere}
+
+.store-page h1{font-family:Arial,sans-serif;font-style:normal;font-weight:700;line-height:1.1;letter-spacing:-.02em}
+.product-page-layout>.product-page-reviews{grid-column:1 / -1}
+@media(max-width:700px){.featured-copy{aspect-ratio:auto;min-height:clamp(480px,125vw,680px);overflow:visible;padding:36px 20px 28px}.product-page-layout>.product-page-reviews{order:3;grid-column:auto}.product-page-purchase h1,.store-page h1{font-family:Arial,sans-serif;font-style:normal}}
