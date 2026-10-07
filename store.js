@@ -40,10 +40,12 @@ const storefrontCategoryRequest=()=>{
   try{const parsed=JSON.parse(query.get('filters')||'{}');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))filters=parsed;}catch(error){}
   const filterKey=query.get('filterKey')||'';
   const filterValues=(query.get('filterValues')||'').split(',').map((value)=>value.trim()).filter(Boolean);
+  if(requested==='shop-all')filters=Object.fromEntries(Object.entries(filters).filter(([key])=>['color','size'].includes(String(key).toLowerCase())));
   const page=document.body.dataset.page||'';
   const categorySlugs=requested&&requested!=='shop-all'&&requested!=='new-arrivals'?[requested]:[];
   let selectedFilterKey=filterKey||null;
   let selectedFilterValues=filterValues;
+  if(requested==='shop-all'&&!['color','size'].includes(String(selectedFilterKey||'').toLowerCase())){selectedFilterKey=null;selectedFilterValues=[];}
   if(requested==='silicone'&&style)filters.style=[style];
   if(requested==='acrylic'&&style)filters.size=[style];
   if(!selectedFilterKey){const firstKey=Object.keys(filters).find((key)=>Array.isArray(filters[key])&&filters[key].length);if(firstKey){selectedFilterKey=firstKey;selectedFilterValues=filters[firstKey].map((value)=>String(value));}}

@@ -40,16 +40,25 @@ const renderCategoryFilters=(filters)=>{
   if(!region)return;
   region.replaceChildren();
   const request=storefrontCategoryListing.request;
-  (Array.isArray(filters)?filters:[]).filter((filter)=>Array.isArray(filter.values)&&filter.values.length>0).forEach((filter)=>{
+  const shopAll=currentRequestedCategory()==='shop-all'||page==='Shop All';
+  const shopAllFilterOrder=['color','size'];
+  const visibleFilters=(Array.isArray(filters)?filters:[]).filter((filter)=>Array.isArray(filter.values)&&filter.values.length>0).filter((filter)=>!shopAll||shopAllFilterOrder.includes(String(filter.key||'').toLowerCase())).sort((left,right)=>shopAll?shopAllFilterOrder.indexOf(String(left.key||'').toLowerCase())-shopAllFilterOrder.indexOf(String(right.key||'').toLowerCase()):0);
+  visibleFilters.forEach((filter)=>{
     const wrapper=document.createElement('label');
     wrapper.className='category-filter';
+    const filterName=shopAll?({color:'Color',size:'Size'}[String(filter.key||'').toLowerCase()]||String(filter.label||filter.key)):String(filter.label||filter.key);
+    const filterLabel=document.createElement('span');
+    filterLabel.className='category-filter-name';
+    filterLabel.textContent=`Filter by ${filterName}`;
     const select=document.createElement('select');
     select.dataset.categoryFilter=filter.key;
-    select.setAttribute('aria-label',filter.label||filter.key);
-    select.title=filter.label||filter.key;
+    select.setAttribute('aria-label',filterName);
+    select.title=filterName;
+    filterLabel.id=`category-filter-label-${filter.key}`;
+    select.setAttribute('aria-labelledby',filterLabel.id);
     const all=document.createElement('option');
     all.value='';
-    all.textContent=`All ${String(filter.label||filter.key).toLowerCase()}`;
+    all.textContent=`All ${filterName.toLowerCase()}`;
     select.append(all);
     (Array.isArray(filter.values)?filter.values:[]).forEach((value)=>{
       const option=document.createElement('option');
@@ -83,7 +92,7 @@ const renderCategoryFilters=(filters)=>{
       grid?.setAttribute('aria-busy','false');
       renderCategoryFilters(updatedFilters);
     });
-    wrapper.append(select);
+    wrapper.append(filterLabel,select);
     region.append(wrapper);
   });
   const hasSelections=Object.values(request.filters||{}).some((values)=>Array.isArray(values)&&values.length>0);

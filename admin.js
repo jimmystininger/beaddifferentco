@@ -1964,7 +1964,8 @@ const renderStoreContent=async()=>{
   if(window.beadSupabase)value=await loadAdminStoreSettings(true);
   const admin=value.admin&&typeof value.admin==='object'?value.admin:{};
   const links=admin.socialLinks&&typeof admin.socialLinks==='object'?admin.socialLinks:{};
-  const nextConfig=value.config&&typeof value.config==='object'?value.config:{...(window.productStoreConfig||{})};
+    const nextConfig=value.config&&typeof value.config==='object'?value.config:{...(window.productStoreConfig||{})};
+    const heroLink=String(nextConfig.heroLink??admin.heroLink??'#filter=new-arrivals').trim()||'#filter=new-arrivals';
   const faqItems=Array.isArray(admin.faqItems)?admin.faqItems:[];
   const faqMarkup=faqItems.map((item,index)=>`<div class="admin-content-faq-row" data-faq-row><label>Question<input name="faq_question_${index}" value="${adminSafe(item.question)}" maxlength="200"></label><label>Answer<textarea name="faq_answer_${index}" rows="4" maxlength="10000">${adminSafe(item.answer)}</textarea></label><button type="button" data-remove-faq>Remove question</button></div>`).join('');
   panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">STOREFRONT CONTENT</p><h2>Store content</h2><p>Manage the public footer, About Us page, FAQ, and contact address. This content is separate from the product-page shipping summary.</p></div></div><form class="admin-form admin-content-form" data-content-form><section class="admin-card"><h3>Social media links</h3><p>Enter a complete link for each account. Blank fields hide that social button from the footer.</p><div class="admin-form-grid"><label>Facebook<input name="facebook" type="url" placeholder="https://facebook.com/…" value="${adminSafe(links.facebook||'')}"></label><label>Instagram<input name="instagram" type="url" placeholder="https://instagram.com/…" value="${adminSafe(links.instagram||'')}"></label><label>TikTok<input name="tiktok" type="url" placeholder="https://tiktok.com/@…" value="${adminSafe(links.tiktok||'')}"></label><label>Pinterest<input name="pinterest" type="url" placeholder="https://pinterest.com/…" value="${adminSafe(links.pinterest||'')}"></label><label>YouTube<input name="youtube" type="url" placeholder="https://youtube.com/@…" value="${adminSafe(links.youtube||'')}"></label><label>Resend-facing contact email<input name="contactEmail" type="email" placeholder="hello@example.com" value="${adminSafe(admin.contactEmail||'')}"></label></div></section><section class="admin-card"><h3>About Us / Our Story</h3><label>Page title<input name="storyTitle" maxlength="160" value="${adminSafe(admin.storyTitle||'Our Story')}"></label><label>Story content<textarea name="storyBody" rows="10" maxlength="20000">${adminSafe(admin.storyBody||'')}</textarea></label></section><section class="admin-card"><h3>Footer Shipping & Returns</h3><p>This is the full policy shown on the Shipping & Returns page. The shorter product-page shipping editor remains unchanged.</p><label>Full footer policy<textarea name="footerShippingPolicy" rows="14" maxlength="30000">${adminSafe(admin.footerShippingPolicy||'')}</textarea></label></section><section class="admin-card"><div class="admin-heading"><div><h3>Frequently Asked Questions</h3><p>Questions are displayed in expandable rows on the public FAQ page.</p></div><button type="button" data-add-faq>Add FAQ question</button></div><div class="admin-content-faq-list" data-faq-list>${faqMarkup||'<p class="admin-empty">No custom questions yet. Add one below.</p>'}</div></section><div class="admin-actions"><button class="cta" type="submit">Save store content</button></div><p data-content-status role="status"></p></form>`;
@@ -3658,3 +3659,40 @@ let storeContentCacheBridgeAttempts=0;const storeContentCacheBridgeTimer=window.
 const ensureAdminDefaultThemeOption=()=>{document.querySelectorAll('[data-theme-form] select[name="theme_preset"]').forEach((select)=>{if(!select.querySelector('option[value="__locked_default__"]')){const option=document.createElement('option');option.value='__locked_default__';option.textContent='Default (locked)';select.insertBefore(option,select.options[1]||null);}const syncApplyButton=()=>{const saveButton=select.form?.querySelector('button[type="submit"]');if(saveButton&&select.value==='__locked_default__')saveButton.disabled=false;};if(!select.dataset.defaultThemeApplyRepair){select.dataset.defaultThemeApplyRepair='true';select.addEventListener('change',syncApplyButton);}syncApplyButton();});};
 if(document.body){const adminDefaultThemeObserver=new MutationObserver(()=>ensureAdminDefaultThemeOption());adminDefaultThemeObserver.observe(document.body,{childList:true,subtree:true});ensureAdminDefaultThemeOption();}
 document.addEventListener('click',async(event)=>{const button=event.target.closest('[data-order-refund-full],[data-order-refund-partial]');if(!button||!window.beadSupabase)return;event.preventDefault();event.stopImmediatePropagation();const orderId=button.dataset.orderRefundFull||button.dataset.orderRefundPartial;const full=Boolean(button.dataset.orderRefundFull);const card=button.closest('.admin-order-card');const input=card?.querySelector(`[data-order-refund-amount="${CSS.escape(orderId)}"]`);const amount=full?null:Number(input?.value||0);if(!full&&!(amount>0)){alert('Enter a partial refund amount first.');return;}if(full&&!confirm('Refund the remaining balance for this order?'))return;const reason=prompt('Refund reason:');if(reason===null)return;button.disabled=true;const status=card?.querySelector(`[data-order-action-status="${CSS.escape(orderId)}"]`);if(status)status.textContent='Submitting refund to Stripe…';try{const result=await window.beadSupabase.functions.invoke('stripe-payments',{body:{action:'refund_order',order_id:orderId,amount,full,reason}});if(result.error){let detail=null;try{detail=await result.error.context?.json();}catch(error){}throw new Error(detail?.error||result.error.message||'Refund failed.');}if(status)status.textContent=result.data?.status==='pending'?`Refund submitted to Stripe: $${Number(result.data?.refund_amount||amount||0).toFixed(2)}. Inventory remains unchanged until confirmation.`:`Refund recorded: $${Number(result.data?.refund_amount||amount||0).toFixed(2)}.`;window.dispatchEvent(new CustomEvent('admin-order-changed',{detail:{orderId}}));setTimeout(()=>document.querySelector('[data-admin-tab="orders"]')?.click(),500);}catch(error){if(status)status.textContent='Refund failed: '+(error.message||'Unknown error.');button.disabled=false;}},true);
+(()=>{
+  const fallback='#filter=new-arrivals';
+  const injectHeroLinkEditor=()=>{
+    const form=[...document.querySelectorAll('form')].find((candidate)=>candidate.querySelector('[name="storyTitle"],[name="faqItems"],[name="contactEmail"]')&&!candidate.dataset.heroLinkEditor);
+    if(!form)return;
+    form.dataset.heroLinkEditor='true';
+    const current=String(window.siteContent?.heroLink||window.productStoreConfig?.heroLink||fallback).trim()||fallback;
+    const section=document.createElement('section');
+    section.className='admin-card admin-content-hero-link';
+    section.style.cssText='display:grid;gap:12px;margin-bottom:24px;padding:20px;border:1px solid #e4d8df;border-radius:14px;background:#fff9fb;max-width:720px;';
+    section.innerHTML=`<h3>Homepage hero button</h3><p>Keep the current hero image and set the canonical destination for its button.</p><label>Hero button link <input name="heroLink" type="text" inputmode="url" value="${current.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" placeholder="#filter=new-arrivals, sale.html, or https://example.com"></label><small>Saving this replaces the previous hero button link for future clicks.</small><button type="button" class="admin-button" data-save-hero-link>Save hero destination</button><p data-hero-link-status role="status"></p>`;
+    form.insertBefore(section,form.firstElementChild);
+    section.querySelector('label').style.cssText='display:grid;gap:6px;font-weight:600;';
+    section.querySelector('input').style.cssText='width:100%;box-sizing:border-box;padding:12px;border:1px solid #aaa;border-radius:8px;font:inherit;';
+    const input=section.querySelector('[name="heroLink"]');
+    const button=section.querySelector('[data-save-hero-link]');
+    const status=section.querySelector('[data-hero-link-status]');
+    button.addEventListener('click',async()=>{
+      const value=String(input.value||'').trim()||fallback;
+      button.disabled=true;
+      status.textContent='Saving…';
+      try{
+        let result;
+        if(typeof window.patchAdminStoreSettings==='function')result=await window.patchAdminStoreSettings({config:{heroLink:value},admin:{heroLink:value}});
+        else if(window.beadSupabase)result=await window.beadSupabase.rpc('admin_patch_store_settings',{p_patch:{config:{heroLink:value},admin:{heroLink:value}}});
+        if(result?.error)throw result.error;
+        window.siteContent={...(window.siteContent||{}),heroLink:value};
+        window.productStoreConfig={...(window.productStoreConfig||{}),heroLink:value};
+        window.clearStorefrontSiteSettingsCache?.();
+        status.textContent='Hero destination saved.';
+      }catch(error){status.textContent=error?.message||'Unable to save hero destination.';}
+      finally{button.disabled=false;}
+    });
+  };
+  const start=()=>{injectHeroLinkEditor();new MutationObserver(injectHeroLinkEditor).observe(document.body,{childList:true,subtree:true});};
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
+})();

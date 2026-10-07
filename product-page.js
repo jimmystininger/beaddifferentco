@@ -192,7 +192,7 @@ async function hydrateProductReviews(item){
   const dateFor=(review)=>{const date=new Date(review.created_at||review.createdAt||'');return Number.isNaN(date.getTime())?'Date unavailable':date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});};
   const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
   const average=summaryAverage|| (reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0);
-  if(!reviews.length){section.innerHTML='<h2>Reviews</h2><p>No approved reviews yet.</p>';return;}
+  if(!reviews.length){section.innerHTML='<h2>Reviews</h2><p>No Product Reviews have been submitted for this item yet.</p>';return;}
   const reviewCount=`${totalReviewCount} review${totalReviewCount===1?'':'s'}`;
   const latestNote=totalReviewCount>reviews.length?`<p class="product-review-latest-note">Showing the latest ${reviews.length} reviews.</p>`:'';
   section.innerHTML=`<div class="product-review-summary"><button type="button" class="product-review-summary-trigger" aria-haspopup="dialog"><span class="product-review-summary-stars" aria-hidden="true">${starsFor({rating:average})}</span><span><strong>${average.toFixed(1)}/5</strong> · ${reviewCount}</span><span class="product-review-summary-link">Read reviews →</span></button></div><div class="product-review-list"><h2>Reviews · ${average.toFixed(1)}/5</h2>${latestNote}${reviews.map(reviewMarkup).join('')}</div>`;
