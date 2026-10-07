@@ -9,7 +9,7 @@ window.addEventListener('bead-categories-ready',()=>{const category=currentReque
 
 const shoppingBagShell=(auditNotice='')=>`<section class="store-page shopping-bag-page"><p class="kicker">YOUR PICKS</p><h1>Shopping Bag</h1>${auditNotice}<div class="product-grid" id="page-products"></div><p class="store-empty" id="store-empty" role="status">Loading your shopping bag…</p><a class="cta cart-continue" href="shop-all.html" hidden>Continue shopping</a></section>`;
 const categoryLoadingHeading=currentRequestedCategory()?categoryLabelFor(currentRequestedCategory()):page;
-if(storefrontListingPage())main.innerHTML=`<section class="store-page"><h1>${categoryLoadingHeading}</h1><div id="category-filter-region" class="category-filter-region" aria-live="polite"></div><div class="product-grid" id="page-products"></div><div class="pagination" id="page-pagination" aria-label="Product pages"></div><p class="store-empty" id="store-empty" role="status">Loading products…</p></section>`;
+if(storefrontListingPage())main.innerHTML=`<section class="store-page"><h1 class="category-page-title">${categoryLoadingHeading}</h1><div id="category-filter-region" class="category-filter-region" aria-live="polite"></div><div class="product-grid" id="page-products"></div><div class="pagination" id="page-pagination" aria-label="Product pages"></div><p class="store-empty" id="store-empty" role="status">Loading products…</p></section>`;
 if(page==='Shopping Bag')main.innerHTML=shoppingBagShell();
 
 const drawStorefrontPagination=()=>{

@@ -139,6 +139,7 @@ async function loadStorefrontCategoryFilters(categorySlug){
   const result=await withStoreTimeout(client.rpc('get_storefront_category_filters',{p_category_slug:categorySlug,p_filter_selections:storefrontCategoryListing.request.filters||{}}),'Category filters request');
   if(result.error){window.storefrontCategoryFiltersError=result.error;return[];}
   let filters=Array.isArray(result.data)?result.data:[];
+  if(String(categorySlug).trim().toLowerCase()==='shop-all')filters=filters.filter((filter)=>['color','size'].includes(String(filter?.key||'').trim().toLowerCase()));
   const allowed=new Map(filters.map((filter)=>[String(filter.key||''),new Set((Array.isArray(filter.values)?filter.values:[]).map((value)=>String(value.key||'')))]));
   const current=storefrontCategoryListing.request.filters||{};
   const sanitized=Object.fromEntries(Object.entries(current).map(([key,values])=>[key,(Array.isArray(values)?values:[]).map(String).filter((value)=>allowed.get(key)?.has(value))]).filter(([,values])=>values.length));
