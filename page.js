@@ -46,7 +46,7 @@ const renderCategoryFilters=(filters)=>{
   visibleFilters.forEach((filter)=>{
     const wrapper=document.createElement('label');
     wrapper.className='category-filter';
-    const filterName=shopAll?({color:'Color',size:'Size'}[String(filter.key||'').toLowerCase()]||String(filter.label||filter.key)):String(filter.label||filter.key);
+    const filterName=String(filter.label||filter.key||'').trim();
     const filterLabel=document.createElement('span');
     filterLabel.className='category-filter-name';
     filterLabel.textContent=`Filter by ${filterName}`;
@@ -58,7 +58,7 @@ const renderCategoryFilters=(filters)=>{
     select.setAttribute('aria-labelledby',filterLabel.id);
     const all=document.createElement('option');
     all.value='';
-    all.textContent=`All ${filterName.toLowerCase()}`;
+    all.textContent=`All ${filterName}`;
     select.append(all);
     (Array.isArray(filter.values)?filter.values:[]).forEach((value)=>{
       const option=document.createElement('option');
