@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Checking payment | Bead Different Co.</title>
+  <link rel="stylesheet" href="styles.css?v=20261007-canonical-audit1">
+</head>
+<body class="payment-success-page" data-theme-ready="true">
+  <main class="payment-success-shell">
+    <section class="payment-success-card" aria-labelledby="payment-success-title" aria-live="polite">
+      <span class="payment-success-mark" aria-hidden="true">✓</span>
+      <p class="payment-success-kicker" data-payment-kicker>CHECKING PAYMENT</p>
+      <h1 id="payment-success-title" data-payment-title>Verifying your order</h1>
+      <p class="payment-success-lead" data-payment-message>We’re checking your payment and order status. Please keep this page open.</p>
+      <p class="payment-success-order" data-payment-order hidden>Order reference<strong data-payment-order-value></strong></p>
+      <a class="cta" href="shopping-bag.html" data-payment-link>Return to cart <span aria-hidden="true">→</span></a>
+    </section>
+  </main>
+  <script src="supabase-client.js?v=20261007-canonical-audit1"></script>
+  <script>
+    (async()=>{
+      const params=new URLSearchParams(location.search);
+      const sessionId=String(params.get('session_id')||'').trim();
+      const orderId=String(params.get('order_id')||'').trim();
+      const kicker=document.querySelector('[data-payment-kicker]');
+      const title=document.querySelector('[data-payment-title]');
+      const message=document.querySelector('[data-payment-message]');
+      const order=document.querySelector('[data-payment-order]');
+      const link=document.querySelector('[data-payment-link]');
+      const show=(label,heading,detail)=>{kicker.textContent=label;title.textContent=heading;message.textContent=detail;document.title=heading+' | Bead Different Co.';};
+      if(!sessionId||!orderId){
+        show('PAYMENT NOT VERIFIED','We could not verify this payment','Your cart is still saved. Return to it or contact us if you were charged.');
+        return;
+      }
+      try{
+        const client=await window.beadSupabaseReady;
+        if(!client?.functions?.invoke)throw new Error('Store connection unavailable.');
+        const result=await client.functions.invoke('stripe-payments',{body:{action:'checkout_status',session_id:sessionId,order_id:orderId}});
+        if(result.error||!result.data||result.data.error)throw new Error('Payment verification unavailable.');
+        if(result.data.status==='paid'&&result.data.order_id===orderId){
+          show('ORDER CONFIRMED','Thank you for your order','Your payment was received by Stripe and your order is recorded.');
+          order.querySelector('[data-payment-order-value]').textContent=orderId;
+          order.hidden=false;
+          let pending=null;
+          try{pending=JSON.parse(sessionStorage.getItem('beadDifferentPendingCheckout')||'null');}catch(error){}
+          if(pending?.sessionId===sessionId&&pending.orderId===orderId&&pending.cartToken&&pending.bagSnapshot===(localStorage.getItem('beadDifferentBag')||'[]')){
+            try{
+              let cartId=pending.cartId;
+              if(!cartId){
+                const cartResult=await client.rpc('get_or_create_storefront_cart',{p_guest_token:pending.cartToken});
+                if(cartResult.error)throw cartResult.error;
+                cartId=cartResult.data?.id;
+              }
+              if(!cartId)throw new Error('Cart identity unavailable.');
+              const clearResult=await client.rpc('replace_storefront_cart',{p_cart_id:cartId,p_guest_token:pending.cartToken,p_items:[]});
+              if(clearResult.error)throw clearResult.error;
+              localStorage.setItem('beadDifferentBag','[]');
+              localStorage.setItem('beadDifferentCartOwner',cartId);
+              for(const key of ['beadDifferentCartDirty','beadDifferentCartHoldSnapshot','beadDifferentCartHoldUser','beadDifferentCartPromo'])localStorage.removeItem(key);
+              sessionStorage.removeItem('beadDifferentPendingCheckout');
+              link.href='shop-all.html';
+              link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
+            }catch(error){message.textContent='Your order is confirmed, but we could not clear your cart. Please review it before ordering again.';}
+          }else if(pending?.sessionId===sessionId&&pending.orderId===orderId){
+            message.textContent='Your order is confirmed. Your cart changed during checkout, so please review it before ordering again.';
+          }else{
+            link.href='shop-all.html';
+            link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
+          }
+        }else if(result.data.status==='processing'){
+          show('PAYMENT RECEIVED','Your order needs attention','Stripe received your payment, but we could not finish recording the order. Please do not pay again; contact us with your order reference.');
+          order.querySelector('[data-payment-order-value]').textContent=orderId;
+          order.hidden=false;
+        }else{
+          show('PAYMENT NOT CONFIRMED','Payment is still processing','Your cart is saved. Please check your orders before trying checkout again.');
+        }
+      }catch(error){
+        show('PAYMENT NOT VERIFIED','We could not verify this payment','Your cart is saved. Please check your orders or contact us before trying checkout again.');
+      }
+    })();
+  </script>
+</body>
+</html>

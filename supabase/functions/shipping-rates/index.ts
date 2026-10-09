@@ -111,11 +111,12 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
     return json({ error: "Valid origin, destination, and acceptance date are required." }, 400);
   }
 
-  const weight = numberValue(packageInfo.weightOz);
+  const weightOz = numberValue(packageInfo.weightOz);
+  const weight = weightOz / 16;
   const length = numberValue(packageInfo.lengthIn);
   const width = numberValue(packageInfo.widthIn);
   const height = numberValue(packageInfo.heightIn);
-  if (weight <= 0 || length <= 0 || width <= 0 || height <= 0) {
+  if (weightOz <= 0 || length <= 0 || width <= 0 || height <= 0) {
     return json({ error: "A positive package weight and dimensions are required for USPS postage." }, 400);
   }
 

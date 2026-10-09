@@ -10,6 +10,21 @@
       "headers": [
         { "key": "Content-Type", "value": "text/css; charset=utf-8" }
       ]
+    },
+    {
+      "source": "/vendor/supabase.min.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, s-maxage=31536000, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        { "type": "query", "key": "v" }
+      ],
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, s-maxage=31536000, stale-while-revalidate=86400" }
+      ]
     }
   ],
   "git": {

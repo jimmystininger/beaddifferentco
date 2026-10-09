@@ -21,6 +21,9 @@ const htmlFiles = fs.readdirSync(repoRoot, { withFileTypes: true })
   .map((entry) => entry.name)
   .sort();
 
+const sharedAssetVersions = new Map();
+const sharedAssetNames = new Set(['styles.css', 'supabase-client.js', 'header.js', 'store.js', 'page.js', 'product-page.js', 'script.js']);
+
 for (const fileName of htmlFiles) {
   const filePath = path.join(repoRoot, fileName);
   const source = fs.readFileSync(filePath, 'utf8');
@@ -34,6 +37,19 @@ for (const fileName of htmlFiles) {
     } else if (!fs.existsSync(target)) {
       failures.push(`${fileName}: missing local reference: ${reference}`);
     }
+    const parsedReference = reference.match(/^([^?#]+)\?v=([^&#]+)$/i);
+    if (parsedReference && sharedAssetNames.has(path.basename(parsedReference[1]))) {
+      const assetName = path.basename(parsedReference[1]);
+      const versions = sharedAssetVersions.get(assetName) || new Map();
+      versions.set(parsedReference[2], (versions.get(parsedReference[2]) || []).concat(fileName));
+      sharedAssetVersions.set(assetName, versions);
+    }
+  }
+}
+
+for (const [assetName, versions] of sharedAssetVersions) {
+  if (versions.size > 1) {
+    failures.push(`${assetName}: shared asset uses mixed cache versions: ${[...versions.keys()].join(', ')}`);
   }
 }
 
