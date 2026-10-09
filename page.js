@@ -189,7 +189,7 @@ const renderSaleCollection=async()=>{
     link.className='product-card-link';link.href=href;
     const imageWrap=document.createElement('div');imageWrap.className='product-card-image-wrap';
     const image=value.imageUrl||item.image;
-    if(image){const imageElement=document.createElement('img');imageElement.loading='lazy';imageElement.className='product-card-image';imageElement.src=image;imageElement.alt=item.name;imageWrap.append(imageElement);}
+    if(image){const imageElement=document.createElement('img');imageElement.loading='lazy';imageElement.decoding='async';imageElement.className='product-card-image';imageElement.src=window.storefrontCardImageUrl?.(image)||image;imageElement.addEventListener('error',()=>{if(imageElement.getAttribute('src')!==image)imageElement.src=image;});imageElement.alt=item.name;imageWrap.append(imageElement);}
     const badges=document.createElement('div');badges.className='product-badges product-card-badges product-card-badges-bottom';
     const saleBadge=document.createElement('span');saleBadge.className='product-badge product-badge-on-sale';saleBadge.textContent='On Sale';badges.append(saleBadge);imageWrap.append(badges);
     link.append(imageWrap);

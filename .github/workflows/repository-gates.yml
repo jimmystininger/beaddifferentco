@@ -19,6 +19,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Require canonical governance
         shell: bash
         run: test -f AGENTS.md
@@ -29,12 +34,18 @@ jobs:
           forbidden=$(git ls-files | grep -E '\.(js|html|css|json|sql)$' | grep -E '(^|/)(backup|hotfix|patch|replacement|temporary|tmp)([-_.]|$)|(-fixed|-v2)(\.|/|$)' || true)
           test -z "$forbidden"
 
-      - name: Check JavaScript syntax
+      - name: Check browser JavaScript syntax
         shell: bash
         run: |
           while IFS= read -r -d '' file; do
             node --check "$file"
           done < <(find . -type f -name '*.js' -not -path './.git/*' -print0)
+
+      - name: Check Edge Function syntax
+        run: node tools/check-edge-syntax.mjs
+
+      - name: Validate deployment configuration
+        run: node -e "JSON.parse(require('fs').readFileSync('vercel.json', 'utf8'))"
 
       - name: Audit local routes and generated output
         run: node tools/repository-audit.mjs

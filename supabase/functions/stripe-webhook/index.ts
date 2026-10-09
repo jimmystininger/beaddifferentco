@@ -67,6 +67,13 @@ async function refundOrderId(refund: Record<string, any>, fallbackOrderId: strin
 
 async function finalizeRefund(refund: Record<string, any>, status: string, fallbackOrderId: string | null = null) {
   const orderId = await refundOrderId(refund, fallbackOrderId);
+  const requestKey = text(refund.metadata?.request_key, 36);
+  if (requestKey) {
+    await rpc("attach_stripe_refund_request", {
+      request_key_value: requestKey,
+      stripe_refund_id_value: refund.id,
+    });
+  }
   await rpc("finalize_stripe_refund", {
     stripe_refund_id_value: refund.id,
     order_id_value: orderId,

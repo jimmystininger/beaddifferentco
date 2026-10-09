@@ -47,6 +47,16 @@ async function rpc(name: string, args: Record<string, unknown>) {
   return value;
 }
 
+async function withinPublicLimit(request: Request, action: "checkout" | "tax" | "status", limit: number) {
+  const address = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const bytes = new TextEncoder().encode(`${serviceKey}:${address}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const clientHash = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  return await rpc("check_storefront_request_limit", {
+    action_value: action, client_hash_value: clientHash, request_limit: limit, window_seconds: 900,
+  }) === true;
+}
+
 async function userFrom(request: Request) {
   const authorization = request.headers.get("Authorization");
   if (!authorization?.startsWith("Bearer ")) return null;
@@ -83,7 +93,11 @@ async function stripeRequest(path: string, form: URLSearchParams, idempotencyKey
     body: form,
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(text(payload?.error?.message || "Stripe rejected the request.", 240));
+  if (!response.ok) {
+    const error = new Error(text(payload?.error?.message || "Stripe rejected the request.", 240)) as Error & { status: number };
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -107,9 +121,9 @@ function taxAddress(form: URLSearchParams, address: Record<string, any>) {
   form.set("customer_details[address_source]", "shipping");
 }
 
-function stripeTaxResult(calculation: Record<string, any>, taxableBase: number) {
+function stripeTaxResult(calculation: Record<string, any>, taxableBase: number, useOhioTestFallback: boolean) {
   const stripeAmount = Math.max(0, Number(calculation.tax_amount_exclusive || 0));
-  const useTestFallback = stripeSecret.startsWith("sk_test_") && stripeAmount === 0 && taxableBase > 0;
+  const useTestFallback = useOhioTestFallback && stripeSecret.startsWith("sk_test_") && stripeAmount === 0 && taxableBase > 0;
   const amountCents = useTestFallback ? Math.round(taxableBase * ohioTestTaxRate) : stripeAmount;
   return {
     amount: amountCents / 100,
@@ -133,7 +147,7 @@ async function calculateStripeTax(order: Record<string, any>) {
   });
   const calculation = await stripeRequest("tax/calculations", form);
   const taxableBase = taxableItems.reduce((sum, line) => sum + line.amount, 0) + shippingAmount;
-  const tax = stripeTaxResult(calculation, taxableBase);
+  const tax = stripeTaxResult(calculation, taxableBase, true);
   return {
     amount: tax.amount,
     rate: tax.rate,
@@ -159,7 +173,7 @@ async function calculateTaxPreview(body: Record<string, any>) {
   }
   const calculation = await stripeRequest("tax/calculations", form);
   const taxableBase = cents(taxableAmount) + cents(shippingAmount);
-  const tax = stripeTaxResult(calculation, taxableBase);
+  const tax = stripeTaxResult(calculation, taxableBase, true);
   return json({ amount: tax.amount, rate: tax.rate, state: "OH", jurisdiction: tax.useTestFallback ? "Ohio test rate" : "Stripe Tax", calculation_id: text(calculation.id, 80) });
 }
 
@@ -215,14 +229,64 @@ function appendLineItems(form: URLSearchParams, order: Record<string, any>) {
   if (actual !== expected) throw new Error("The checkout total changed. Please refresh your cart and try again.");
 }
 
+async function validateCheckoutShipping(order: Record<string, any>, address: Record<string, any>) {
+  const settings = await rpc("get_storefront_shipping_settings", {});
+  const threshold = Math.max(0, Number(settings?.freeShippingThreshold ?? 50));
+  const method = text(order.shipping_method, 20);
+  const amount = cents(order.shipping_amount);
+  const postalCode = text(address.postal_code, 10);
+  const origin = text(settings?.shippingOriginPostalCode, 10);
+  if (!/^[A-Z]{2}$/.test(text(address.state, 2).toUpperCase()) || !text(address.city, 80) ||
+      !text(address.address_line1, 120) || text(address.country, 2).toUpperCase() !== "US" ||
+      !/^\d{5}(?:-\d{4})?$/.test(postalCode) || !/^\d{5}(?:-\d{4})?$/.test(origin)) {
+    throw new Error("A valid US shipping address and ZIP code are required.");
+  }
+  if (method === "standard" && cents(order.subtotal) >= cents(threshold)) {
+    if (amount !== 0) throw new Error("Free shipping was not applied. Refresh your checkout and try again.");
+    return;
+  }
+  if (method === "standard" && amount === 0 && order.free_shipping === true) return;
+  const weightOz = Math.max(0.01, Number(await rpc("get_checkout_shipping_weight", { order_id_value: order.id })) || 0.01);
+  const boxes = (Array.isArray(settings?.shippingBoxes) ? settings.shippingBoxes : [])
+    .filter((box: Record<string, any>) => Number(box.maxWeightOz) >= 0 && Number(box.lengthIn) > 0 && Number(box.widthIn) > 0 && Number(box.heightIn) > 0)
+    .sort((first: Record<string, any>, second: Record<string, any>) => Number(first.maxWeightOz) - Number(second.maxWeightOz));
+  const box = boxes.find((entry: Record<string, any>) => Number(entry.maxWeightOz) >= weightOz) || boxes.at(-1) ||
+    { lengthIn: 6, widthIn: 4, heightIn: 1 };
+  const acceptance = new Date();
+  for (let remaining = Math.max(0, Math.floor(Number(settings?.processingDays) || 0)); remaining > 0;) {
+    acceptance.setUTCDate(acceptance.getUTCDate() + 1);
+    if (acceptance.getUTCDay() !== 0 && acceptance.getUTCDay() !== 6) remaining -= 1;
+  }
+  const response = await network(`${projectUrl}/functions/v1/shipping-rates`, {
+    method: "POST",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider: "usps", from: { postalCode: origin }, to: { postalCode },
+      package: { weightOz, lengthIn: Number(box.lengthIn), widthIn: Number(box.widthIn), heightIn: Number(box.heightIn) },
+      acceptanceDate: acceptance.toISOString().slice(0, 10),
+    }),
+  });
+  const quote = await response.json().catch(() => ({}));
+  if (!response.ok || quote.error) throw new Error(text(quote.error || "USPS could not verify shipping.", 240));
+  const serviceCode = method === "priority" ? "PRIORITY_MAIL" : "USPS_GROUND_ADVANTAGE";
+  const rate = quote.rates?.find((entry: Record<string, any>) => entry.serviceCode === serviceCode);
+  if (!rate || cents(rate.amount) !== amount) throw new Error("USPS shipping changed. Refresh your checkout and try again.");
+}
+
 async function createCheckout(request: Request, body: Record<string, any>) {
   const user = await userFrom(request);
   const payload = { ...(body.order_payload || {}), user_id: user?.id || null };
   try { await rpc("expire_pending_stripe_orders", {}); } catch (error) { console.warn("Pending Stripe order cleanup unavailable.", error); }
   const order = await rpc("create_stripe_pending_order", { order_payload: payload, owner_user_id: user?.id || null });
+  let createdSessionId = "";
   try {
+    await validateCheckoutShipping(order, payload.shipping_address || {});
     const stripeTax = await calculateStripeTax({ ...order, shipping_address: payload.shipping_address || {} });
     if (cents(stripeTax.amount) !== cents(order.tax_amount)) throw new Error("Stripe Tax changed. Refresh your checkout and try again.");
+    const expiresAt = Math.floor(Date.parse(order.payment_expires_at || "") / 1000) - 900;
+    if (!Number.isFinite(expiresAt) || expiresAt < Math.floor(Date.now() / 1000) + 1800) {
+      throw new Error("Checkout reservation expired before payment could start. Please try again.");
+    }
     const form = stripeForm({
       mode: "payment",
       customer_email: text(order.customer_email, 180),
@@ -231,14 +295,26 @@ async function createCheckout(request: Request, body: Record<string, any>) {
       "payment_intent_data[metadata][order_id]": order.id,
       success_url: `${storefrontUrl}/payment-success.html?session_id={CHECKOUT_SESSION_ID}&order_id=${encodeURIComponent(order.id)}`,
       cancel_url: `${storefrontUrl}/payment-cancelled.html?order_id=${encodeURIComponent(order.id)}`,
-      "shipping_address_collection[allowed_countries][0]": "US",
+      expires_at: expiresAt,
     });
     appendLineItems(form, order);
     const session = await stripeRequest("checkout/sessions", form, `bead-order-${order.id}`);
+    createdSessionId = session.id;
     await rpc("set_stripe_checkout_session", { order_id_value: order.id, session_id_value: session.id });
     return json({ url: session.url, order_id: order.id, session_id: session.id });
   } catch (error) {
-    try { await rpc("release_stripe_order", { order_id_value: order.id, reason_value: text(error instanceof Error ? error.message : error, 240) }); } catch { /* The webhook/expiry path remains the cleanup fallback. */ }
+    let sessionExpired = !createdSessionId;
+    if (createdSessionId) {
+      try {
+        await stripeRequest(`checkout/sessions/${encodeURIComponent(createdSessionId)}/expire`, new URLSearchParams());
+        sessionExpired = true;
+      }
+      catch (expireError) { console.warn("Stripe checkout session could not be expired after setup failure.", expireError); }
+    }
+    if (sessionExpired) {
+      try { await rpc("release_stripe_order", { order_id_value: order.id, reason_value: text(error instanceof Error ? error.message : error, 240) }); }
+      catch { /* The webhook/expiry path remains the cleanup fallback. */ }
+    }
     throw error;
   }
 }
@@ -264,9 +340,60 @@ async function checkoutStatus(body: Record<string, any>) {
   }
 }
 
+function refundRequestKey(body: Record<string, any>) {
+  const requested = text(body.request_id, 36);
+  if (requested && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requested)) {
+    throw new Error("A valid refund request id is required.");
+  }
+  return requested || crypto.randomUUID();
+}
+
+async function existingRefundRequest(requestKey: string, orderId: string) {
+  const rows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,stripe_refund_id,status,amount`);
+  const existing = rows[0];
+  if (existing && existing.order_id !== orderId) throw new Error("Refund request id belongs to another order.");
+  if (existing && !existing.stripe_refund_id.startsWith("pending:")) {
+    return { stripe_refund_id: existing.stripe_refund_id, status: existing.status, refund_amount: Number(existing.amount) };
+  }
+  return null;
+}
+
+async function submitStripeRefund(order: Record<string, any>, amount: number, reason: string,
+  metadata: Record<string, unknown>, requestKey: string) {
+  const reserved = await rpc("reserve_stripe_refund_request", {
+    order_id_value: order.id, request_key_value: requestKey, amount_value: amount / 100,
+    reason_value: reason || null, metadata_value: metadata,
+  });
+  if (reserved.already_submitted) return reserved;
+  let refund: Record<string, any>;
+  try {
+    refund = await stripeRequest("refunds", stripeForm({
+      payment_intent: order.stripe_payment_intent_id,
+      amount,
+      "metadata[order_id]": order.id,
+      "metadata[refund_kind]": String(metadata.refund_kind),
+      "metadata[request_key]": requestKey,
+      reason: "requested_by_customer",
+    }), `bead-refund-${requestKey}`);
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status && status >= 400 && status < 500 && status !== 429) {
+      await rpc("discard_rejected_stripe_refund_request", { request_key_value: requestKey });
+    }
+    throw error;
+  }
+  const attached = await rpc("attach_stripe_refund_request", {
+    request_key_value: requestKey, stripe_refund_id_value: refund.id,
+  });
+  return { ...attached, stripe_refund_id: refund.id, refund_amount: amount / 100 };
+}
+
 async function createRefund(request: Request, body: Record<string, any>) {
   if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
   const orderId = text(body.order_id, 80);
+  const requestKey = refundRequestKey(body);
+  const existing = await existingRefundRequest(requestKey, orderId);
+  if (existing) return json(existing);
   const reason = text(body.reason, 240);
   const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,total,refunded_amount,status,payment_status,stripe_payment_intent_id`);
   const order = orders[0];
@@ -285,27 +412,21 @@ async function createRefund(request: Request, body: Record<string, any>) {
     const applied = await applyLocalRefund(null);
     return json(applied);
   }
-  const refund = await stripeRequest("refunds", stripeForm({
-    payment_intent: order.stripe_payment_intent_id,
-    amount,
-    "metadata[order_id]": order.id,
-    "metadata[refund_kind]": refundKind === "satisfaction" ? "satisfaction" : "order",
-    reason: "requested_by_customer",
-  }), `bead-refund-${order.id}-${amount}-${Date.now()}`);
-  const recorded = await rpc("record_stripe_refund_request", {
-    order_id_value: order.id,
-    stripe_refund_id_value: refund.id,
-    amount_value: amount / 100,
-    reason_value: reason || null,
-    metadata_value: { refund_kind: refundKind === "satisfaction" ? "satisfaction" : "order" },
-  });
-  return json({ ...recorded, stripe_refund_id: refund.id, refund_amount: amount / 100 });
+  return json(await submitStripeRefund(order, amount, reason,
+    { refund_kind: refundKind === "satisfaction" ? "satisfaction" : "order" }, requestKey));
 }
 
 async function createReturnRefund(request: Request, body: Record<string, any>) {
   if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
   const orderId = text(body.order_id, 80);
+  const requestKey = refundRequestKey(body);
+  const existing = await existingRefundRequest(requestKey, orderId);
+  if (existing) return json(existing);
   const lineItems = Array.isArray(body.line_items) ? body.line_items : [];
+  const itemIds = lineItems.map((line: Record<string, any>) => text(line.item_id, 80));
+  if (itemIds.some((id: string) => !/^[0-9a-f-]{36}$/i.test(id)) || new Set(itemIds).size !== itemIds.length) {
+    return json({ error: "Each return line must be selected only once." }, 400);
+  }
   const reason = text(body.reason, 240);
   const refundShipping = body.refund_shipping === true;
   const preview = await rpc("process_stripe_order_return", {
@@ -333,25 +454,9 @@ async function createReturnRefund(request: Request, body: Record<string, any>) {
       dry_run: false,
     }));
   }
-  const refund = await stripeRequest("refunds", stripeForm({
-    payment_intent: order.stripe_payment_intent_id,
-    amount,
-    "metadata[order_id]": orderId,
-    "metadata[refund_kind]": "return",
-    reason: "requested_by_customer",
-  }), `bead-return-${orderId}-${amount}-${Date.now()}`);
-  const recorded = await rpc("record_stripe_refund_request", {
-    order_id_value: orderId,
-    stripe_refund_id_value: refund.id,
-    amount_value: amount / 100,
-    reason_value: reason || null,
-    metadata_value: {
-      refund_kind: "return",
-      line_items: lineItems,
-      refund_shipping: refundShipping,
-    },
-  });
-  return json({ ...recorded, stripe_refund_id: refund.id, refund_amount: amount / 100 });
+  return json(await submitStripeRefund(order, amount, reason, {
+    refund_kind: "return", line_items: lineItems, refund_shipping: refundShipping,
+  }, requestKey));
 }
 
 Deno.serve(async (request) => {
@@ -359,6 +464,9 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
   try {
     const body = await request.json();
+    if (body?.action === "calculate_tax" && !await withinPublicLimit(request, "tax", 120)) return json({ error: "Too many tax estimates. Please try again shortly." }, 429);
+    if (body?.action === "create_checkout" && !await withinPublicLimit(request, "checkout", 15)) return json({ error: "Too many checkout attempts. Please try again shortly." }, 429);
+    if (body?.action === "checkout_status" && !await withinPublicLimit(request, "status", 120)) return json({ error: "Too many payment checks. Please try again shortly." }, 429);
     if (body?.action === "calculate_tax") return await calculateTaxPreview(body);
     if (body?.action === "create_checkout") return await createCheckout(request, body);
     if (body?.action === "checkout_status") return await checkoutStatus(body);
