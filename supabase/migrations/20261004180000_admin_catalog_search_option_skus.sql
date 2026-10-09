@@ -135,4 +135,3 @@ begin
   limit v_page_size offset (v_page - 1) * v_page_size;
 end;
 $$;
-
