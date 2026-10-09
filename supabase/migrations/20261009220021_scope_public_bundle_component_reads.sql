@@ -1,9 +1,5 @@
-drop policy if exists inventory_bundle_components_storefront_read
-  on public.inventory_bundle_components;
-
-create policy inventory_bundle_components_storefront_read
+alter policy inventory_bundle_components_storefront_read
   on public.inventory_bundle_components
-  for select
   to anon, authenticated
   using (
     exists (
