@@ -8,7 +8,7 @@ Repository governance and canonical ownership rules are defined in `AGENTS.md`.
 
 ## Supabase setup
 
-The backend schema and RLS policies are recorded in `supabase/migrations/`. The browser uses the project URL and publishable key only; privileged keys must remain server-side. As of October 9, 2026, the configured live project has applied migrations through `20261008235701_capture_live_admin_report_rpcs`. The local migration directory also contains historical/superseded timestamp variants that do not match the live ledger; do not bulk-replay or delete those files. Reconcile the exact migration versions before applying new migrations, and deploy the matching Edge Functions before releasing dependent storefront code.
+The backend schema and RLS policies are recorded in `supabase/migrations/`. The browser uses the project URL and publishable key only; privileged keys must remain server-side. As of October 9, 2026, the configured live project has applied migrations through `20261009123229_validate_stripe_return_lines_20261009`. The local migration directory also contains historical/superseded timestamp variants that do not match the live ledger; do not bulk-replay or delete those files. Reconcile the exact migration versions before applying new migrations, and deploy the matching Edge Functions before releasing dependent storefront code.
 
 New accounts are created as `customer` profiles by the Auth trigger. To create the owner admin account, first register the owner through `account.html`, confirm the email if Supabase email confirmation is enabled, then run this statement in the Supabase SQL editor with the owner email substituted:
 
