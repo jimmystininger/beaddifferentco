@@ -170,4 +170,3 @@ $$;
 
 revoke all on function public.get_my_reviewable_product_ids() from public, anon;
 grant execute on function public.get_my_reviewable_product_ids() to authenticated, service_role;
-
