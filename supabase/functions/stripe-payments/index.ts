@@ -87,6 +87,16 @@ async function stripeRequest(path: string, form: URLSearchParams, idempotencyKey
   return payload;
 }
 
+async function stripeCheckoutSession(sessionId: string) {
+  if (!stripeSecret) throw new Error("Stripe is not configured.");
+  const response = await network(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+    headers: { Authorization: `Basic ${btoa(`${stripeSecret}:`)}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(text(payload?.error?.message || "Stripe could not verify this checkout.", 240));
+  return payload;
+}
+
 function taxAddress(form: URLSearchParams, address: Record<string, any>) {
   form.set("customer_details[address][line1]", text(address.address_line1, 120));
   if (address.address_line2) form.set("customer_details[address][line2]", text(address.address_line2, 120));
@@ -233,6 +243,27 @@ async function createCheckout(request: Request, body: Record<string, any>) {
   }
 }
 
+async function checkoutStatus(body: Record<string, any>) {
+  const sessionId = text(body.session_id, 200);
+  const orderId = text(body.order_id, 80);
+  if (!/^cs_(test|live)_[A-Za-z0-9]+$/.test(sessionId) || !/^[0-9a-f-]{36}$/i.test(orderId)) {
+    return json({ error: "A valid checkout session and order are required." }, 400);
+  }
+  const session = await stripeCheckoutSession(sessionId);
+  if (session.id !== sessionId || session.metadata?.order_id !== orderId || session.client_reference_id !== orderId) {
+    return json({ error: "Checkout session does not match this order." }, 400);
+  }
+  if (session.payment_status !== "paid") return json({ status: "pending" });
+  const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null;
+  try {
+    const order = await rpc("complete_stripe_order", { order_id_value: orderId, session_id_value: sessionId, payment_intent_value: paymentIntentId });
+    return json({ status: order?.payment_status === "paid" ? "paid" : "processing", order_id: orderId });
+  } catch (error) {
+    console.error("Verified Stripe payment could not finalize the order.", error);
+    return json({ status: "processing", order_id: orderId });
+  }
+}
+
 async function createRefund(request: Request, body: Record<string, any>) {
   if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
   const orderId = text(body.order_id, 80);
@@ -330,6 +361,7 @@ Deno.serve(async (request) => {
     const body = await request.json();
     if (body?.action === "calculate_tax") return await calculateTaxPreview(body);
     if (body?.action === "create_checkout") return await createCheckout(request, body);
+    if (body?.action === "checkout_status") return await checkoutStatus(body);
     if (body?.action === "refund_order") return await createRefund(request, body);
     if (body?.action === "refund_return") return await createReturnRefund(request, body);
     return json({ error: "Unsupported payment action." }, 400);

@@ -18,7 +18,6 @@ const productDeliveryWeightToOz=(value,unit)=>{const amount=Number(value)||0;swi
 
 function addShippingIcon(className,svg){const icon=document.createElement('span');icon.className=`shipping-row-icon ${className}`;icon.setAttribute('aria-hidden','true');icon.innerHTML=svg;return icon;}
 function enhanceProductShippingCard(){const shipping=document.querySelector('[data-delivery-form]');if(!shipping||shipping.dataset.iconsReady)return;shipping.dataset.iconsReady='true';const heading=shipping.querySelector('.shipping-estimate-heading');const destination=shipping.querySelector('.shipping-delivery');const estimate=shipping.querySelector('.shipping-estimate-result');const truck='<svg viewBox="0 0 24 24" focusable="false"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7zM7 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>';const pin='<svg viewBox="0 0 24 24" focusable="false"><path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.2"/></svg>';const calendar='<svg viewBox="0 0 24 24" focusable="false"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>';if(heading&&!heading.querySelector('.shipping-row-icon')){heading.classList.add('shipping-row');heading.prepend(addShippingIcon('shipping-truck-icon',truck));}if(destination&&!destination.querySelector('.shipping-row-icon')){destination.classList.add('shipping-row');destination.prepend(addShippingIcon('',pin));}if(estimate&&!estimate.querySelector('.shipping-row-icon')){estimate.classList.add('shipping-row');estimate.prepend(addShippingIcon('',calendar));}}
-new MutationObserver(enhanceProductShippingCard).observe(document.documentElement,{childList:true,subtree:true});
 
 async function refreshProductDeliveryEstimate(main,item){
   const form=main.querySelector('[data-delivery-form]');
@@ -89,7 +88,6 @@ async function hydrateProductDeliveryEstimate(main,item){
     if(destination){destination.textContent=`Default address · ZIP ${input.value}`;destination.hidden=false;}
     if(changeButton){changeButton.hidden=false;changeButton.textContent='Change';}
     if(note)note.textContent=`Using your ${productPageEscape(address.label||'default address')} ZIP · USPS Ground Advantage service standards.`;
-    await refreshProductDeliveryEstimate(main,item);
   }catch(error){}
 }
 
@@ -100,7 +98,6 @@ function fillProductDescriptionFallback(){
   const shortDescription=document.querySelector('.product-page-short-description')?.textContent.trim();
   if(paragraph&&!paragraph.textContent.trim()&&shortDescription)paragraph.innerHTML=productPageEscape(shortDescription).replace(/\r?\n/g,'<br>');
 }
-new MutationObserver(fillProductDescriptionFallback).observe(document.documentElement,{childList:true,subtree:true});
 
 function renderProductPage(item){
   item={...item,description:item.description||item.shortDescription||''};
@@ -167,7 +164,7 @@ function renderProductPage(item){
   void hydrateProductDeliveryEstimate(main,item);updateProductPageCategoryLabels();
 }
 
-Promise.all([catalogReady,window.catalogMetadataReady||catalogReady]).then(async()=>{await Promise.all([window.shippingSettingsReady,window.siteSettingsReady]);const productId=new URLSearchParams(location.search).get('id');const item=findProduct(productId);const main=document.querySelector('main');if(!item||!isProductVisible(item)){main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';return;}trackProductEvent(item.id,'view');renderProductPage(item);restoreProductPageMediaOrder(item);installCanonicalProductPageFilters(item);});
+Promise.all([catalogReady,window.catalogMetadataReady||catalogReady]).then(async()=>{await Promise.all([window.shippingSettingsReady,window.siteSettingsReady]);const productId=new URLSearchParams(location.search).get('id');const item=findProduct(productId);const main=document.querySelector('main');if(!item||!isProductVisible(item)){main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';return;}document.title=`${item.seoTitle||item.name} | Bead Different Co.`;const description=document.querySelector('meta[name="description"]');if(description)description.content=String(item.shortDescription||item.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,160);trackProductEvent(item.id,'view');renderProductPage(item);enhanceProductShippingCard();fillProductDescriptionFallback();restoreProductPageMediaOrder(item);installCanonicalProductPageFilters(item);});
 
 async function hydrateProductReviews(item){
   const section=document.querySelector('.product-page-reviews');

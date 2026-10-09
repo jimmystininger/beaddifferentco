@@ -220,33 +220,6 @@ const renderSaleCollection=async()=>{
   grid.querySelectorAll('[data-wishlist]').forEach((button)=>{const active=wished.includes(button.dataset.wishlist);button.classList.toggle('active',active);button.setAttribute('aria-label',active?'Remove from favorites':'Add to favorites');button.addEventListener('click',()=>{const next=toggleWishlist(button.dataset.wishlist);button.classList.toggle('active',next);button.setAttribute('aria-label',next?'Remove from favorites':'Add to favorites');});});
 };
 
-const guestAccountPrompt=(storePage,email)=>{
-  if(!email||storePage.querySelector('[data-guest-account-prompt]'))return;
-  const prompt=document.createElement('aside');
-  prompt.className='guest-account-prompt';
-  prompt.dataset.guestAccountPrompt='true';
-  prompt.innerHTML=`<h2>Track this order</h2><p>Create an account with ${escapeProductText(email)} to track this order and future orders.</p><a class="cta" href="account.html?signup=1&email=${encodeURIComponent(email)}">Create an account</a>`;
-  storePage.append(prompt);
-};
-
-const hydrateConfirmationRewards=async(storePage,account)=>{
-  if(!account||!window.customerAccounts?.rewardStatus)return;
-  try{
-    const reward=await window.customerAccounts.rewardStatus();
-    const host=storePage.querySelector('[data-confirmation-rewards]');
-    if(!host||!reward)return;
-    const threshold=Math.max(.01,Number(reward.threshold)||35);
-    const spend=Math.max(0,Number(reward.spend)||0);
-    const progress=Math.min(threshold,Math.max(0,Number(reward.progress)||0));
-    const discount=Math.min(100,Math.max(.01,Number(reward.discountPercent)||5));
-    const remaining=Math.max(0,threshold-spend);
-    const message=reward.available?'Reward unlocked. It will apply automatically in your cart.':spend>=threshold?'This reward was redeemed. Keep spending to unlock the next one.':`Spend $${remaining.toFixed(2)} more to unlock your reward.`;
-    host.innerHTML=`<p class="kicker">MEMBER REWARDS</p><h2>Your rewards progress</h2><p>Spend <strong>$${spend.toFixed(2)}</strong> of <strong>$${threshold.toFixed(2)}</strong> before tax and shipping to unlock <strong>${discount}% off</strong>.</p><progress max="${threshold}" value="${progress}" aria-label="Reward progress"></progress><p class="order-confirmation-rewards-message">${escapeProductText(message)}</p>`;
-    host.hidden=false;
-  }catch(error){console.warn('Confirmation rewards unavailable.',error);}
-};
-const publicOrderNumber=(order)=>order?.order_number?`BD-${String(order.order_number).padStart(6,'0')}`:String(order?.id||'created');
-
 const syncCheckoutAccountField=(form)=>{
   const account=window.customerAccounts?.current?.();
   const existing=form.querySelector('.checkout-customer-email');
@@ -521,24 +494,13 @@ const setupShoppingBag=async()=>{
         activePromo=verified;
       }catch(error){status.textContent='';openCheckoutErrorDialog('Unable to verify the promo code right now.');return;}
     }
-    const totals=currentTotals();
     const selectedRate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
     const shippingAmount=selectedRate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(selectedRate.amount)||0):0;
     const submit=form.querySelector('[type="submit"]');
     submit.disabled=true;
-    status.textContent='Creating your order…';
+    status.textContent='Opening secure checkout…';
     try{
-      const confirmationLines=currentEntries().map((entry)=>{const item=findProduct(entry.id);const pricing=linePricing(entry,item);const sku=String(pricing?.sku||pricing?.option?.inventorySku||pricing?.option?.sku||item?.sku||'').trim();const name=String(pricing?.option?.label||sku||item?.name||'Item').trim();const quantity=Math.max(1,Number(entry.quantity)||1);return{name,sku,quantity,unitPrice:Number(pricing?.unitPrice??item?.price)||0};});
-      const confirmationItems=confirmationLines.reduce((total,line)=>total+line.quantity,0);
-      const confirmationItemMarkup=confirmationLines.map((line)=>`<li><div><strong>${escapeProductText(line.name)}</strong><small>${line.sku?`SKU: ${escapeProductText(line.sku)}`:''}</small></div><span>${line.quantity} × $${line.unitPrice.toFixed(2)}</span></li>`).join('');
-      const confirmationEta=selectedRate?.scheduledDeliveryDate?new Date(`${selectedRate.scheduledDeliveryDate}T12:00:00`).toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}):'To be confirmed';
-      const order=await window.storeCheckout({shippingName:address.recipient_name,shippingAddress:address,customerEmail:email,promoCode:activePromo?.mode==='manual'?activePromo.code:'',shippingAmount,shippingCost:Number(selectedRate?.amount)||0,shippingMethod:shippingMethod==='priority'?'priority':'standard',taxAmount:Number(taxQuote?.amount)||0,taxRate:Number(taxQuote?.rate)||0,taxState:taxQuote?.state||'',taxJurisdiction:taxQuote?.jurisdiction||'',testOrder:true});
-      const wasGuest=!account;
-      const confirmationTotal=Math.max(0,totals.subtotal-promoDiscount(totals)+shippingAmount+Number(taxQuote?.amount||0));
-      storePage.innerHTML=`<section class="order-confirmation" aria-labelledby="order-confirmation-title"><div class="order-confirmation-main"><span class="order-confirmation-mark" aria-hidden="true">✓</span><p class="kicker">ORDER CONFIRMED</p><h1 id="order-confirmation-title">Your order is on its way</h1><p class="order-confirmation-lead">Thanks for your order from Bead Different Co. We’ve received it and will keep you updated as it moves through fulfillment.</p><div class="order-confirmation-number"><span>Order number</span><strong>${escapeProductText(publicOrderNumber(order))}</strong></div><p class="order-confirmation-email">A confirmation has been sent to <strong>${escapeProductText(email)}</strong>.</p><a class="cta" href="shop-all.html">Continue shopping <span aria-hidden="true">→</span></a></div><aside class="order-confirmation-details" aria-label="Order details"><h2>Order details</h2><dl><div><dt>Items</dt><dd>${confirmationItems}</dd></div><div><dt>Shipping</dt><dd>${shippingMethod==='priority'?'Priority':'Standard'}</dd></div><div><dt>Estimated arrival</dt><dd>${escapeProductText(confirmationEta)}</dd></div><div><dt>Payment</dt><dd>Card payment</dd></div><div class="order-confirmation-total"><dt>Order total</dt><dd>$${confirmationTotal.toFixed(2)}</dd></div></dl><p class="order-confirmation-note">We’ll send updates as your order moves through fulfillment.</p></aside><section class="order-confirmation-items" aria-labelledby="order-items-title"><div><p class="kicker">ORDER RECAP</p><h2 id="order-items-title">Items in your order</h2></div><ul>${confirmationItemMarkup}</ul></section></section>`;
-      const confirmationRewards=document.createElement('section');confirmationRewards.className='order-confirmation-rewards';confirmationRewards.dataset.confirmationRewards='true';confirmationRewards.hidden=true;confirmationRewards.setAttribute('aria-live','polite');storePage.querySelector('.order-confirmation')?.append(confirmationRewards);void hydrateConfirmationRewards(storePage,account);
-      if(wasGuest)guestAccountPrompt(storePage,email);
-      window.dispatchEvent(new Event('bead-order-created'));
+      await window.storeCheckout({shippingName:address.recipient_name,shippingAddress:address,customerEmail:email,promoCode:activePromo?.mode==='manual'?activePromo.code:'',shippingAmount,shippingCost:Number(selectedRate?.amount)||0,shippingMethod:shippingMethod==='priority'?'priority':'standard',taxAmount:Number(taxQuote?.amount)||0,taxRate:Number(taxQuote?.rate)||0,taxState:taxQuote?.state||'',taxJurisdiction:taxQuote?.jurisdiction||''});
     }catch(error){const unavailableAfterServerCheck=unavailableEntries();if(unavailableAfterServerCheck.length||/A product in your cart is no longer available/i.test(error?.message||'')){status.textContent='';drawSummary();openInvalidCartDialog(unavailableAfterServerCheck.length?unavailableAfterServerCheck:validBagItems());}else{status.textContent='';openCheckoutErrorDialog(error.message||'Unable to create your order.');}submit.disabled=false;}
   });
   setAddressExpanded(true);drawSummary();renderCart();void restoreSavedPromo();void hydrateAddresses();

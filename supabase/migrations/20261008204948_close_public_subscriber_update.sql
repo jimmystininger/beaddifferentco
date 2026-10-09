@@ -1,0 +1,2 @@
+drop policy if exists notification_subscribers_public_update
+on public.notification_subscribers;

@@ -1,5 +1,84 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order confirmed | Bead Different Co.</title><link rel="stylesheet" href="styles.css?v=20261007-canonical-audit1"><style>
-html,body{min-height:100%;margin:0}body.payment-success-page{display:block!important;visibility:visible!important;opacity:1!important;min-height:100vh;background:#fffdfb;color:#251b25;font-family:Arial,sans-serif}.payment-success-page .payment-success-shell{display:flex!important;align-items:center;justify-content:center;min-height:100vh;padding:32px 20px;box-sizing:border-box}.payment-success-page .payment-success-card{display:block!important;visibility:visible!important;opacity:1!important;width:min(100%,680px);box-sizing:border-box;padding:clamp(32px,7vw,68px);border:1px solid #e4d8dc;border-radius:18px;background:linear-gradient(145deg,#fff 0%,#fff8fa 100%);box-shadow:0 18px 55px rgba(91,44,70,.12);text-align:center}.payment-success-page .payment-success-mark{display:grid;place-items:center;width:58px;height:58px;margin:0 auto 20px;border-radius:50%;background:#5b284f;color:#fff;font:700 28px/1 Arial,sans-serif}.payment-success-page .payment-success-kicker{margin:0 0 13px;color:#8b4261;font-size:11px;font-weight:700;letter-spacing:.2em}.payment-success-page .payment-success-card h1{margin:0 0 16px;color:#251b25;font:italic clamp(34px,5vw,54px)/1 Georgia,"Times New Roman",serif}.payment-success-page .payment-success-lead{max-width:470px;margin:0 auto 20px;color:#5c5559;font-size:15px;line-height:1.55}.payment-success-page .payment-success-order{margin:0 auto 28px;padding:14px 16px;border:1px dashed #cfa9b9;border-radius:10px;background:#fff;color:#5c5559;font-size:11px;letter-spacing:.08em;text-transform:uppercase}.payment-success-page .payment-success-order strong{display:block;margin-top:6px;color:#251b25;font:700 14px/1.35 Arial,sans-serif;letter-spacing:0;overflow-wrap:anywhere;text-transform:none}.payment-success-page .payment-success-card .cta{display:inline-block;min-width:220px;box-sizing:border-box;background:#5b284f;color:#fff;padding:15px 26px;border-radius:28px;font-size:12px;font-weight:700;letter-spacing:1px;text-decoration:none}.payment-success-page .payment-success-card .cta:hover{background:#3d1b36;color:#fff}.payment-success-page .payment-success-fallback{margin:24px 0 0;color:#71676d;font-size:12px;line-height:1.5}.payment-success-page .payment-success-fallback a{color:#8b4261}
-</style></head><body class="payment-success-page"><main class="payment-success-shell"><section class="payment-success-card" aria-labelledby="payment-success-title"><span class="payment-success-mark" aria-hidden="true">✓</span><p class="payment-success-kicker">ORDER CONFIRMED</p><h1 id="payment-success-title">Thank you for your order</h1><p class="payment-success-lead">Your payment was received securely by Stripe and your order was sent to Bead Different Co. We’ll keep you updated as it moves through fulfillment.</p><p class="payment-success-order" data-payment-success-order>Order reference<strong data-payment-success-order-value>Loading…</strong></p><a class="cta" href="shop-all.html">Continue shopping <span aria-hidden="true">→</span></a><p class="payment-success-fallback">If this page does not finish loading, your order is still recorded. You can <a href="account.html?view=orders">view your orders</a> or contact us for help.</p></section></main><script>
-(()=>{const params=new URLSearchParams(location.search);const orderId=String(params.get('order_id')||'').trim();const orderValue=document.querySelector('[data-payment-success-order-value]');if(orderValue)orderValue.textContent=orderId||'Confirmation received';try{for(const key of ['beadDifferentBag','beadDifferentCartDirty','beadDifferentCartHoldSnapshot','beadDifferentCartHoldUser','beadDifferentCartPromo'])localStorage.removeItem(key);}catch(error){}})();
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Checking payment | Bead Different Co.</title>
+  <link rel="stylesheet" href="styles.css?v=20261007-canonical-audit1">
+</head>
+<body class="payment-success-page" data-theme-ready="true">
+  <main class="payment-success-shell">
+    <section class="payment-success-card" aria-labelledby="payment-success-title" aria-live="polite">
+      <span class="payment-success-mark" aria-hidden="true">✓</span>
+      <p class="payment-success-kicker" data-payment-kicker>CHECKING PAYMENT</p>
+      <h1 id="payment-success-title" data-payment-title>Verifying your order</h1>
+      <p class="payment-success-lead" data-payment-message>We’re checking your payment and order status. Please keep this page open.</p>
+      <p class="payment-success-order" data-payment-order hidden>Order reference<strong data-payment-order-value></strong></p>
+      <a class="cta" href="shopping-bag.html" data-payment-link>Return to cart <span aria-hidden="true">→</span></a>
+    </section>
+  </main>
+  <script src="supabase-client.js?v=20261007-canonical-audit1"></script>
+  <script>
+    (async()=>{
+      const params=new URLSearchParams(location.search);
+      const sessionId=String(params.get('session_id')||'').trim();
+      const orderId=String(params.get('order_id')||'').trim();
+      const kicker=document.querySelector('[data-payment-kicker]');
+      const title=document.querySelector('[data-payment-title]');
+      const message=document.querySelector('[data-payment-message]');
+      const order=document.querySelector('[data-payment-order]');
+      const link=document.querySelector('[data-payment-link]');
+      const show=(label,heading,detail)=>{kicker.textContent=label;title.textContent=heading;message.textContent=detail;document.title=heading+' | Bead Different Co.';};
+      if(!sessionId||!orderId){
+        show('PAYMENT NOT VERIFIED','We could not verify this payment','Your cart is still saved. Return to it or contact us if you were charged.');
+        return;
+      }
+      try{
+        const client=await window.beadSupabaseReady;
+        if(!client?.functions?.invoke)throw new Error('Store connection unavailable.');
+        const result=await client.functions.invoke('stripe-payments',{body:{action:'checkout_status',session_id:sessionId,order_id:orderId}});
+        if(result.error||!result.data||result.data.error)throw new Error('Payment verification unavailable.');
+        if(result.data.status==='paid'&&result.data.order_id===orderId){
+          show('ORDER CONFIRMED','Thank you for your order','Your payment was received by Stripe and your order is recorded.');
+          order.querySelector('[data-payment-order-value]').textContent=orderId;
+          order.hidden=false;
+          let pending=null;
+          try{pending=JSON.parse(sessionStorage.getItem('beadDifferentPendingCheckout')||'null');}catch(error){}
+          if(pending?.sessionId===sessionId&&pending.orderId===orderId&&pending.cartToken&&pending.bagSnapshot===(localStorage.getItem('beadDifferentBag')||'[]')){
+            try{
+              let cartId=pending.cartId;
+              if(!cartId){
+                const cartResult=await client.rpc('get_or_create_storefront_cart',{p_guest_token:pending.cartToken});
+                if(cartResult.error)throw cartResult.error;
+                cartId=cartResult.data?.id;
+              }
+              if(!cartId)throw new Error('Cart identity unavailable.');
+              const clearResult=await client.rpc('replace_storefront_cart',{p_cart_id:cartId,p_guest_token:pending.cartToken,p_items:[]});
+              if(clearResult.error)throw clearResult.error;
+              localStorage.setItem('beadDifferentBag','[]');
+              localStorage.setItem('beadDifferentCartOwner',cartId);
+              for(const key of ['beadDifferentCartDirty','beadDifferentCartHoldSnapshot','beadDifferentCartHoldUser','beadDifferentCartPromo'])localStorage.removeItem(key);
+              sessionStorage.removeItem('beadDifferentPendingCheckout');
+              link.href='shop-all.html';
+              link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
+            }catch(error){message.textContent='Your order is confirmed, but we could not clear your cart. Please review it before ordering again.';}
+          }else if(pending?.sessionId===sessionId&&pending.orderId===orderId){
+            message.textContent='Your order is confirmed. Your cart changed during checkout, so please review it before ordering again.';
+          }else{
+            link.href='shop-all.html';
+            link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
+          }
+        }else if(result.data.status==='processing'){
+          show('PAYMENT RECEIVED','Your order needs attention','Stripe received your payment, but we could not finish recording the order. Please do not pay again; contact us with your order reference.');
+          order.querySelector('[data-payment-order-value]').textContent=orderId;
+          order.hidden=false;
+        }else{
+          show('PAYMENT NOT CONFIRMED','Payment is still processing','Your cart is saved. Please check your orders before trying checkout again.');
+        }
+      }catch(error){
+        show('PAYMENT NOT VERIFIED','We could not verify this payment','Your cart is saved. Please check your orders or contact us before trying checkout again.');
+      }
+    })();
+  </script>
+</body>
+</html>
