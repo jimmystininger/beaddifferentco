@@ -19,6 +19,22 @@ const numberValue = (value: unknown, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const withinShippingLimit = async (request: Request) => {
+  const projectUrl = Deno.env.get("SUPABASE_URL") || "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (serviceKey && request.headers.get("authorization") === `Bearer ${serviceKey}`) return true;
+  const address = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${serviceKey}:${address}`));
+  const clientHash = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  const response = await fetch(`${projectUrl}/rest/v1/rpc/check_storefront_request_limit`, {
+    method: "POST",
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ action_value: "shipping", client_hash_value: clientHash, request_limit: 100, window_seconds: 900 }),
+  });
+  if (!response.ok) throw new Error("Shipping request protection is unavailable.");
+  return await response.json() === true;
+};
+
 type CacheEntry = { expiresAt: number; value: unknown };
 const tokenCache = new Map<string, CacheEntry>();
 const quoteCache = new Map<string, CacheEntry>();
@@ -216,6 +232,7 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
 
   try {
+    if (!await withinShippingLimit(request)) return json({ error: "Too many shipping estimates. Please try again shortly." }, 429);
     const body = await request.json();
     const from = body?.from || {};
     const to = body?.to || {};
