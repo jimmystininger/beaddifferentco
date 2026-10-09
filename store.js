@@ -168,7 +168,8 @@ window.loadStorefrontCategoryFilters=loadStorefrontCategoryFilters;
 async function hydrateStorefrontOptionInventory(client,optionRows){
   const inventoryIds=[...new Set((optionRows||[]).flatMap((option)=>option.product_option_values||[]).map((value)=>String(value.inventory_sku_id||'').trim()).filter(Boolean))];
   if(!inventoryIds.length)return optionRows||[];
-  const result=await fetchStoreBatches(inventoryIds,(batch)=>client.from('storefront_inventory_skus').select('id,sku,name,quantity_available,price,unit_type,weight_value,weight_unit,product_pages').in('id',batch));
+  const fields=storefrontListingPage()?'id,sku,name,quantity_available,price,unit_type,weight_value,weight_unit':'id,sku,name,quantity_available,price,unit_type,weight_value,weight_unit,product_pages';
+  const result=await fetchStoreBatches(inventoryIds,(batch)=>client.from('storefront_inventory_skus').select(fields).in('id',batch));
   if(result.error){window.storeCatalogOptionsError=result.error;return optionRows||[];}
   cacheStorefrontInventoryRecords(result.data||[]);
   return (optionRows||[]).map((option)=>({...option,product_option_values:(option.product_option_values||[]).map((value)=>({...value,inventory_skus:storefrontInventoryById.get(String(value.inventory_sku_id||''))||null}))}));
@@ -735,7 +736,7 @@ normalizeWishlistButtons();
 // after the catalog's normal option load so admin and storefront share the
 // same page-scoped selection.
 const applyCanonicalProductPageMedia=async()=>{
-  if(!window.beadSupabase||!catalog.length)return catalog;
+  if(storefrontListingPage()||!window.beadSupabase||!catalog.length)return catalog;
   const skus=[...new Set(catalog.flatMap((item)=>(item.options||[]).flatMap((option)=>option.values||[])).map((value)=>String(value?.inventorySku||value?.sku||'').trim()).filter(Boolean))];
   if(!skus.length)return catalog;
   const missingSkus=skus.filter((sku)=>!storefrontInventoryForSku(sku)?.product_pages);
