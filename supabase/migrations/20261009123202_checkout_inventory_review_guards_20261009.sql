@@ -27,7 +27,6 @@ begin
 end;
 $$;
 
-drop trigger if exists validate_stripe_order_item on public.order_items;
 create trigger validate_stripe_order_item
 before insert on public.order_items
 for each row execute function private.validate_stripe_order_item();
@@ -47,7 +46,6 @@ begin
 end;
 $$;
 
-drop trigger if exists prevent_new_inventory_overreservation on public.inventory_skus;
 create trigger prevent_new_inventory_overreservation
 before update of reserve_quantity on public.inventory_skus
 for each row execute function private.prevent_new_inventory_overreservation();
@@ -289,19 +287,19 @@ begin
 end;
 $$;
 
-drop trigger if exists protect_customer_reviews on public.reviews;
 create trigger protect_customer_reviews
 before insert or update on public.reviews
 for each row execute function private.protect_customer_reviews();
 
-drop policy if exists reviews_self_insert on public.reviews;
-create policy reviews_self_insert on public.reviews
+create policy reviews_customer_insert_guard on public.reviews
+as restrictive
 for insert to authenticated
-with check ((select auth.uid()) = user_id and review_type = 'website'
-  and verified_purchase = false and status = 'pending' and product_id is null);
+with check ((select private.is_admin()) or ((select auth.uid()) = user_id
+  and review_type = 'website' and verified_purchase = false
+  and status = 'pending' and product_id is null));
 
-drop policy if exists reviews_self_update on public.reviews;
-create policy reviews_self_update on public.reviews
+create policy reviews_customer_update_guard on public.reviews
+as restrictive
 for update to authenticated
 using (((select auth.uid()) = user_id and status = 'pending') or (select private.is_admin()))
 with check (((select auth.uid()) = user_id and status = 'pending') or (select private.is_admin()));
