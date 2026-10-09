@@ -60,13 +60,17 @@ async function refundOrderId(refund: Record<string, any>, fallbackOrderId: strin
   if (refund.metadata?.order_id) return refund.metadata.order_id;
   if (fallbackOrderId) return fallbackOrderId;
   const paymentIntent = typeof refund.payment_intent === "string" ? refund.payment_intent : refund.payment_intent?.id;
-  if (!paymentIntent) return null;
-  const orders = await database(`orders?stripe_payment_intent_id=eq.${encodeURIComponent(paymentIntent)}&select=id`);
-  return orders[0]?.id || null;
+  if (paymentIntent) {
+    const orders = await database(`orders?stripe_payment_intent_id=eq.${encodeURIComponent(paymentIntent)}&select=id`);
+    if (orders[0]?.id) return orders[0].id;
+  }
+  const refunds = await database(`stripe_refunds?stripe_refund_id=eq.${encodeURIComponent(text(refund.id, 80))}&select=order_id`);
+  return refunds[0]?.order_id || null;
 }
 
 async function finalizeRefund(refund: Record<string, any>, status: string, fallbackOrderId: string | null = null) {
   const orderId = await refundOrderId(refund, fallbackOrderId);
+  if (!orderId) return;
   const requestKey = text(refund.metadata?.request_key, 36);
   if (requestKey) {
     await rpc("attach_stripe_refund_request", {
@@ -126,6 +130,6 @@ Deno.serve(async (request) => {
   try {
     return await handleWebhook(request);
   } catch (error) {
-    return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe webhook failed." }, 400);
+    return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe webhook failed." }, 500);
   }
 });

@@ -164,7 +164,32 @@ function renderProductPage(item){
   void hydrateProductDeliveryEstimate(main,item);updateProductPageCategoryLabels();
 }
 
-Promise.all([catalogReady,window.catalogMetadataReady||catalogReady]).then(async()=>{await Promise.all([window.shippingSettingsReady,window.siteSettingsReady]);const productId=new URLSearchParams(location.search).get('id');const item=findProduct(productId);const main=document.querySelector('main');if(!item||!isProductVisible(item)){main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';return;}document.title=`${item.seoTitle||item.name} | Bead Different Co.`;const description=document.querySelector('meta[name="description"]');if(description)description.content=String(item.shortDescription||item.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,160);trackProductEvent(item.id,'view');renderProductPage(item);enhanceProductShippingCard();fillProductDescriptionFallback();restoreProductPageMediaOrder(item);installCanonicalProductPageFilters(item);void hydrateProductReviews(item);});
+const setProductSearchMetadata=(item)=>{
+  const canonicalPath=`/product.html?id=${encodeURIComponent(item.externalId||item.id)}`;
+  const canonicalUrl=new URL(canonicalPath,'https://www.beaddifferentco.com').href;
+  const description=String(item.shortDescription||item.description||item.name).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,160);
+  window.setStorefrontSeo?.({title:`${item.seoTitle||item.name} | Bead Different Co.`,description,canonicalPath});
+  const categorySlug=String(item.category||item.category_slug||'').trim();
+  const categoryLabel=(window.storeCategories||[]).find(([slug])=>slug===categorySlug)?.[1];
+  window.setStorefrontBreadcrumbs?.([{name:'Home',path:'/'},...(categorySlug&&categoryLabel?[{name:categoryLabel,path:`/category.html?category=${encodeURIComponent(categorySlug)}`}]:[]),{name:item.seoTitle||item.name,path:canonicalPath}]);
+  const variants=(item.options||[]).flatMap((option)=>option.values||[]).filter((value)=>typeof value==='object'&&String(value.sku||value.inventorySku||'').trim());
+  const pricedVariants=(variants.length?variants:[{sku:item.sku,price:item.price,quantity:item.quantity}]).map((variant)=>({price:Number(window.storefrontPromoForSku?.(item,variant.price,variant.sku||variant.inventorySku)?.price??variant.price),quantity:variant.quantity})).filter((variant)=>Number.isFinite(variant.price)&&variant.price>0);
+  const knownStock=pricedVariants.filter((variant)=>variant.quantity!==null&&variant.quantity!==undefined&&Number.isFinite(Number(variant.quantity)));
+  const availability=knownStock.some((variant)=>Number(variant.quantity)>0)?'https://schema.org/InStock':knownStock.length===pricedVariants.length&&knownStock.length?'https://schema.org/OutOfStock':null;
+  const availableVariants=pricedVariants.filter((variant)=>Number(variant.quantity)>0);
+  const offerPrices=availableVariants.length?availableVariants:pricedVariants;
+  const offer=offerPrices.length?{'@type':'Offer',url:canonicalUrl,priceCurrency:'USD',price:Math.min(...offerPrices.map((variant)=>variant.price)).toFixed(2),itemCondition:'https://schema.org/NewCondition',...(availability?{availability}:{})}:null;
+  const placeholderImageUrl=new URL('/product-mix.jpg',canonicalUrl);
+  const imageUrls=[...new Set((item.images?.length?item.images:[item.image]).flatMap((image)=>{if(!image)return[];try{const url=new URL(image,canonicalUrl);return ['http:','https:'].includes(url.protocol)&&(url.origin!==placeholderImageUrl.origin||url.pathname!==placeholderImageUrl.pathname)?[url.href]:[];}catch(error){return[];}}))];
+  const schema={'@context':'https://schema.org','@type':'Product',name:item.name,url:canonicalUrl,description:String(item.shortDescription||item.description||'').replace(/<[^>]*>/g,' ').trim(),...(imageUrls.length?{image:imageUrls}:{}),brand:{'@type':'Brand',name:'Bead Different Co.'},...(item.sku?{sku:item.sku}:{}),...(offer?{offers:offer}:{})};
+  let script=document.querySelector('script[data-product-structured-data]');
+  if(!script){script=document.createElement('script');script.type='application/ld+json';script.dataset.productStructuredData='';document.head.append(script);}
+  script.textContent=JSON.stringify(schema).replace(/</g,'\\u003c');
+};
+
+const requestedProductId=new URLSearchParams(location.search).get('id');
+if(requestedProductId)window.setStorefrontSeo?.({canonicalPath:`/product.html?id=${encodeURIComponent(requestedProductId)}`});
+Promise.all([catalogReady,window.catalogMetadataReady||catalogReady]).then(async()=>{const main=document.querySelector('main');if(window.storeCatalogError){main.innerHTML='<section class="store-page product-unavailable"><h1>Product temporarily unavailable</h1><p>We could not load this product right now. Please try again shortly.</p><button type="button" class="cta">Try again</button></section>';main.querySelector('button')?.addEventListener('click',()=>location.reload());return;}const item=findProduct(requestedProductId);if(!item||!isProductVisible(item)){window.setStorefrontSeo?.({robots:'noindex,follow'});main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';return;}setProductSearchMetadata(item);await Promise.all([window.shippingSettingsReady,window.siteSettingsReady]);trackProductEvent(item.id,'view');renderProductPage(item);const heroImage=main.querySelector('.product-page-main-image');if(heroImage)heroImage.alt=item.imageAlt||item.name;enhanceProductShippingCard();fillProductDescriptionFallback();restoreProductPageMediaOrder(item);installCanonicalProductPageFilters(item);void hydrateProductReviews(item);});
 
 async function hydrateProductReviews(item){
   const section=document.querySelector('.product-page-reviews');
@@ -325,7 +350,7 @@ function restoreProductPageMediaOrder(item){
       const image=document.createElement('img');
       image.className='product-page-main-image';
       image.src=entry.url;
-      image.alt=item.name;
+      image.alt=entry.alt||item.name;
       trigger.append(image);
       trigger.addEventListener('click',()=>openProductImageLightbox(image));
       mediaElement.append(trigger);
