@@ -1,10 +1,30 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/categories.html", "destination": "/shop-all.html", "permanent": true },
+    { "source": "/new-arrivals.html", "destination": "/category.html?category=new-arrivals", "permanent": true },
+    { "source": "/acrylic-beads.html", "destination": "/category.html?category=acrylic", "permanent": true },
+    { "source": "/silicone-beads.html", "destination": "/category.html?category=silicone", "permanent": true },
+    { "source": "/focal-beads.html", "destination": "/category.html?category=focal-beads", "permanent": true },
+    { "source": "/rhinestones.html", "destination": "/category.html?category=rhinestone-beads", "permanent": true },
+    { "source": "/flatbacks.html", "destination": "/category.html?category=acrylic-flatbacks", "permanent": true },
+    { "source": "/pen-supplies.html", "destination": "/category.html?category=beadable-pen-blanks", "permanent": true },
+    { "source": "/mixes-kits.html", "destination": "/category.html?category=mixes-bundles-kits", "permanent": true },
+    { "source": "/clearance.html", "destination": "/category.html?category=clearance-section", "permanent": true },
+    { "source": "/pink-heart-focal-bead.html", "destination": "/product.html?id=pink-heart-focal-bead", "permanent": true }
+  ],
   "rewrites": [
+    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/admin/:path*", "destination": "/admin.html" }
   ],
   "headers": [
+    { "source": "/account.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
+    { "source": "/search.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
+    { "source": "/shopping-bag.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
+    { "source": "/wishlist.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
+    { "source": "/payment-success.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
+    { "source": "/payment-cancelled.html", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }] },
     {
       "source": "/(.*)",
       "headers": [

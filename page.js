@@ -1,11 +1,28 @@
 const page=document.body.dataset.page||'Page';
-document.title=`${page} | Bead Different Co.`;
+if(!document.querySelector('title'))document.title=`${page} | Bead Different Co.`;
 const currentRequestedCategory=()=>new URLSearchParams(location.search).get('category')||'';
 if(page==='Category'&&currentRequestedCategory()==='shop-all')window.location.replace('shop-all.html');
 const categoryLabelFor=(slug)=>(window.storeCategories||[]).find(([value])=>value===slug)?.[1]||'';
 const main=document.querySelector('main');
 main.classList.remove('blank-page');
-window.addEventListener('bead-categories-ready',()=>{const category=currentRequestedCategory();const heading=document.querySelector('.store-page>h1');if(heading&&category)heading.textContent=categoryLabelFor(category);});
+window.addEventListener('bead-categories-ready',()=>{const category=currentRequestedCategory();const heading=document.querySelector('.store-page>h1');if(heading&&category)heading.textContent=categoryLabelFor(category);if(category&&storefrontListingPage())setListingSeo(category);});
+
+const setListingSeo=(slug)=>{
+  const label=categoryLabelFor(slug)||{'new-arrivals':'New Arrivals','shop-all':'Shop All'}[slug]||page;
+  const query=new URLSearchParams(location.search);
+  const pageNumber=Math.max(1,Math.floor(Number(query.get('page'))||1));
+  const path=page==='Shop All'?'/shop-all.html':`/category.html?category=${encodeURIComponent(slug)}`;
+  const filtered=['filters','filterKey','filterValues','style'].some((key)=>query.has(key));
+  const canonicalPath=pageNumber>1&&!filtered?`${path}${path.includes('?')?'&':'?'}page=${pageNumber}`:path;
+  const title=slug==='shop-all'?'Shop All Beads & Craft Supplies':label;
+  const description=slug==='shop-all'?'Explore beads, charms, and creative supplies at Bead Different Co.':`Shop ${label.toLowerCase()} at Bead Different Co. Explore beads and creative supplies for your next project.`;
+  window.setStorefrontSeo?.({title:`${title}${pageNumber>1?` — Page ${pageNumber}`:''} | Bead Different Co.`,description,canonicalPath});
+  window.setStorefrontBreadcrumbs?.([{name:'Home',path:'/'},{name:label,path}]);
+};
+if(page==='Category'||page==='Shop All'){
+  const initialSlug=currentRequestedCategory()||(page==='Shop All'?'shop-all':'');
+  if(initialSlug)setListingSeo(initialSlug);
+}
 
 const shoppingBagShell=(auditNotice='')=>`<section class="store-page shopping-bag-page"><p class="kicker">YOUR PICKS</p><h1>Shopping Bag</h1>${auditNotice}<div class="product-grid" id="page-products"></div><p class="store-empty" id="store-empty" role="status">Loading your shopping bag…</p><a class="cta cart-continue" href="shop-all.html" hidden>Continue shopping</a></section>`;
 const categoryLoadingHeading=currentRequestedCategory()?categoryLabelFor(currentRequestedCategory()):page;
@@ -20,18 +37,26 @@ const drawStorefrontPagination=()=>{
   controls.replaceChildren();
   if(pageCount<2)return;
   for(let pageNumber=1;pageNumber<=pageCount;pageNumber+=1){
-    const button=document.createElement('button');
-    button.type='button';
-    button.textContent=String(pageNumber);
-    button.className=pageNumber===listing.page()?'active':'';
-    button.addEventListener('click',async()=>{
-      button.disabled=true;
+    const link=document.createElement('a');
+    const pageUrl=new URL(location.href);
+    if(pageNumber===1)pageUrl.searchParams.delete('page');else pageUrl.searchParams.set('page',String(pageNumber));
+    link.href=pageUrl.href;
+    link.textContent=String(pageNumber);
+    link.className=pageNumber===listing.page()?'active':'';
+    if(pageNumber===listing.page())link.setAttribute('aria-current','page');
+    link.addEventListener('click',async(event)=>{
+      if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+      event.preventDefault();
+      if(pageNumber===listing.page())return;
+      link.setAttribute('aria-busy','true');
+      history.pushState({},'',link.href);
       await loadStorefrontCategoryPage(pageNumber);
       renderProductCards(visibleCatalog(),document.querySelector('#page-products'));
       drawStorefrontPagination();
+      setListingSeo(currentRequestedCategory()||(page==='Shop All'?'shop-all':''));
       document.querySelector('#page-products')?.scrollIntoView({block:'start'});
     });
-    controls.append(button);
+    controls.append(link);
   }
 };
 
@@ -70,6 +95,7 @@ const renderCategoryFilters=(filters)=>{
     select.addEventListener('change',async()=>{
       const nextUrl=new URL(location.href);
       nextUrl.searchParams.delete('style');
+      nextUrl.searchParams.delete('page');
       let nextFilters={};
       try{const parsed=JSON.parse(nextUrl.searchParams.get('filters')||'{}');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed))nextFilters=parsed;}catch(error){}
       const value=select.value;
@@ -78,6 +104,7 @@ const renderCategoryFilters=(filters)=>{
       nextUrl.searchParams.delete('filterValues');
       if(Object.keys(nextFilters).length)nextUrl.searchParams.set('filters',JSON.stringify(nextFilters));else nextUrl.searchParams.delete('filters');
       history.pushState({},'',nextUrl);
+      setListingSeo(currentRequestedCategory()||(page==='Shop All'?'shop-all':''));
       storefrontCategoryListing.request=storefrontCategoryRequest();
       const updatedFilters=await loadStorefrontCategoryFilters(currentRequestedCategory()||'shop-all');
       region.setAttribute('aria-busy','true');
@@ -104,10 +131,12 @@ const renderCategoryFilters=(filters)=>{
   clear.addEventListener('click',async()=>{
     const nextUrl=new URL(location.href);
     nextUrl.searchParams.delete('style');
+    nextUrl.searchParams.delete('page');
     nextUrl.searchParams.delete('filters');
     nextUrl.searchParams.delete('filterKey');
     nextUrl.searchParams.delete('filterValues');
     history.pushState({},'',nextUrl);
+    setListingSeo(currentRequestedCategory()||(page==='Shop All'?'shop-all':''));
     storefrontCategoryListing.request=storefrontCategoryRequest();
     region.setAttribute('aria-busy','true');
     const grid=document.querySelector('#page-products');
@@ -136,6 +165,7 @@ const renderCategoryPage=async()=>{
   if(empty){empty.textContent=window.storeCatalogError?'The store catalog is temporarily unavailable. Please refresh and try again.':'No products are currently available in this category.';empty.hidden=products.length>0;}
   const slug=currentRequestedCategory()||storefrontCategoryListing.request.categorySlugs[0]||(page==='Shop All'?'shop-all':'');
   const heading=storePage.querySelector('h1');if(heading)heading.textContent=categoryLabelFor(slug)||page;
+  if(slug)setListingSeo(slug);
   if(slug){try{const filters=await loadStorefrontCategoryFilters(slug);if(window.storefrontCategoryFiltersChanged){window.storefrontCategoryFiltersChanged=false;await loadStorefrontCategoryPage(1);renderProductCards(visibleCatalog(),grid);drawStorefrontPagination();if(empty)empty.hidden=visibleCatalog().length>0;}renderCategoryFilters(filters);}catch(error){renderCategoryFilters([]);}}
   storePage.dataset.categoryRendered='true';
 };
@@ -177,11 +207,15 @@ const saleCollectionVariants=(item)=>{
 
 const renderSaleCollection=async()=>{
   if(window.catalogMetadataReady)await window.catalogMetadataReady;
+  const salePage=Math.max(1,Math.floor(Number(new URLSearchParams(location.search).get('page'))||1));
+  window.setStorefrontSeo?.({title:`Sale Collection${salePage>1?` — Page ${salePage}`:''} | Bead Different Co.`,canonicalPath:salePage>1?`/sale.html?page=${salePage}`:'/sale.html'});
+  window.setStorefrontBreadcrumbs?.([{name:'Home',path:'/'},{name:'Sale Collection',path:'/sale.html'}]);
   main.innerHTML='<section class="store-page sale-collection-page"><p class="kicker">SHOP THE SAVINGS</p><h1>Sale Collection</h1><div class="product-grid sale-collection-grid" id="sale-collection-products"></div><p class="store-empty" id="sale-collection-empty" role="status">No sale items are currently available.</p></section>';
   const grid=main.querySelector('#sale-collection-products');
   const empty=main.querySelector('#sale-collection-empty');
   const rows=visibleCatalog().flatMap(saleCollectionVariants);
-  grid.replaceChildren(...rows.map(({item,value,sku,originalPrice,pricing,variantLabel})=>{
+  const firstImageIndex=rows.findIndex(({item,value})=>Boolean(value.imageUrl||item.image));
+  grid.replaceChildren(...rows.map(({item,value,sku,originalPrice,pricing,variantLabel},rowIndex)=>{
     const card=document.createElement('article');
     card.className='product-card sale-collection-card';
     const href=`product.html?id=${encodeURIComponent(item.id)}&sku=${encodeURIComponent(sku)}&sale=1`;
@@ -189,7 +223,7 @@ const renderSaleCollection=async()=>{
     link.className='product-card-link';link.href=href;
     const imageWrap=document.createElement('div');imageWrap.className='product-card-image-wrap';
     const image=value.imageUrl||item.image;
-    if(image){const imageElement=document.createElement('img');imageElement.loading='lazy';imageElement.decoding='async';imageElement.className='product-card-image';imageElement.src=window.storefrontCardImageUrl?.(image)||image;imageElement.addEventListener('error',()=>{if(imageElement.getAttribute('src')!==image)imageElement.src=image;});imageElement.alt=item.name;imageWrap.append(imageElement);}
+    if(image){const imageElement=document.createElement('img');imageElement.loading=rowIndex===firstImageIndex?'eager':'lazy';imageElement.decoding='async';if(rowIndex===firstImageIndex)imageElement.fetchPriority='high';imageElement.className='product-card-image';imageElement.src=window.storefrontCardImageUrl?.(image)||image;imageElement.addEventListener('error',()=>{if(imageElement.getAttribute('src')!==image)imageElement.src=image;});imageElement.alt=item.imageAlt||item.name;imageWrap.append(imageElement);}
     const badges=document.createElement('div');badges.className='product-badges product-card-badges product-card-badges-bottom';
     const saleBadge=document.createElement('span');saleBadge.className='product-badge product-badge-on-sale';saleBadge.textContent='On Sale';badges.append(saleBadge);imageWrap.append(badges);
     link.append(imageWrap);
@@ -204,9 +238,10 @@ const renderSaleCollection=async()=>{
     const view=document.createElement('a');view.className='cta';view.href=href;view.textContent='View sale option';
     actions.append(view,wishlist);card.append(link,price,actions);return card;
   }));
+  empty.textContent=window.storeCatalogError?'Sale items are temporarily unavailable. Please refresh and try again.':'No sale items are currently available.';
   empty.hidden=rows.length>0;
   const salePagination=window.storeSalePagination;
-  if(salePagination?.total>salePagination.pageSize){
+  if(salePagination&&salePagination.total>salePagination.pageSize){
     const pagination=document.createElement('nav');
     pagination.className='store-pagination';
     const totalPages=Math.max(1,Math.ceil(salePagination.total/salePagination.pageSize));
@@ -545,7 +580,7 @@ const renderStorePage=async()=>{
 
 if(storefrontListingPage()){
   catalogReady.then(()=>renderCategoryPage());
-  window.addEventListener('popstate',()=>{storefrontCategoryListing.request=storefrontCategoryRequest();void loadStorefrontCategoryPage(1).then(()=>renderCategoryPage());});
+  window.addEventListener('popstate',()=>{storefrontCategoryListing.request=storefrontCategoryRequest();void loadStorefrontCategoryPage(new URLSearchParams(location.search).get('page')||1).then(()=>renderCategoryPage());});
 }else if(page==='Shopping Bag'){
   catalogReady.then(()=>setupShoppingBag());
 }else{
