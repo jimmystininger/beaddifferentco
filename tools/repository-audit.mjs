@@ -1,9 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
+const require = createRequire(import.meta.url);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
+const deployment = JSON.parse(fs.readFileSync(path.join(repoRoot, 'vercel.json'), 'utf8'));
+const rewrites = new Map((deployment.rewrites || []).map(({ source, destination }) => [source, destination]));
 
 const isExternal = (value) => /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(value.trim());
 const localTarget = (value) => {
@@ -19,6 +23,7 @@ const localTarget = (value) => {
 const htmlFiles = fs.readdirSync(repoRoot, { withFileTypes: true })
   .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.html'))
   .map((entry) => entry.name)
+  .concat('api/_product-shell.js', 'api/_category-shell.js')
   .sort();
 
 const sharedAssetVersions = new Map();
@@ -26,7 +31,7 @@ const sharedAssetNames = new Set(['styles.css', 'supabase-client.js', 'header.js
 
 for (const fileName of htmlFiles) {
   const filePath = path.join(repoRoot, fileName);
-  const source = fs.readFileSync(filePath, 'utf8');
+  const source = fileName.endsWith('.js') ? require(filePath) : fs.readFileSync(filePath, 'utf8');
   const references = [...source.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)];
   for (const [, reference] of references) {
     const target = localTarget(reference);
@@ -35,7 +40,10 @@ for (const fileName of htmlFiles) {
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
       failures.push(`${fileName}: local reference escapes repository: ${reference}`);
     } else if (!fs.existsSync(target)) {
-      failures.push(`${fileName}: missing local reference: ${reference}`);
+      const route = `/${relative.replace(/\\/g, '/')}`;
+      const destination = rewrites.get(route);
+      const functionPath = destination?.startsWith('/api/') ? path.join(repoRoot, `${destination.slice(1)}.js`) : null;
+      if (!functionPath || !fs.existsSync(functionPath)) failures.push(`${fileName}: missing local reference or dynamic route: ${reference}`);
     }
     const parsedReference = reference.match(/^([^?#]+)\?v=([^&#]+)$/i);
     if (parsedReference && sharedAssetNames.has(path.basename(parsedReference[1]))) {

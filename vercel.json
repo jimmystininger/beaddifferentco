@@ -15,6 +15,8 @@
   ],
   "rewrites": [
     { "source": "/sitemap.xml", "destination": "/api/sitemap" },
+    { "source": "/product.html", "destination": "/api/product-document" },
+    { "source": "/category.html", "destination": "/api/category-document" },
     { "source": "/admin", "destination": "/admin.html" },
     { "source": "/admin/:path*", "destination": "/admin.html" }
   ],
