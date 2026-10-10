@@ -460,13 +460,16 @@ async function loadCartCatalog(additionalIds=[]){
   return catalog;
 }
 const bagHasItems=()=>{try{return JSON.parse(localStorage.getItem('beadDifferentBag')||'[]').some((entry)=>entry&&String(entry.id||'').trim()&&Number(entry.quantity)>0);}catch(error){return false;}};
+const storefrontPageName=document.body.dataset.page||'';
+const needsStorefrontAncillary=storefrontListingPage()||['Home','Product','Search','Sale Collection','Wishlist','Account','Shopping Bag'].includes(storefrontPageName);
+const storefrontBestSellersReady=needsStorefrontAncillary?loadStorefrontBestSellers():Promise.resolve(storefrontBestSellerIds);
 const loadStorefrontAncillary=()=>{
   if(storefrontAncillaryPromise)return storefrontAncillaryPromise;
   const needsRewardSettings=document.body.dataset.page==='Account';
-  storefrontAncillaryPromise=Promise.all([loadStoreControls(),needsRewardSettings?loadPublicRewardSettings():Promise.resolve(window.productStoreConfig),loadStorefrontBestSellers()]).then(()=>applyCanonicalInventory()).then(()=>loadStorefrontBundleComponents()).catch((error)=>{window.storeCatalogAncillaryError=error;return catalog;});
+  storefrontAncillaryPromise=Promise.all([loadStoreControls(),needsRewardSettings?loadPublicRewardSettings():Promise.resolve(window.productStoreConfig),storefrontBestSellersReady]).then(()=>applyCanonicalInventory()).then(()=>loadStorefrontBundleComponents()).catch((error)=>{window.storeCatalogAncillaryError=error;return catalog;});
   return storefrontAncillaryPromise;
 };
-const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{const pageName=document.body.dataset.page||'';const needsStorefrontAncillary=storefrontListingPage()||['Home','Product','Search','Sale Collection','Wishlist','Account','Shopping Bag'].includes(pageName);const ancillary=needsStorefrontAncillary?loadStorefrontAncillary():Promise.resolve(catalog);window.storefrontInventoryReady=ancillary;return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
+const catalogReady=document.body.dataset.page==='Admin'?Promise.resolve([]):(document.body.dataset.page==='Shopping Bag'?loadCartCatalog():loadCatalog()).then(()=>{const ancillary=needsStorefrontAncillary?loadStorefrontAncillary():Promise.resolve(catalog);window.storefrontInventoryReady=ancillary;return catalog;}).catch((error)=>{window.storeCatalogError=error;return catalog;});
 window.catalogReady=catalogReady;window.storeCatalog=()=>catalog;
 const productIdentifierMatches=(item,needle)=>{const normalizedNeedle=String(needle||'').trim().toLowerCase();return [item.id,item.externalId,item.databaseId,item.sku].filter(Boolean).some((value)=>String(value).trim().toLowerCase()===normalizedNeedle)||(item.options||[]).some((option)=>(option.values||[]).some((value)=>typeof value==='object'&&[value.sku,value.inventorySku].filter(Boolean).some((identifier)=>String(identifier).trim().toLowerCase()===normalizedNeedle)));};
 const findProduct=(id)=>{const needle=String(id||'').trim();if(!needle)return null;return catalog.find((item)=>productIdentifierMatches(item,needle))||null;};
