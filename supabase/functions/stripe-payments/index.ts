@@ -359,17 +359,13 @@ function refundRequestKey(body: Record<string, any>) {
 }
 
 async function existingRefundRequest(requestKey: string, orderId: string) {
-  const rows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,stripe_refund_id,status,amount,created_at,request_key`);
+  const rows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,stripe_refund_id,status,amount,created_at,request_key,metadata`);
   const existing = rows[0];
   if (existing && existing.order_id !== orderId) throw new Error("Refund request id belongs to another order.");
   if (existing?.stripe_refund_id.startsWith("pending:")) {
     const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,stripe_payment_intent_id`);
     const order = orders[0];
-    const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
-    const result = await stripeRead(`refunds?${query.toString()}`);
-    const refund = matchStripeRefund(Array.isArray(result?.data) ? result.data : [], order, existing);
-    if (refund) return await reconcileStripeRefund(order, refund, requestKey);
-    throw new Error("This refund request is still pending verification with Stripe. Do not submit another refund; use Sync Stripe status for this order.");
+    return await reconcilePendingStripeRefund(order, existing);
   }
   if (existing && !existing.stripe_refund_id.startsWith("pending:")) {
     if (["failed", "canceled"].includes(existing.status)) {
@@ -390,46 +386,13 @@ function refundPaymentIntent(refund: Record<string, any>) {
   return typeof refund?.payment_intent === "string" ? refund.payment_intent : text(refund?.payment_intent?.id, 100);
 }
 
+function validStripeRefundId(value: unknown) {
+  const refundId = text(value, 255);
+  return refundId.startsWith("re_") && refundId.length >= 5 && !/\s/.test(refundId);
+}
+
 function validStripeRefund(refund: Record<string, any>) {
-  const refundId = text(refund?.id, 255);
-  return refund?.object === "refund" && refundId.startsWith("re_") && refundId.length >= 5 && !/\s/.test(refundId);
-}
-
-function matchStripeRefund(refunds: Record<string, any>[], order: Record<string, any>, request: Record<string, any>) {
-  const paymentIntentId = text(order?.stripe_payment_intent_id, 100);
-  const forPayment = refunds.filter((refund) => refundPaymentIntent(refund) === paymentIntentId);
-  const exact = forPayment.filter((refund) => refund?.metadata?.request_key === request.request_key);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-  const requestCreatedAt = Date.parse(request.created_at || "");
-  const expectedAmount = Math.round(Number(request.amount || 0) * 100);
-  if (!Number.isFinite(requestCreatedAt) || !expectedAmount) return null;
-  const contextual = forPayment.filter((refund) => {
-    const metadata = refund?.metadata || {};
-    const createdAt = Number(refund.created) * 1000;
-    return Number(refund.amount) === expectedAmount &&
-      (!metadata.request_key || metadata.request_key === request.request_key) &&
-      (!metadata.order_id || metadata.order_id === order.id) &&
-      Number.isFinite(createdAt) && createdAt >= requestCreatedAt - 60_000 && createdAt <= requestCreatedAt + 10 * 60_000;
-  });
-  return contextual.length === 1 ? contextual[0] : null;
-}
-
-async function refundWithRequestKey(refund: Record<string, any>, order: Record<string, any>, requestKey: string) {
-  const requestRows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,amount,created_at,request_key`);
-  const request = requestRows[0];
-  if (!request || request.order_id !== order.id) throw new Error("Refund request record could not be verified. No second refund was submitted.");
-  const matchesRequest = (candidate: Record<string, any>) => validStripeRefund(candidate) &&
-    refundPaymentIntent(candidate) === order.stripe_payment_intent_id &&
-    Number(candidate.amount) === Math.round(Number(request.amount) * 100) &&
-    (!candidate.metadata?.request_key || candidate.metadata.request_key === requestKey) &&
-    (!candidate.metadata?.order_id || candidate.metadata.order_id === order.id);
-  if (matchesRequest(refund)) return refund;
-  const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
-  const result = await stripeRead(`refunds?${query.toString()}`);
-  const matched = matchStripeRefund(Array.isArray(result?.data) ? result.data : [], order, request);
-  if (matched && matchesRequest(matched)) return matched;
-  throw new Error("Stripe accepted the refund, but the app could not safely match its confirmation. Do not submit another refund; use Sync Stripe status for this order or contact support.");
+  return refund?.object === "refund" && validStripeRefundId(refund?.id);
 }
 
 async function reconcileStripeRefund(order: Record<string, any>, refund: Record<string, any>, requestKey: string, throwOnFailure = true) {
@@ -461,6 +424,57 @@ async function reconcileStripeRefund(order: Record<string, any>, refund: Record<
   return { ...attached, ...finalized, stripe_refund_id: refund.id, refund_amount: Number(refund.amount || 0) / 100 };
 }
 
+async function findExactStripeRefund(order: Record<string, any>, row: Record<string, any>) {
+  if (!order?.id || !order?.stripe_payment_intent_id) {
+    throw new Error("This refund request is missing its Stripe payment reference.");
+  }
+  const requestKey = text(row.request_key, 36);
+  const matches: Record<string, any>[] = [];
+  let startingAfter = "";
+  do {
+    const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const result = await stripeRead(`refunds?${query.toString()}`);
+    if (!Array.isArray(result?.data)) throw new Error("Stripe returned an invalid refund list.");
+    for (const refund of result.data) {
+      if (refund?.metadata?.request_key === requestKey && refund?.metadata?.order_id === order.id &&
+          validStripeRefund(refund)) matches.push(refund);
+    }
+    if (!result.has_more) break;
+    startingAfter = text(result.data.at(-1)?.id, 255);
+    if (!startingAfter) throw new Error("Stripe returned an incomplete refund page.");
+  } while (startingAfter);
+  if (matches.length !== 1) {
+    throw new Error(matches.length
+      ? "More than one Stripe refund matches this exact request. No order changes were made."
+      : "No Stripe refund matches this exact request key, order, payment, and amount. No order changes were made.");
+  }
+  return matches[0];
+}
+
+async function reconcilePendingStripeRefund(order: Record<string, any>, row: Record<string, any>) {
+  const requestKey = text(row.request_key, 36);
+  const requestCreatedAt = Date.parse(row.created_at || "");
+  const requestAge = Date.now() - requestCreatedAt;
+  const refundKind = text(row.metadata?.refund_kind, 40);
+  if (requestKey && Number.isFinite(requestAge) && requestAge >= 0 && requestAge < 23 * 60 * 60 * 1000 &&
+      ["order", "satisfaction", "return"].includes(refundKind)) {
+    const refund = await stripeRequest("refunds", stripeRefundForm(order, row.amount, refundKind, requestKey), `bead-refund-${requestKey}`);
+    return await reconcileStripeRefund(order, refund, requestKey);
+  }
+  const candidate = await findExactStripeRefund(order, row);
+  const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(candidate.id)}`);
+  if (refundPaymentIntent(confirmedRefund) !== order.stripe_payment_intent_id ||
+      Number(confirmedRefund.amount) !== cents(row.amount)) {
+    throw new Error("The exact Stripe refund does not match this order’s payment and requested amount. No order changes were made.");
+  }
+  if ((confirmedRefund.metadata?.request_key && confirmedRefund.metadata.request_key !== requestKey) ||
+      (confirmedRefund.metadata?.order_id && confirmedRefund.metadata.order_id !== order.id)) {
+    throw new Error("The exact Stripe refund metadata changed during verification. No order changes were made.");
+  }
+  return await reconcileStripeRefund(order, confirmedRefund, requestKey);
+}
+
 async function reconcileOrderRefunds(request: Request, body: Record<string, any>) {
   if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
   const orderId = text(body.order_id, 80);
@@ -468,22 +482,20 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
   const order = orders[0];
   if (!order) return json({ error: "Order not found." }, 404);
   if (!order.stripe_payment_intent_id) return json({ synced: 0, pending: 0, message: "This order has no Stripe payment." });
-  const rows = await database(`stripe_refunds?order_id=eq.${encodeURIComponent(order.id)}&status=eq.pending&select=stripe_refund_id,request_key,amount,created_at`);
+  const rows = await database(`stripe_refunds?order_id=eq.${encodeURIComponent(order.id)}&status=eq.pending&select=stripe_refund_id,request_key,amount,created_at,metadata`);
   if (!rows.length) return json({ synced: 0, pending: 0, message: "No pending Stripe refunds were found." });
-  const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
-  const list = await stripeRead(`refunds?${query.toString()}`);
-  const stripeRefunds = Array.isArray(list?.data) ? list.data : [];
   let synced = 0;
   let unresolved = 0;
   let failed = 0;
   for (const row of rows) {
-    const refund = row.stripe_refund_id.startsWith("pending:")
-      ? matchStripeRefund(stripeRefunds, order, row)
-      : await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
-    if (!refund) {
-      unresolved += 1;
+    if (row.stripe_refund_id.startsWith("pending:")) {
+      const result = await reconcilePendingStripeRefund(order, row);
+      if (["failed", "canceled"].includes(text(result?.status, 30).toLowerCase())) failed += 1;
+      else if (text(result?.status, 30).toLowerCase() !== "pending") synced += 1;
+      else unresolved += 1;
       continue;
     }
+    const refund = await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
     await reconcileStripeRefund(order, refund, row.request_key, false);
     if (["failed", "canceled"].includes(text(refund.status, 30).toLowerCase())) failed += 1;
     else if (text(refund.status, 30).toLowerCase() !== "pending") synced += 1;
@@ -501,14 +513,7 @@ async function submitStripeRefund(order: Record<string, any>, amount: number, re
   if (reserved.already_submitted) return reserved;
   let refund: Record<string, any>;
   try {
-    refund = await stripeRequest("refunds", stripeForm({
-      payment_intent: order.stripe_payment_intent_id,
-      amount,
-      "metadata[order_id]": order.id,
-      "metadata[refund_kind]": String(metadata.refund_kind),
-      "metadata[request_key]": requestKey,
-      reason: "requested_by_customer",
-    }), `bead-refund-${requestKey}`);
+    refund = await stripeRequest("refunds", stripeRefundForm(order, amount / 100, String(metadata.refund_kind), requestKey), `bead-refund-${requestKey}`);
   } catch (error) {
     const status = (error as { status?: number })?.status;
     if (status && status >= 400 && status < 500 && status !== 429) {
@@ -516,8 +521,26 @@ async function submitStripeRefund(order: Record<string, any>, amount: number, re
     }
     throw error;
   }
-  const confirmedRefund = await refundWithRequestKey(refund, order, requestKey);
+  if (!validStripeRefundId(refund?.id)) {
+    throw new Error("Stripe accepted the refund but did not return a usable refund ID. Do not submit another refund; contact support.");
+  }
+  await rpc("attach_stripe_refund_request", {
+    request_key_value: requestKey,
+    stripe_refund_id_value: refund.id,
+  });
+  const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(refund.id)}`);
   return await reconcileStripeRefund(order, confirmedRefund, requestKey);
+}
+
+function stripeRefundForm(order: Record<string, any>, amount: unknown, refundKind: string, requestKey: string) {
+  return stripeForm({
+    payment_intent: order.stripe_payment_intent_id,
+    amount: cents(amount),
+    "metadata[order_id]": order.id,
+    "metadata[refund_kind]": refundKind,
+    "metadata[request_key]": requestKey,
+    reason: "requested_by_customer",
+  });
 }
 
 async function createRefund(request: Request, body: Record<string, any>) {
@@ -610,3 +633,4 @@ Deno.serve(async (request) => {
     return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe payment request failed." }, 400);
   }
 });
+
