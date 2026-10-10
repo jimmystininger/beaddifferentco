@@ -118,4 +118,3 @@ $$;
 
 revoke all on function public.process_stripe_order_return(uuid, jsonb, text, boolean, numeric, text, boolean) from public, anon, authenticated;
 grant execute on function public.process_stripe_order_return(uuid, jsonb, text, boolean, numeric, text, boolean) to service_role;
-
