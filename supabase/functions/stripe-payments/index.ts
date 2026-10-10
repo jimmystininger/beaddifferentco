@@ -485,6 +485,20 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
     let refund = row.stripe_refund_id.startsWith("pending:")
       ? matchStripeRefund(stripeRefunds, order, row)
       : await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
+    if (!refund && row.stripe_refund_id.startsWith("pending:")) {
+      const requestCreatedAt = Math.floor(Date.parse(row.created_at || "") / 1000);
+      if (Number.isFinite(requestCreatedAt)) {
+        const recentQuery = new URLSearchParams({
+          "created[gte]": String(Math.max(0, requestCreatedAt - 60)),
+          "created[lte]": String(requestCreatedAt + 10 * 60),
+          limit: "100",
+        });
+        const recent = await stripeRead(`refunds?${recentQuery.toString()}`);
+        const exact = (Array.isArray(recent?.data) ? recent.data : [])
+          .filter((candidate: Record<string, any>) => candidate?.metadata?.request_key === row.request_key);
+        if (exact.length === 1) refund = exact[0];
+      }
+    }
     if (!refund) {
       unresolved += 1;
       continue;
