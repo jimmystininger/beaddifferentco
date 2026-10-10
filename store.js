@@ -195,11 +195,15 @@ async function loadCatalog(){
     if(productPageId){
       const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const filterField=uuidPattern.test(productPageId)?'id':'external_id';
-      const select='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions';
-      const result=await withStoreTimeout(client.from('products').select(select).eq('visible',true).eq(filterField,productPageId).limit(1),'Product request');
-      const exactRow=(result.data||[]).find((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId);
-      if(result.error)error=result.error;
-      else if(exactRow)data=[exactRow];
+      let bootstrapRow=null;
+      try{bootstrapRow=JSON.parse(document.getElementById('storefront-product-bootstrap')?.textContent||'null');}catch(parseError){bootstrapRow=null;}
+      if(bootstrapRow?.visible===true&&String(bootstrapRow[filterField]||'')===productPageId)data=[bootstrapRow];
+      else{
+        const result=await withStoreTimeout(client.from('products').select(window.storefrontSeo.fields).eq('visible',true).eq(filterField,productPageId).limit(1),'Product request');
+        const exactRow=(result.data||[]).find((row)=>String(row?.id||'')===productPageId||String(row?.external_id||'')===productPageId);
+        if(result.error)error=result.error;
+        else if(exactRow)data=[exactRow];
+      }
     }else if(document.body.dataset.page==='Search'){
       const query=new URLSearchParams(location.search).get('q')||'';
       const page=Math.max(1,Number(new URLSearchParams(location.search).get('page')||1));

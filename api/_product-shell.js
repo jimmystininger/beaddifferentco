@@ -1,9 +1,10 @@
-<!doctype html>
+module.exports=`<!doctype html>
 <html lang="en">
-<head><title>Product Details | Bead Different Co.</title>
+<head><title>%%PRODUCT_TITLE%%</title>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Shop beads and creative supplies at Bead Different Co.">
+  <meta name="description" content="%%PRODUCT_DESCRIPTION%%">
+  %%PRODUCT_HEAD%%
   <link rel="stylesheet" href="styles.css?v=20261007-canonical-audit1">
 </head>
 <body data-page="Product">
@@ -12,6 +13,7 @@
   <script defer src="/vendor/supabase.min.js"></script>
   <script defer src="supabase-client.js?v=20261007-canonical-audit1"></script>
   <script defer src="header.js?v=20261007-canonical-audit1"></script>
+  <script defer src="storefront-seo.js?v=20261009-storefront-seo"></script>
   <script defer src="store.js?v=20261007-canonical-audit1"></script>
   <script defer src="product-config.js?v=20261007-canonical-audit1"></script>
   <script defer src="account.js?v=20261007-canonical-audit1"></script>
@@ -19,4 +21,4 @@
   <script defer src="page.js?v=20261007-canonical-audit1"></script>
 <script defer src="product-page.js?v=20261007-canonical-audit1"></script>
 </body>
-</html>
+</html>`;

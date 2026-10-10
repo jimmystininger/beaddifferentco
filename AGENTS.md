@@ -30,11 +30,11 @@ This repository-governance adoption is a `Product Change`. Its authorized scope 
 | Product behavior and shared storefront behavior | `header.js`, `store.js`, `page.js`, `script.js`, `product-page.js` | Static browser implementation |
 | Product configuration | `product-config.js` | Static/local prototype configuration |
 | Catalog source data | `etsy-listings.csv` | Imported listing data |
-| Markup and page composition | The individual `.html` entry file for each route | Static HTML routes |
+| Markup and page composition | Individual `.html` files for static routes; `api/_product-shell.js` and `api/_category-shell.js` for dynamic product/category routes | Static and server-generated HTML routes |
 | Styling | `styles.css` | Shared stylesheet |
 | Tests and safeguards | No canonical test suite exists | Required checks are syntax checks and affected-flow verification until a test owner is added |
 | CI | GitHub Actions after repository setup | Not configured in this local folder |
-| Deployment | No deployment configuration exists | Local/static preview only |
+| Deployment | `vercel.json` | Vercel routing and function configuration |
 | Database and schema | `supabase/migrations/*.sql` | Supabase project `zejcuqhihbfpuwsjvmhc`; migrations are immutable ordered history |
 | Project status | `README.md` | Minimal project status only |
 

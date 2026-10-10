@@ -1,22 +1,13 @@
-const storefrontOrigin='https://www.beaddifferentco.com';
-const supabaseUrl=process.env.SUPABASE_URL||'https://zejcuqhihbfpuwsjvmhc.supabase.co';
-const supabasePublishableKey=process.env.SUPABASE_PUBLISHABLE_KEY||'sb_publishable_f_xtefICK9H7dD7jJghxJQ_7vcEjR-N';
+const {origin:storefrontOrigin,publicRows}=require('./_storefront-document');
 
 const xmlEscape=(value)=>String(value).replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[character]));
 const productUrl=(row)=>`${storefrontOrigin}/product.html?id=${encodeURIComponent(row.external_id||row.id)}`;
 const requestRows=async(table,select,filter='')=>{
   const rows=[];
   for(let offset=0;;offset+=1000){
-    const query=new URL(`${supabaseUrl}/rest/v1/${table}`);
-    query.searchParams.set('select',select);
-    query.searchParams.set('limit','1000');
-    query.searchParams.set('offset',String(offset));
-    query.searchParams.set('order','id.asc');
-    if(filter){const [key,value]=filter.split('=');query.searchParams.set(key,value);}
-    const response=await fetch(query,{headers:{apikey:supabasePublishableKey},signal:AbortSignal.timeout(10000)});
-    if(!response.ok)throw new Error(`Public catalog request failed: ${response.status}`);
-    const batch=await response.json();
-    if(!Array.isArray(batch))throw new Error('Public catalog response was not a list.');
+    const params={limit:'1000',offset:String(offset),order:'id.asc'};
+    if(filter){const [key,value]=filter.split('=');params[key]=value;}
+    const batch=await publicRows(table,select,params);
     rows.push(...batch);
     if(batch.length<1000)break;
   }

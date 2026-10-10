@@ -8,15 +8,8 @@ main.classList.remove('blank-page');
 window.addEventListener('bead-categories-ready',()=>{const category=currentRequestedCategory();const heading=document.querySelector('.store-page>h1');if(heading&&category)heading.textContent=categoryLabelFor(category);if(category&&storefrontListingPage())setListingSeo(category);});
 
 const setListingSeo=(slug)=>{
-  const label=categoryLabelFor(slug)||{'new-arrivals':'New Arrivals','shop-all':'Shop All'}[slug]||page;
-  const query=new URLSearchParams(location.search);
-  const pageNumber=Math.max(1,Math.floor(Number(query.get('page'))||1));
-  const path=page==='Shop All'?'/shop-all.html':`/category.html?category=${encodeURIComponent(slug)}`;
-  const filtered=['filters','filterKey','filterValues','style'].some((key)=>query.has(key));
-  const canonicalPath=pageNumber>1&&!filtered?`${path}${path.includes('?')?'&':'?'}page=${pageNumber}`:path;
-  const title=slug==='shop-all'?'Shop All Beads & Craft Supplies':label;
-  const description=slug==='shop-all'?'Explore beads, charms, and creative supplies at Bead Different Co.':`Shop ${label.toLowerCase()} at Bead Different Co. Explore beads and creative supplies for your next project.`;
-  window.setStorefrontSeo?.({title:`${title}${pageNumber>1?` — Page ${pageNumber}`:''} | Bead Different Co.`,description,canonicalPath});
+  const {title,description,canonicalPath,label,path}=window.storefrontSeo.listing(page,slug,categoryLabelFor(slug),new URLSearchParams(location.search));
+  window.setStorefrontSeo?.({title,description,canonicalPath});
   window.setStorefrontBreadcrumbs?.([{name:'Home',path:'/'},{name:label,path}]);
 };
 if(page==='Category'||page==='Shop All'){
