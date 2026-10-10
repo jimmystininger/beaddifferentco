@@ -101,6 +101,16 @@ async function stripeRequest(path: string, form: URLSearchParams, idempotencyKey
   return payload;
 }
 
+async function stripeRead(path: string) {
+  if (!stripeSecret) throw new Error("Stripe is not configured. Add STRIPE_SECRET_KEY to the payment function.");
+  const response = await network(`https://api.stripe.com/v1/${path}`, {
+    headers: { Authorization: `Basic ${btoa(`${stripeSecret}:`)}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(text(payload?.error?.message || "Stripe could not verify the refund.", 240));
+  return payload;
+}
+
 async function stripeCheckoutSession(sessionId: string) {
   if (!stripeSecret) throw new Error("Stripe is not configured.");
   const response = await network(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
@@ -353,9 +363,84 @@ async function existingRefundRequest(requestKey: string, orderId: string) {
   const existing = rows[0];
   if (existing && existing.order_id !== orderId) throw new Error("Refund request id belongs to another order.");
   if (existing && !existing.stripe_refund_id.startsWith("pending:")) {
+    if (["failed", "canceled"].includes(existing.status)) {
+      throw new Error(`Stripe refund ${existing.status}. No inventory or order refund changes were applied.`);
+    }
+    if (existing.status === "pending") {
+      const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,stripe_payment_intent_id`);
+      const order = orders[0];
+      const refund = await stripeRead(`refunds/${encodeURIComponent(existing.stripe_refund_id)}`);
+      return await reconcileStripeRefund(order, refund, requestKey);
+    }
     return { stripe_refund_id: existing.stripe_refund_id, status: existing.status, refund_amount: Number(existing.amount) };
   }
   return null;
+}
+
+async function refundWithRequestKey(refund: Record<string, any>, paymentIntentId: string, requestKey: string) {
+  if (/^re_[A-Za-z0-9]+$/.test(text(refund?.id, 100))) return refund;
+  const query = new URLSearchParams({ payment_intent: paymentIntentId, limit: "100" });
+  const result = await stripeRead(`refunds?${query.toString()}`);
+  const matches = Array.isArray(result?.data)
+    ? result.data.filter((entry: Record<string, any>) => entry?.metadata?.request_key === requestKey)
+    : [];
+  if (matches.length === 1 && /^re_[A-Za-z0-9]+$/.test(text(matches[0]?.id, 100))) return matches[0];
+  throw new Error("Stripe accepted the refund, but the app could not safely match its confirmation. Do not submit another refund; retry this same order action or contact support.");
+}
+
+async function reconcileStripeRefund(order: Record<string, any>, refund: Record<string, any>, requestKey: string, throwOnFailure = true) {
+  if (!order?.id || !/^re_[A-Za-z0-9]+$/.test(text(refund?.id, 100))) {
+    throw new Error("Stripe returned an invalid refund confirmation. The order was not changed.");
+  }
+  const attached = await rpc("attach_stripe_refund_request", {
+    request_key_value: requestKey,
+    stripe_refund_id_value: refund.id,
+  });
+  const stripeStatus = ["pending", "succeeded", "failed", "canceled"].includes(text(refund.status, 30).toLowerCase())
+    ? text(refund.status, 30).toLowerCase()
+    : "pending";
+  const finalized = await rpc("finalize_stripe_refund", {
+    stripe_refund_id_value: refund.id,
+    order_id_value: order.id,
+    amount_value: Number(refund.amount || 0) / 100,
+    status_value: stripeStatus,
+    reason_value: stripeStatus === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${stripeStatus}.`, 240),
+  });
+  if (throwOnFailure && ["failed", "canceled"].includes(stripeStatus)) {
+    throw new Error(text(finalized?.error || `Stripe refund ${stripeStatus}.`, 240));
+  }
+  return { ...attached, ...finalized, stripe_refund_id: refund.id, refund_amount: Number(refund.amount || 0) / 100 };
+}
+
+async function reconcileOrderRefunds(request: Request, body: Record<string, any>) {
+  if (!await adminFrom(request)) return json({ error: "Administrator authorization required." }, 401);
+  const orderId = text(body.order_id, 80);
+  const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,stripe_payment_intent_id`);
+  const order = orders[0];
+  if (!order) return json({ error: "Order not found." }, 404);
+  if (!order.stripe_payment_intent_id) return json({ synced: 0, pending: 0, message: "This order has no Stripe payment." });
+  const rows = await database(`stripe_refunds?order_id=eq.${encodeURIComponent(order.id)}&status=eq.pending&select=stripe_refund_id,request_key`);
+  if (!rows.length) return json({ synced: 0, pending: 0, message: "No pending Stripe refunds were found." });
+  const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
+  const list = await stripeRead(`refunds?${query.toString()}`);
+  const stripeRefunds = Array.isArray(list?.data) ? list.data : [];
+  let synced = 0;
+  let unresolved = 0;
+  let failed = 0;
+  for (const row of rows) {
+    const refund = row.stripe_refund_id.startsWith("pending:")
+      ? stripeRefunds.find((entry: Record<string, any>) => entry?.metadata?.request_key === row.request_key)
+      : await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
+    if (!refund) {
+      unresolved += 1;
+      continue;
+    }
+    await reconcileStripeRefund(order, refund, row.request_key, false);
+    if (["failed", "canceled"].includes(text(refund.status, 30).toLowerCase())) failed += 1;
+    else if (text(refund.status, 30).toLowerCase() !== "pending") synced += 1;
+    else unresolved += 1;
+  }
+  return json({ synced, pending: unresolved, failed, message: `Checked ${rows.length} pending Stripe refund${rows.length === 1 ? "" : "s"}.` });
 }
 
 async function submitStripeRefund(order: Record<string, any>, amount: number, reason: string,
@@ -382,10 +467,8 @@ async function submitStripeRefund(order: Record<string, any>, amount: number, re
     }
     throw error;
   }
-  const attached = await rpc("attach_stripe_refund_request", {
-    request_key_value: requestKey, stripe_refund_id_value: refund.id,
-  });
-  return { ...attached, stripe_refund_id: refund.id, refund_amount: amount / 100 };
+  const confirmedRefund = await refundWithRequestKey(refund, order.stripe_payment_intent_id, requestKey);
+  return await reconcileStripeRefund(order, confirmedRefund, requestKey);
 }
 
 async function createRefund(request: Request, body: Record<string, any>) {
@@ -472,6 +555,7 @@ Deno.serve(async (request) => {
     if (body?.action === "checkout_status") return await checkoutStatus(body);
     if (body?.action === "refund_order") return await createRefund(request, body);
     if (body?.action === "refund_return") return await createReturnRefund(request, body);
+    if (body?.action === "reconcile_order_refunds") return await reconcileOrderRefunds(request, body);
     return json({ error: "Unsupported payment action." }, 400);
   } catch (error) {
     return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe payment request failed." }, 400);
