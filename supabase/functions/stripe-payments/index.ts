@@ -390,9 +390,13 @@ function refundPaymentIntent(refund: Record<string, any>) {
   return typeof refund?.payment_intent === "string" ? refund.payment_intent : text(refund?.payment_intent?.id, 100);
 }
 
+function validStripeRefundId(value: unknown) {
+  const refundId = text(value, 255);
+  return refundId.startsWith("re_") && refundId.length >= 5 && !/\s/.test(refundId);
+}
+
 function validStripeRefund(refund: Record<string, any>) {
-  const refundId = text(refund?.id, 255);
-  return refund?.object === "refund" && refundId.startsWith("re_") && refundId.length >= 5 && !/\s/.test(refundId);
+  return refund?.object === "refund" && validStripeRefundId(refund?.id);
 }
 
 function matchStripeRefund(refunds: Record<string, any>[], order: Record<string, any>, request: Record<string, any>) {
@@ -478,12 +482,19 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
   let unresolved = 0;
   let failed = 0;
   for (const row of rows) {
-    const refund = row.stripe_refund_id.startsWith("pending:")
+    let refund = row.stripe_refund_id.startsWith("pending:")
       ? matchStripeRefund(stripeRefunds, order, row)
       : await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
     if (!refund) {
       unresolved += 1;
       continue;
+    }
+    if (row.stripe_refund_id.startsWith("pending:")) {
+      if (!validStripeRefundId(refund.id)) {
+        unresolved += 1;
+        continue;
+      }
+      refund = await stripeRead(`refunds/${encodeURIComponent(text(refund.id, 255))}`);
     }
     await reconcileStripeRefund(order, refund, row.request_key, false);
     if (["failed", "canceled"].includes(text(refund.status, 30).toLowerCase())) failed += 1;
