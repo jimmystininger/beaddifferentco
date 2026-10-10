@@ -400,11 +400,11 @@ function validStripeRefund(refund: Record<string, any>) {
 }
 
 function matchStripeRefund(refunds: Record<string, any>[], order: Record<string, any>, request: Record<string, any>) {
-  const paymentIntentId = text(order?.stripe_payment_intent_id, 100);
-  const forPayment = refunds.filter((refund) => refundPaymentIntent(refund) === paymentIntentId);
-  const exact = forPayment.filter((refund) => refund?.metadata?.request_key === request.request_key);
+  const exact = refunds.filter((refund) => refund?.metadata?.request_key === request.request_key);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
+  const paymentIntentId = text(order?.stripe_payment_intent_id, 100);
+  const forPayment = refunds.filter((refund) => refundPaymentIntent(refund) === paymentIntentId);
   const requestCreatedAt = Date.parse(request.created_at || "");
   const expectedAmount = Math.round(Number(request.amount || 0) * 100);
   if (!Number.isFinite(requestCreatedAt) || !expectedAmount) return null;
