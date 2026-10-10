@@ -364,7 +364,7 @@ async function existingRefundRequest(requestKey: string, orderId: string) {
   if (existing && existing.order_id !== orderId) throw new Error("Refund request id belongs to another order.");
   if (existing?.stripe_refund_id.startsWith("pending:")) {
     const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,stripe_payment_intent_id`);
-    return await replayPendingStripeRefund(orders[0], existing);
+    return await reconcilePendingStripeRefund(orders[0], existing);
   }
   if (existing && !existing.stripe_refund_id.startsWith("pending:")) {
     if (["failed", "canceled"].includes(existing.status)) {
@@ -423,33 +423,46 @@ async function reconcileStripeRefund(order: Record<string, any>, refund: Record<
   return { ...attached, ...finalized, stripe_refund_id: refund.id, refund_amount: Number(refund.amount || 0) / 100 };
 }
 
-async function replayPendingStripeRefund(order: Record<string, any>, row: Record<string, any>) {
-  const ageMs = Date.now() - Date.parse(row.created_at || "");
-  if (!order?.id || !order?.stripe_payment_intent_id || !Number.isFinite(ageMs) || ageMs < 0 || ageMs >= 23 * 60 * 60 * 1000) {
-    throw new Error("This refund request is outside Stripe’s safe idempotent retry window. Do not submit another refund; contact support.");
+async function findExactStripeRefund(order: Record<string, any>, row: Record<string, any>) {
+  if (!order?.id || !order?.stripe_payment_intent_id) {
+    throw new Error("This refund request is missing its Stripe payment reference.");
   }
   const requestKey = text(row.request_key, 36);
-  const refund = await stripeRequest("refunds", stripeForm({
-    payment_intent: order.stripe_payment_intent_id,
-    amount: cents(row.amount),
-    "metadata[order_id]": order.id,
-    "metadata[refund_kind]": String(row.metadata?.refund_kind || "order"),
-    "metadata[request_key]": requestKey,
-    reason: "requested_by_customer",
-  }), `bead-refund-${requestKey}`);
-  const responseRequestKey = text(refund?.metadata?.request_key, 36);
-  const responseOrderId = text(refund?.metadata?.order_id, 80);
-  if (!validStripeRefund(refund) || refundPaymentIntent(refund) !== order.stripe_payment_intent_id ||
-      Number(refund.amount) !== cents(row.amount) ||
-      (responseRequestKey && responseRequestKey !== requestKey) ||
-      (responseOrderId && responseOrderId !== order.id)) {
-    throw new Error("Stripe’s idempotent refund did not match the stored payment and amount. No second refund was submitted.");
+  const matches: Record<string, any>[] = [];
+  let startingAfter = "";
+  do {
+    const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const result = await stripeRead(`refunds?${query.toString()}`);
+    if (!Array.isArray(result?.data)) throw new Error("Stripe returned an invalid refund list.");
+    for (const refund of result.data) {
+      if (refund?.metadata?.request_key === requestKey && refund?.metadata?.order_id === order.id &&
+          validStripeRefund(refund)) matches.push(refund);
+    }
+    if (!result.has_more) break;
+    startingAfter = text(result.data.at(-1)?.id, 255);
+    if (!startingAfter) throw new Error("Stripe returned an incomplete refund page.");
+  } while (startingAfter);
+  if (matches.length !== 1) {
+    throw new Error(matches.length
+      ? "More than one Stripe refund matches this exact request. No order changes were made."
+      : "No Stripe refund matches this exact request key and order. No order changes were made.");
   }
-  await rpc("attach_stripe_refund_request", {
-    request_key_value: requestKey,
-    stripe_refund_id_value: refund.id,
-  });
-  const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(refund.id)}`);
+  return matches[0];
+}
+
+async function reconcilePendingStripeRefund(order: Record<string, any>, row: Record<string, any>) {
+  const candidate = await findExactStripeRefund(order, row);
+  const requestKey = text(row.request_key, 36);
+  const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(candidate.id)}`);
+  if (refundPaymentIntent(confirmedRefund) !== order.stripe_payment_intent_id ||
+      Number(confirmedRefund.amount) !== cents(row.amount)) {
+    throw new Error("The exact Stripe refund does not match this order’s payment and requested amount. No order changes were made.");
+  }
+  if ((confirmedRefund.metadata?.request_key && confirmedRefund.metadata.request_key !== requestKey) ||
+      (confirmedRefund.metadata?.order_id && confirmedRefund.metadata.order_id !== order.id)) {
+    throw new Error("The exact Stripe refund metadata changed during verification. No order changes were made.");
+  }
   return await reconcileStripeRefund(order, confirmedRefund, requestKey);
 }
 
@@ -467,7 +480,7 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
   let failed = 0;
   for (const row of rows) {
     if (row.stripe_refund_id.startsWith("pending:")) {
-      const result = await replayPendingStripeRefund(order, row);
+      const result = await reconcilePendingStripeRefund(order, row);
       if (["failed", "canceled"].includes(text(result?.status, 30).toLowerCase())) failed += 1;
       else if (text(result?.status, 30).toLowerCase() !== "pending") synced += 1;
       else unresolved += 1;
