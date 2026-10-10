@@ -33,7 +33,7 @@ This repository-governance adoption is a `Product Change`. Its authorized scope 
 | Markup and page composition | Individual `.html` files for static routes; `api/_product-shell.js` and `api/_category-shell.js` for dynamic product/category routes | Static and server-generated HTML routes |
 | Styling | `styles.css` | Shared stylesheet |
 | Tests and safeguards | No canonical test suite exists | Required checks are syntax checks and affected-flow verification until a test owner is added |
-| CI | GitHub Actions after repository setup | Not configured in this local folder |
+| CI | `.github/workflows/repository-gates.yml` | Configured for pull requests and pushes to `main` |
 | Deployment | `vercel.json` | Vercel routing and function configuration |
 | Database and schema | `supabase/migrations/*.sql` | Supabase project `zejcuqhihbfpuwsjvmhc`; migrations are immutable ordered history |
 | Project status | `README.md` | Minimal project status only |
