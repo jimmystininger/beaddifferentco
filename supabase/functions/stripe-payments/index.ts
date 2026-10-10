@@ -419,12 +419,13 @@ async function refundWithRequestKey(refund: Record<string, any>, order: Record<s
   const requestRows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,amount,created_at,request_key`);
   const request = requestRows[0];
   if (!request || request.order_id !== order.id) throw new Error("Refund request record could not be verified. No second refund was submitted.");
-  const matchesRequest = (candidate: Record<string, any>) => validStripeRefund(candidate) &&
+  const matchesRefund = (candidate: Record<string, any>) => validStripeRefund(candidate) &&
     refundPaymentIntent(candidate) === order.stripe_payment_intent_id &&
-    Number(candidate.amount) === Math.round(Number(request.amount) * 100) &&
+    Number(candidate.amount) === Math.round(Number(request.amount) * 100);
+  const matchesRequest = (candidate: Record<string, any>) => matchesRefund(candidate) &&
     (!candidate.metadata?.request_key || candidate.metadata.request_key === requestKey) &&
     (!candidate.metadata?.order_id || candidate.metadata.order_id === order.id);
-  if (matchesRequest(refund)) return refund;
+  if (matchesRefund(refund)) return refund;
   const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
   const result = await stripeRead(`refunds?${query.toString()}`);
   const matched = matchStripeRefund(Array.isArray(result?.data) ? result.data : [], order, request);
