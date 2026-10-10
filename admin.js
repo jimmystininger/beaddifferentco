@@ -3274,7 +3274,7 @@ document.addEventListener('submit',(event)=>{
 const synchronizeActiveAdminThemeSelection=async()=>{
   const form=document.querySelector('[data-theme-form]');
   const select=form?.elements?.theme_preset;
-  if(!form||!select||select.dataset.cloudThemeSynchronized||select.dataset.userSelected)return;
+  if(!form||!select||select.options.length<2||select.dataset.cloudThemeSynchronized||select.dataset.userSelected)return;
   if(!window.beadSupabase)return;
   const value=await loadAdminStoreSettings().catch(()=>null);
   if(!value||select.dataset.userSelected)return;
@@ -3290,6 +3290,7 @@ const synchronizeActiveAdminThemeSelection=async()=>{
   }
   form.querySelector('[data-theme-footer-logo-status]')?.replaceChildren();
   select.dataset.cloudThemeSynchronized='true';
+  if(select.value)select.dispatchEvent(new Event('change'));
 };
 new MutationObserver(()=>{void synchronizeActiveAdminThemeSelection();}).observe(document.body,{childList:true,subtree:true});
 
