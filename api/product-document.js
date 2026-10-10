@@ -2,6 +2,7 @@ const productSeo=require('../storefront-seo');
 const {origin,escapeHtml,serialize,publicRows,applySecurityHeaders}=require('./_storefront-document');
 
 const shell=require('./_product-shell');
+const maximumProductIdLength=4096;
 
 const documentFor=(product,unavailable=false)=>{
   const seo=product?productSeo.build(product):{title:'Product Details | Bead Different Co.',description:'Shop beads and creative supplies at Bead Different Co.'};
@@ -18,7 +19,7 @@ module.exports=async function productDocument(request,response){
   }
   response.setHeader('Content-Type','text/html; charset=utf-8');
   const requestedId=new URL(request.url,origin).searchParams.get('id')?.trim();
-  if(!requestedId||requestedId.length>200){
+  if(!requestedId||requestedId.length>maximumProductIdLength){
     response.setHeader('Cache-Control','no-store');
     response.status(404).send(request.method==='HEAD'?'':documentFor(null,true));
     return;
