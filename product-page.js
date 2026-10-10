@@ -167,7 +167,9 @@ function renderProductPage(item){
 const setProductSearchMetadata=(item)=>{
   const canonicalPath=`/product.html?id=${encodeURIComponent(item.externalId||item.id)}`;
   const canonicalUrl=new URL(canonicalPath,'https://www.beaddifferentco.com').href;
-  const description=String(item.shortDescription||item.description||item.name).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,160);
+  const productDescription=String(item.shortDescription||item.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+  const searchDescription=productDescription||`Shop ${item.name} at Bead Different Co. Explore beads and creative supplies for your next project.`;
+  const description=searchDescription.slice(0,160);
   window.setStorefrontSeo?.({title:`${item.seoTitle||item.name} | Bead Different Co.`,description,canonicalPath});
   const categorySlug=String(item.category||item.category_slug||'').trim();
   const categoryLabel=(window.storeCategories||[]).find(([slug])=>slug===categorySlug)?.[1];
@@ -181,7 +183,7 @@ const setProductSearchMetadata=(item)=>{
   const offer=offerPrices.length?{'@type':'Offer',url:canonicalUrl,priceCurrency:'USD',price:Math.min(...offerPrices.map((variant)=>variant.price)).toFixed(2),itemCondition:'https://schema.org/NewCondition',...(availability?{availability}:{})}:null;
   const placeholderImageUrl=new URL('/product-mix.jpg',canonicalUrl);
   const imageUrls=[...new Set((item.images?.length?item.images:[item.image]).flatMap((image)=>{if(!image)return[];try{const url=new URL(image,canonicalUrl);return ['http:','https:'].includes(url.protocol)&&(url.origin!==placeholderImageUrl.origin||url.pathname!==placeholderImageUrl.pathname)?[url.href]:[];}catch(error){return[];}}))];
-  const schema={'@context':'https://schema.org','@type':'Product',name:item.name,url:canonicalUrl,description:String(item.shortDescription||item.description||'').replace(/<[^>]*>/g,' ').trim(),...(imageUrls.length?{image:imageUrls}:{}),brand:{'@type':'Brand',name:'Bead Different Co.'},...(item.sku?{sku:item.sku}:{}),...(offer?{offers:offer}:{})};
+  const schema={'@context':'https://schema.org','@type':'Product',name:item.name,url:canonicalUrl,description:searchDescription,...(imageUrls.length?{image:imageUrls}:{}),brand:{'@type':'Brand',name:'Bead Different Co.'},...(item.sku?{sku:item.sku}:{}),...(offer?{offers:offer}:{})};
   let script=document.querySelector('script[data-product-structured-data]');
   if(!script){script=document.createElement('script');script.type='application/ld+json';script.dataset.productStructuredData='';document.head.append(script);}
   script.textContent=JSON.stringify(schema).replace(/</g,'\\u003c');
