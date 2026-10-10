@@ -391,7 +391,8 @@ function refundPaymentIntent(refund: Record<string, any>) {
 }
 
 function validStripeRefund(refund: Record<string, any>) {
-  return refund?.object === "refund" && /^[a-z]+_[A-Za-z0-9]+$/.test(text(refund?.id, 100));
+  const refundId = text(refund?.id, 255);
+  return refund?.object === "refund" && refundId.startsWith("re_") && refundId.length >= 5 && !/\s/.test(refundId);
 }
 
 function matchStripeRefund(refunds: Record<string, any>[], order: Record<string, any>, request: Record<string, any>) {
