@@ -40,40 +40,39 @@
         if(result.error||!result.data||result.data.error)throw new Error('Payment verification unavailable.');
         if(result.data.status==='paid'&&result.data.order_id===orderId){
           show('ORDER CONFIRMED','Thank you for your order','Your payment was received by Stripe and your order is recorded.');
+          link.href='account.html?view=orders';
+          link.innerHTML='View your orders <span aria-hidden="true">→</span>';
           order.querySelector('[data-payment-order-value]').textContent=orderId;
           order.hidden=false;
           let pending=null;
           try{pending=JSON.parse(sessionStorage.getItem('beadDifferentPendingCheckout')||'null');}catch(error){}
-          if(pending?.sessionId===sessionId&&pending.orderId===orderId&&pending.cartToken&&pending.bagSnapshot===(localStorage.getItem('beadDifferentBag')||'[]')){
-            try{
-              let cartId=pending.cartId;
-              if(!cartId){
-                const cartResult=await client.rpc('get_or_create_storefront_cart',{p_guest_token:pending.cartToken});
-                if(cartResult.error)throw cartResult.error;
-                cartId=cartResult.data?.id;
-              }
-              if(!cartId)throw new Error('Cart identity unavailable.');
-              const clearResult=await client.rpc('replace_storefront_cart',{p_cart_id:cartId,p_guest_token:pending.cartToken,p_items:[]});
+          const pendingMatches=pending?.sessionId===sessionId&&pending.orderId===orderId;
+          try{
+            const cartToken=(pendingMatches&&pending.cartToken)||localStorage.getItem('beadDifferentCartToken')||'';
+            let cartId=(pendingMatches&&pending.cartId)||localStorage.getItem('beadDifferentCartId')||'';
+            if(cartToken&&!cartId){
+              const cartResult=await client.rpc('get_or_create_storefront_cart',{p_guest_token:cartToken});
+              if(cartResult.error)throw cartResult.error;
+              cartId=cartResult.data?.id;
+            }
+            if(cartId||cartToken){
+              if(!cartId||!cartToken)throw new Error('Cart identity unavailable.');
+              const clearResult=await client.rpc('replace_storefront_cart',{p_cart_id:cartId,p_guest_token:cartToken,p_items:[]});
               if(clearResult.error)throw clearResult.error;
-              localStorage.setItem('beadDifferentBag','[]');
               localStorage.setItem('beadDifferentCartOwner',cartId);
-              for(const key of ['beadDifferentCartDirty','beadDifferentCartHoldSnapshot','beadDifferentCartHoldUser','beadDifferentCartPromo'])localStorage.removeItem(key);
-              sessionStorage.removeItem('beadDifferentPendingCheckout');
-              link.href='shop-all.html';
-              link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
-            }catch(error){message.textContent='Your order is confirmed, but we could not clear your cart. Please review it before ordering again.';}
-          }else if(pending?.sessionId===sessionId&&pending.orderId===orderId){
-            message.textContent='Your order is confirmed. Your cart changed during checkout, so please review it before ordering again.';
-          }else{
-            link.href='shop-all.html';
-            link.innerHTML='Continue shopping <span aria-hidden="true">→</span>';
-          }
+            }
+            localStorage.setItem('beadDifferentBag','[]');
+            for(const key of ['beadDifferentCartDirty','beadDifferentCartHoldSnapshot','beadDifferentCartHoldUser','beadDifferentCartPromo'])localStorage.removeItem(key);
+            if(pendingMatches)sessionStorage.removeItem('beadDifferentPendingCheckout');
+          }catch(error){message.textContent='Your order is confirmed, but we could not clear your cart. Please review it before ordering again.';}
         }else if(result.data.status==='processing'){
           show('PAYMENT RECEIVED','Your order needs attention','Stripe received your payment, but we could not finish recording the order. Please do not pay again; contact us with your order reference.');
           order.querySelector('[data-payment-order-value]').textContent=orderId;
           order.hidden=false;
         }else{
           show('PAYMENT NOT CONFIRMED','Payment is still processing','Your cart is saved. Please check your orders before trying checkout again.');
+          link.href='shopping-bag.html';
+          link.innerHTML='Return to cart <span aria-hidden="true">→</span>';
         }
       }catch(error){
         show('PAYMENT NOT VERIFIED','We could not verify this payment','Your cart is saved. Please check your orders or contact us before trying checkout again.');
