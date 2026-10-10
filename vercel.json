@@ -53,6 +53,7 @@
   "git": {
     "deploymentEnabled": {
       "*": false,
+      "codex/**": false,
       "main": true
     }
   }
