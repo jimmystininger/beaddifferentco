@@ -230,7 +230,7 @@ function appendLineItems(form: URLSearchParams, order: Record<string, any>) {
 }
 
 async function validateCheckoutShipping(order: Record<string, any>, address: Record<string, any>) {
-  const settings = await rpc("get_storefront_shipping_settings", {});
+  const settings = await rpc("get_storefront_site_settings", { p_scope: "common" });
   const threshold = Math.max(0, Number(settings?.freeShippingThreshold ?? 50));
   const method = text(order.shipping_method, 20);
   const amount = cents(order.shipping_amount);

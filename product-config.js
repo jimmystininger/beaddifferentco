@@ -30,7 +30,7 @@ const loadStorefrontShippingSettings=async()=>{
   const client=window.beadSupabase;
   if(!client?.rpc)return window.productStoreConfig;
   try{
-    const result=await client.rpc('get_storefront_shipping_settings');
+    const result=await client.rpc('get_storefront_site_settings',{p_scope:'common'});
     if(!result.error&&result.data)Object.assign(window.productStoreConfig,{...result.data,processingDays:Math.max(0,Number(result.data.processingDays)||0)});
   }catch(error){}
   return window.productStoreConfig;
