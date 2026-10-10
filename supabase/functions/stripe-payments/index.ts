@@ -452,8 +452,20 @@ async function findExactStripeRefund(order: Record<string, any>, row: Record<str
 }
 
 async function reconcilePendingStripeRefund(order: Record<string, any>, row: Record<string, any>) {
-  const candidate = await findExactStripeRefund(order, row);
+  if (!order?.id || !order?.stripe_payment_intent_id) {
+    throw new Error("This refund request is missing its Stripe payment reference.");
+  }
   const requestKey = text(row.request_key, 36);
+  const createdAt = Date.parse(row.created_at || "");
+  const ageMs = Date.now() - createdAt;
+  const refundKind = text(row.metadata?.refund_kind, 40);
+  if (requestKey && Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 23 * 60 * 60 * 1000 &&
+      ["order", "satisfaction", "return"].includes(refundKind)) {
+    const refund = await stripeRequest("refunds", stripeRefundForm(order, cents(row.amount), refundKind, requestKey),
+      `bead-refund-${requestKey}`);
+    return await reconcileStripeRefund(order, refund, requestKey);
+  }
+  const candidate = await findExactStripeRefund(order, row);
   const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(candidate.id)}`);
   if (refundPaymentIntent(confirmedRefund) !== order.stripe_payment_intent_id ||
       Number(confirmedRefund.amount) !== cents(row.amount)) {
@@ -495,6 +507,17 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
   return json({ synced, pending: unresolved, failed, message: `Checked ${rows.length} pending Stripe refund${rows.length === 1 ? "" : "s"}.` });
 }
 
+function stripeRefundForm(order: Record<string, any>, amount: number, refundKind: string, requestKey: string) {
+  return stripeForm({
+    payment_intent: order.stripe_payment_intent_id,
+    amount,
+    "metadata[order_id]": order.id,
+    "metadata[refund_kind]": refundKind,
+    "metadata[request_key]": requestKey,
+    reason: "requested_by_customer",
+  });
+}
+
 async function submitStripeRefund(order: Record<string, any>, amount: number, reason: string,
   metadata: Record<string, unknown>, requestKey: string) {
   const reserved = await rpc("reserve_stripe_refund_request", {
@@ -504,14 +527,8 @@ async function submitStripeRefund(order: Record<string, any>, amount: number, re
   if (reserved.already_submitted) return reserved;
   let refund: Record<string, any>;
   try {
-    refund = await stripeRequest("refunds", stripeForm({
-      payment_intent: order.stripe_payment_intent_id,
-      amount,
-      "metadata[order_id]": order.id,
-      "metadata[refund_kind]": String(metadata.refund_kind),
-      "metadata[request_key]": requestKey,
-      reason: "requested_by_customer",
-    }), `bead-refund-${requestKey}`);
+    refund = await stripeRequest("refunds", stripeRefundForm(order, amount, String(metadata.refund_kind), requestKey),
+      `bead-refund-${requestKey}`);
   } catch (error) {
     const status = (error as { status?: number })?.status;
     if (status && status >= 400 && status < 500 && status !== 429) {
