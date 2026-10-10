@@ -73,15 +73,14 @@ const applyCloudSiteSettings=(value)=>{const settings=value&&typeof value==='obj
 const storefrontSiteSettingsScope=({'Home':'home','Our Story':'story','FAQ':'faq','Shipping & Returns':'returns'})[pageName]||'common';
 const storefrontSiteSettingsCacheKey=`beadStoreSiteSettingsV2:${storefrontSiteSettingsScope}`;
 window.storefrontSiteSettingsCacheKey=storefrontSiteSettingsCacheKey;
-window.clearStorefrontSiteSettingsCache=()=>{try{['beadStoreSiteSettingsV1','beadStoreControlsV1','beadStoreRewardSettingsV1'].forEach((key)=>sessionStorage.removeItem(key));for(const key of Object.keys(sessionStorage)){if(key.startsWith('beadStoreSiteSettingsV2:'))sessionStorage.removeItem(key);}}catch(error){}};
-window.siteSettingsLoadState='pending';window.siteSettingsReady=(async()=>{try{let cached=null;try{const record=JSON.parse(sessionStorage.getItem(storefrontSiteSettingsCacheKey)||'null');if(record?.at&&Date.now()-Number(record.at)<60000&&record.data&&typeof record.data==='object')cached=record.data;}catch(error){}if(cached){applyCloudSiteSettings(cached);window.siteSettingsLoadState='connected';return cached;}const client=window.beadSupabase;if(!client){window.siteSettingsLoadState='unavailable';return null;}const {data,error}=await client.rpc('get_storefront_site_settings',{p_scope:storefrontSiteSettingsScope});if(error){window.siteSettingsLoadState='error';return null;}const value=data||{};try{sessionStorage.setItem(storefrontSiteSettingsCacheKey,JSON.stringify({at:Date.now(),data:value}));}catch(error){}applyCloudSiteSettings(value);window.siteSettingsLoadState='connected';return value;}catch(error){window.siteSettingsLoadState='error';return null;}})();
+window.clearStorefrontSiteSettingsCache=()=>{try{['beadStoreSiteSettingsV1','beadStoreControlsV1','beadStoreRewardSettingsV1','beadStoreActiveThemeV1'].forEach((key)=>sessionStorage.removeItem(key));for(const key of Object.keys(sessionStorage)){if(key.startsWith('beadStoreSiteSettingsV2:'))sessionStorage.removeItem(key);}}catch(error){}};
+window.siteSettingsLoadState='pending';window.siteSettingsReady=(async()=>{try{let cached=null;try{const record=JSON.parse(sessionStorage.getItem(storefrontSiteSettingsCacheKey)||'null');if(record?.at&&Date.now()-Number(record.at)<60000&&record.data&&typeof record.data==='object')cached=record.data;}catch(error){}if(cached){applyCloudSiteSettings(cached);window.siteSettingsLoadState='connected';return cached;}const client=await window.beadSupabaseReady?.catch(()=>null);if(!client){window.siteSettingsLoadState='unavailable';return null;}const {data,error}=await client.rpc('get_storefront_site_settings',{p_scope:storefrontSiteSettingsScope});if(error){window.siteSettingsLoadState='error';return null;}const value=data||{};try{sessionStorage.setItem(storefrontSiteSettingsCacheKey,JSON.stringify({at:Date.now(),data:value}));}catch(error){}applyCloudSiteSettings(value);window.siteSettingsLoadState='connected';return value;}catch(error){window.siteSettingsLoadState='error';return null;}})();
 const canonicalShippingPolicyFallback='Shipping options and delivery estimates are shown at checkout. Please contact us if your order arrives with a problem so we can help.';
 window.canonicalShippingPolicy=()=>{if(window.siteShippingSettings?.shippingPolicy)return window.siteShippingSettings.shippingPolicy;if(window.siteSettingsLoadState==='connected')return canonicalShippingPolicyFallback;try{const settings=JSON.parse(localStorage.getItem('beadDifferentAdminData')||'{}').settings||{};if(settings.shippingPolicy)return settings.shippingPolicy;}catch(error){}return canonicalShippingPolicyFallback;};
 window.renderCanonicalShippingPolicies=()=>{document.querySelectorAll('[data-shipping-policy]').forEach((element)=>{element.innerHTML=window.sanitizeRichText(window.canonicalShippingPolicy());const link=document.createElement('a');link.className='full-shipping-policy-link';link.href='shipping-returns.html';link.textContent='View the full Shipping & Returns policy';element.append(document.createElement('br'),link);});};
 const shippingPolicyObserver=new MutationObserver(()=>{const policyElements=[...document.querySelectorAll('[data-shipping-policy]')];if(policyElements.some((element)=>!element.querySelector('.full-shipping-policy-link')))window.renderCanonicalShippingPolicies();});
 shippingPolicyObserver.observe(document.body,{childList:true,subtree:true});
 window.siteSettingsReady.then(()=>window.renderCanonicalShippingPolicies());
-window.siteSettingsReady.then((value)=>window.applyStoreTheme(value?.theme,value?.heroUrl,value?.categoryPhotos,value?.logoUrl,value?.storyUrl,value?.pageBackgroundImageUrl,value?.footerLogoUrl));
 Promise.all([cloudCategoriesReady,window.siteSettingsReady]).then(([,value])=>window.applyStoreCategoryPhotos(value?.categoryPhotos));
 window.addEventListener('bead-categories-ready',()=>{const selected=new URLSearchParams(location.search).get('category')||'';document.querySelectorAll('.store-nav a[data-category-slug]').forEach((link)=>{if(link.dataset.categorySlug===selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});});
 
@@ -123,12 +122,27 @@ window.applyStoreTheme=(theme={},heroUrl,categoryPhotos,logoUrl,storyUrl,pageBac
   if(Object.values(media).some((value)=>value!==undefined))lastCompleteStoreThemeMedia=media;
   return canonicalApplyStoreTheme(theme,media.heroUrl,media.categoryPhotos,media.logoUrl,media.storyUrl,media.pageBackgroundImageUrl,media.footerLogoUrl);
 };
+const storefrontThemeCacheKey='beadStoreActiveThemeV1';
+let cachedStorefrontThemeApplied=false;
+try{
+  const record=JSON.parse(sessionStorage.getItem(storefrontThemeCacheKey)||'null');
+  if(record?.at&&Date.now()-Number(record.at)<60000&&record.data&&typeof record.data==='object'){
+    const value=record.data;
+    window.applyStoreTheme(value.theme,value.heroUrl,value.categoryPhotos,value.logoUrl,value.storyUrl,value.pageBackgroundImageUrl,value.footerLogoUrl);
+    cachedStorefrontThemeApplied=true;
+  }
+}catch(error){}
 window.siteSettingsReady.then((value)=>{
-  if(value&&Object.keys(value).length)return;
+  if(value){
+    window.applyStoreTheme(value.theme,value.heroUrl,value.categoryPhotos,value.logoUrl,value.storyUrl,value.pageBackgroundImageUrl,value.footerLogoUrl);
+    try{sessionStorage.setItem(storefrontThemeCacheKey,JSON.stringify({at:Date.now(),data:{theme:value.theme,heroUrl:value.heroUrl,categoryPhotos:value.categoryPhotos,logoUrl:value.logoUrl,storyUrl:value.storyUrl,pageBackgroundImageUrl:value.pageBackgroundImageUrl,footerLogoUrl:value.footerLogoUrl}}));}catch(error){}
+    return;
+  }
+  if(cachedStorefrontThemeApplied)return;
   try{
     const fallback=JSON.parse(localStorage.getItem('beadDifferentProductConfig')||'{}');
-    if(fallback&&typeof fallback==='object')window.applyStoreTheme(fallback.theme,fallback.heroUrl,fallback.categoryPhotos,fallback.logoUrl,fallback.storyUrl,fallback.pageBackgroundImageUrl,fallback.footerLogoUrl);
-  }catch(error){}
+    window.applyStoreTheme(fallback.theme,fallback.heroUrl,fallback.categoryPhotos,fallback.logoUrl,fallback.storyUrl,fallback.pageBackgroundImageUrl,fallback.footerLogoUrl);
+  }catch(error){window.applyStoreTheme();}
 });
 (()=>{
   const fallback='category.html?category=new-arrivals';
