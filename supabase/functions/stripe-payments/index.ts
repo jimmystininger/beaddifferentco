@@ -463,10 +463,10 @@ async function reconcilePendingStripeRefund(order: Record<string, any>, row: Rec
       ["order", "satisfaction", "return"].includes(refundKind)) {
     const refund = await stripeRequest("refunds", stripeRefundForm(order, cents(row.amount), refundKind, requestKey),
       `bead-refund-${requestKey}`);
-    if (!validStripeRefundId(refund?.id)) {
-      throw new Error("Stripe returned no usable refund ID for this exact request.");
-    }
-    const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(refund.id)}`);
+    const refundId = validStripeRefundId(refund?.id)
+      ? refund.id
+      : (await findExactStripeRefund(order, row)).id;
+    const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(refundId)}`);
     return await reconcileStripeRefund(order, confirmedRefund, requestKey);
   }
   const candidate = await findExactStripeRefund(order, row);
