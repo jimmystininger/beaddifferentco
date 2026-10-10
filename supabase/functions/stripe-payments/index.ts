@@ -611,4 +611,3 @@ Deno.serve(async (request) => {
     return json({ error: text(error instanceof Error ? error.message : error, 300) || "Stripe payment request failed." }, 400);
   }
 });
-
