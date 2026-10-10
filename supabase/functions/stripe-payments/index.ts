@@ -437,10 +437,13 @@ async function replayPendingStripeRefund(order: Record<string, any>, row: Record
     "metadata[request_key]": requestKey,
     reason: "requested_by_customer",
   }), `bead-refund-${requestKey}`);
+  const responseRequestKey = text(refund?.metadata?.request_key, 36);
+  const responseOrderId = text(refund?.metadata?.order_id, 80);
   if (!validStripeRefund(refund) || refundPaymentIntent(refund) !== order.stripe_payment_intent_id ||
-      Number(refund.amount) !== cents(row.amount) || refund.metadata?.request_key !== requestKey ||
-      refund.metadata?.order_id !== order.id) {
-    throw new Error("Stripe’s idempotent refund response did not match this exact order request. No second refund was submitted.");
+      Number(refund.amount) !== cents(row.amount) ||
+      (responseRequestKey && responseRequestKey !== requestKey) ||
+      (responseOrderId && responseOrderId !== order.id)) {
+    throw new Error("Stripe’s idempotent refund did not match the stored payment and amount. No second refund was submitted.");
   }
   await rpc("attach_stripe_refund_request", {
     request_key_value: requestKey,
