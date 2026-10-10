@@ -419,24 +419,6 @@ function matchStripeRefund(refunds: Record<string, any>[], order: Record<string,
   return contextual.length === 1 ? contextual[0] : null;
 }
 
-async function refundWithRequestKey(refund: Record<string, any>, order: Record<string, any>, requestKey: string) {
-  const requestRows = await database(`stripe_refunds?request_key=eq.${encodeURIComponent(requestKey)}&select=order_id,amount,created_at,request_key`);
-  const request = requestRows[0];
-  if (!request || request.order_id !== order.id) throw new Error("Refund request record could not be verified. No second refund was submitted.");
-  const matchesRefund = (candidate: Record<string, any>) => validStripeRefund(candidate) &&
-    refundPaymentIntent(candidate) === order.stripe_payment_intent_id &&
-    Number(candidate.amount) === Math.round(Number(request.amount) * 100);
-  const matchesRequest = (candidate: Record<string, any>) => matchesRefund(candidate) &&
-    (!candidate.metadata?.request_key || candidate.metadata.request_key === requestKey) &&
-    (!candidate.metadata?.order_id || candidate.metadata.order_id === order.id);
-  if (matchesRefund(refund)) return refund;
-  const query = new URLSearchParams({ payment_intent: order.stripe_payment_intent_id, limit: "100" });
-  const result = await stripeRead(`refunds?${query.toString()}`);
-  const matched = matchStripeRefund(Array.isArray(result?.data) ? result.data : [], order, request);
-  if (matched && matchesRequest(matched)) return matched;
-  throw new Error("Stripe accepted the refund, but the app could not safely match its confirmation. Do not submit another refund; use Sync Stripe status for this order or contact support.");
-}
-
 async function reconcileStripeRefund(order: Record<string, any>, refund: Record<string, any>, requestKey: string, throwOnFailure = true) {
   if (!order?.id || !order?.stripe_payment_intent_id || refundPaymentIntent(refund) !== order.stripe_payment_intent_id || !validStripeRefund(refund)) {
     throw new Error("Stripe returned an invalid refund confirmation. The order was not changed.");
@@ -485,6 +467,13 @@ async function reconcileOrderRefunds(request: Request, body: Record<string, any>
     let refund = row.stripe_refund_id.startsWith("pending:")
       ? matchStripeRefund(stripeRefunds, order, row)
       : await stripeRead(`refunds/${encodeURIComponent(row.stripe_refund_id)}`);
+    if (refund && row.stripe_refund_id.startsWith("pending:")) {
+      if (!validStripeRefundId(refund.id)) {
+        unresolved += 1;
+        continue;
+      }
+      refund = await stripeRead(`refunds/${encodeURIComponent(text(refund.id, 255))}`);
+    }
     if (!refund) {
       unresolved += 1;
       continue;
@@ -528,7 +517,14 @@ async function submitStripeRefund(order: Record<string, any>, amount: number, re
     }
     throw error;
   }
-  const confirmedRefund = await refundWithRequestKey(refund, order, requestKey);
+  if (!validStripeRefundId(refund?.id)) {
+    throw new Error("Stripe accepted the refund but did not return a usable refund ID. Do not submit another refund; contact support.");
+  }
+  await rpc("attach_stripe_refund_request", {
+    request_key_value: requestKey,
+    stripe_refund_id_value: refund.id,
+  });
+  const confirmedRefund = await stripeRead(`refunds/${encodeURIComponent(refund.id)}`);
   return await reconcileStripeRefund(order, confirmedRefund, requestKey);
 }
 
