@@ -10,6 +10,7 @@ const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const resendApiKey = Deno.env.get("RESEND_API_KEY") || "";
 const emailFrom = Deno.env.get("EMAIL_FROM") || Deno.env.get("RESTOCK_EMAIL_FROM") || "";
+const storefrontUrl = (Deno.env.get("STOREFRONT_URL") || "https://beaddifferentco.com").replace(/\/$/, "");
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -255,23 +256,43 @@ async function sendOrderUpdate(orderId: string) {
 async function sendRefundReceipt(payload: Record<string, unknown>) {
   const orderId = textValue(payload.orderId, 80);
   if (!orderId) throw new Error("Order id is required.");
-  const orderResponse = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,order_number,status,total,refunded_amount,customer_email,shipping_name`);
+  const orderResponse = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&select=id,order_number,status,total,refunded_amount,customer_email,shipping_name,order_items(id,product_name,sku)`);
   if (!orderResponse.ok) throw new Error("Unable to load the refunded order.");
   const order = (await orderResponse.json())[0];
   if (!order) throw new Error("Order not found.");
   const email = String(order.customer_email || "").trim().toLowerCase();
   if (!emailPattern.test(email)) return { sent: 0, skipped: true };
   const orderShortId = order.order_number ? `BD-${String(order.order_number).padStart(6, "0")}` : String(order.id).slice(0, 8);
-  const refundAmount = Number(payload.refundAmount || 0).toFixed(2);
-  const remaining = Number(payload.remaining ?? Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0))).toFixed(2);
-  const items = Array.isArray(payload.lineItems) ? payload.lineItems as Array<Record<string, unknown>> : [];
-  const lines = items.map((item) => `${textValue(item.name || item.sku || "Item", 240)} · Qty ${Number(item.quantity || 0)} · $${Number(item.amount || 0).toFixed(2)}`);
-  const greeting = `Hello${order.shipping_name ? ` ${textValue(order.shipping_name, 160)}` : ""},`;
-  const body = `${greeting}\n\nWe processed a refund for order ${orderShortId}.\n\nRefund total: $${refundAmount}\nRemaining order balance: $${remaining}${lines.length ? `\n\nAdjusted items:\n${lines.join("\n")}` : ""}\n\nPlease allow up to 10 days for the refund to post to your original payment method.\n\nThank you,\nBead Different Co.`;
-  const lineHtml = lines.length ? `<h3 style="margin:24px 0 8px">Adjusted items</h3><ul style="padding-left:20px">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "";
-  const html = brandedHtml(`Refund for order ${orderShortId}`, `<p>${escapeHtml(greeting)}</p><p>We processed a refund for your order.</p><div style="margin:22px 0;padding:16px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:10px"><p style="margin:0 0 8px"><strong>Refund total:</strong> $${escapeHtml(refundAmount)}</p><p style="margin:0"><strong>Remaining order balance:</strong> $${escapeHtml(remaining)}</p></div>${lineHtml}<p style="color:#756d6a">Please allow up to 10 days for the refund to post to your original payment method.</p>`);
-  const subject = `Refund processed for order ${orderShortId}`;
   const refundId = textValue(payload.refundId, 80);
+  let refundEvents: Array<Record<string, any>> = [];
+  if (refundId) {
+    const eventResponse = await supabaseRequest(`order_financial_events?order_id=eq.${encodeURIComponent(order.id)}&select=order_item_id,event_type,quantity,amount,metadata&order=created_at.asc&limit=1000`);
+    if (!eventResponse.ok) throw new Error("Unable to load the refund breakdown.");
+    refundEvents = (await eventResponse.json()).filter((event: Record<string, any>) => event.metadata?.stripe_refund_id === refundId);
+  }
+  const refundAmount = Number(payload.refundAmount ?? 0).toFixed(2);
+  const remaining = Number(payload.remaining ?? Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0))).toFixed(2);
+  const orderItems = Array.isArray(order.order_items) ? order.order_items as Array<Record<string, any>> : [];
+  const itemsById = new Map(orderItems.map((item) => [String(item.id), item]));
+  const lines = refundEvents.map((event) => {
+    const item = event.order_item_id ? itemsById.get(String(event.order_item_id)) : undefined;
+    const label = item
+      ? `${textValue(item.product_name || item.sku || "Item", 240)}${item.sku && item.product_name ? ` (${textValue(item.sku, 120)})` : ""}${Number(event.quantity) > 0 ? ` × ${Number(event.quantity)}` : ""}`
+      : event.metadata?.component === "shipping"
+        ? "Shipping"
+        : event.event_type === "satisfaction_refund"
+          ? "Customer satisfaction adjustment"
+          : "Order balance";
+    return `${label} · $${Number(event.amount || 0).toFixed(2)}`;
+  });
+  const greeting = `Hello${order.shipping_name ? ` ${textValue(order.shipping_name, 160)}` : ""},`;
+  const orderUrl = `${storefrontUrl}/account.html?view=orders&order=${encodeURIComponent(order.id)}`;
+  const breakdownText = lines.length ? `\n\nRefund breakdown:\n${lines.join("\n")}` : "";
+  const body = `${greeting}\n\nWe processed a refund for order ${orderShortId}.\n\nRefund total: $${refundAmount}\nRemaining order balance: $${remaining}${breakdownText}\n\nView your order and sign in: ${orderUrl}\n\nPlease allow up to 10 days for the refund to post to your original payment method.\n\nThank you,\nBead Different Co.`;
+  const lineHtml = lines.length ? `<h3 style="margin:24px 0 8px">Refund breakdown</h3><ul style="padding-left:20px">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "";
+  const orderLinkHtml = `<p style="margin:22px 0 0"><a href="${escapeHtml(orderUrl)}" style="display:inline-block;background:#4b214f;color:#fff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:700">Log in to view your order</a></p>`;
+  const html = brandedHtml(`Refund for order ${orderShortId}`, `<p>${escapeHtml(greeting)}</p><p>We processed a refund for your order.</p><div style="margin:22px 0;padding:16px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:10px"><p style="margin:0 0 8px"><strong>Refund total:</strong> $${escapeHtml(refundAmount)}</p><p style="margin:0"><strong>Remaining order balance:</strong> $${escapeHtml(remaining)}</p></div>${lineHtml}${orderLinkHtml}<p style="color:#756d6a">Please allow up to 10 days for the refund to post to your original payment method.</p>`);
+  const subject = `Refund processed for order ${orderShortId}`;
   const idempotencyKey = refundId ? `refund-receipt/${refundId}` : `refund-receipt/${order.id}/${crypto.randomUUID()}`;
   const result = await sendToMany([email], subject, body, idempotencyKey, html);
   if (result.sent) await saveSentEmail({ orderId: order.id, emailType: "refund_receipt", recipient: email, subject, body });
