@@ -271,7 +271,9 @@ async function sendRefundReceipt(payload: Record<string, unknown>) {
   const lineHtml = lines.length ? `<h3 style="margin:24px 0 8px">Adjusted items</h3><ul style="padding-left:20px">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>` : "";
   const html = brandedHtml(`Refund for order ${orderShortId}`, `<p>${escapeHtml(greeting)}</p><p>We processed a refund for your order.</p><div style="margin:22px 0;padding:16px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:10px"><p style="margin:0 0 8px"><strong>Refund total:</strong> $${escapeHtml(refundAmount)}</p><p style="margin:0"><strong>Remaining order balance:</strong> $${escapeHtml(remaining)}</p></div>${lineHtml}<p style="color:#756d6a">Please allow up to 10 days for the refund to post to your original payment method.</p>`);
   const subject = `Refund processed for order ${orderShortId}`;
-  const result = await sendToMany([email], subject, body, `refund-receipt/${order.id}/${crypto.randomUUID()}`, html);
+  const refundId = textValue(payload.refundId, 80);
+  const idempotencyKey = refundId ? `refund-receipt/${refundId}` : `refund-receipt/${order.id}/${crypto.randomUUID()}`;
+  const result = await sendToMany([email], subject, body, idempotencyKey, html);
   if (result.sent) await saveSentEmail({ orderId: order.id, emailType: "refund_receipt", recipient: email, subject, body });
   return result;
 }
@@ -305,7 +307,6 @@ async function sendContactResponse(contactId: string, responseBody: string) {
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
-  if (!(await isAdmin(request))) return json({ error: "Admin access required." }, 403);
   if (!resendApiKey || !emailFrom) return json({ error: "Resend email delivery is not configured." }, 503);
   let payload: Record<string, unknown>;
   try {
@@ -315,6 +316,8 @@ Deno.serve(async (request) => {
   }
   try {
     const action = textValue(payload.action, 40);
+    const internalRefundEmail = request.headers.get("Authorization") === `Bearer ${serviceRoleKey}` && action === "refund_receipt";
+    if (!internalRefundEmail && !(await isAdmin(request))) return json({ error: "Admin access required." }, 403);
     if (action === "direct") {
       const recipients = normalizeEmails(payload.to);
       const subject = textValue(payload.subject, 200);

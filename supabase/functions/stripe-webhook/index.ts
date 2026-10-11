@@ -15,6 +15,35 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 const text = (value: unknown, max = 500) => String(value ?? "").trim().slice(0, max);
 const network = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
 
+async function invokeInternalEmail(functionName: "send-order-email" | "send-store-email", payload: Record<string, unknown>) {
+  try {
+    const response = await network(`${projectUrl}/functions/v1/${functionName}`, {
+      method: "POST",
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.error || Number(result.sent) < 1) throw new Error(text(result.error || result.message || "Email service did not confirm delivery.", 240));
+    return;
+  } catch (error) {
+    console.error(`${functionName} delivery failed.`, error);
+    throw error;
+  }
+}
+
+async function sendRefundReceipt(orderId: string, refund: Record<string, any>) {
+  const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=total,refunded_amount`);
+  const order = orders[0];
+  if (!order) throw new Error("Refunded order was not available for its receipt email.");
+  await invokeInternalEmail("send-store-email", {
+    action: "refund_receipt",
+    orderId,
+    refundId: text(refund.id, 80),
+    refundAmount: Number(refund.amount || 0) / 100,
+    remaining: Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0)),
+  });
+}
+
 async function database(path: string, method = "GET", body?: unknown) {
   const response = await network(`${projectUrl}/rest/v1/${path}`, {
     method,
@@ -89,6 +118,7 @@ async function finalizeRefund(refund: Record<string, any>, status: string, fallb
     status_value: status,
     reason_value: status === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${status}.`, 240),
   });
+  if (status === "succeeded") await sendRefundReceipt(orderId, refund);
 }
 
 async function handleWebhook(request: Request) {
@@ -103,7 +133,8 @@ async function handleWebhook(request: Request) {
   const object = event.data?.object || {};
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     if (object.payment_status === "paid" && object.metadata?.order_id) {
-      await rpc("complete_stripe_order", { order_id_value: object.metadata.order_id, session_id_value: object.id, payment_intent_value: typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id || null });
+      const order = await rpc("complete_stripe_order", { order_id_value: object.metadata.order_id, session_id_value: object.id, payment_intent_value: typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id || null });
+      if (order?.payment_status === "paid") await invokeInternalEmail("send-order-email", { action: "confirmation", orderId: object.metadata.order_id });
     }
   } else if (event.type === "checkout.session.expired") {
     const orderId = object.metadata?.order_id;

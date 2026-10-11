@@ -17,6 +17,44 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 const text = (value: unknown, max = 500) => String(value ?? "").trim().slice(0, max);
 const network = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
 
+async function invokeInternalEmail(functionName: "send-order-email" | "send-store-email", payload: Record<string, unknown>) {
+  try {
+    const response = await network(`${projectUrl}/functions/v1/${functionName}`, {
+      method: "POST",
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.error || Number(result.sent) < 1) throw new Error(text(result.error || result.message || "Email service did not confirm delivery.", 240));
+    return { status: "sent" as const };
+  } catch (error) {
+    console.error(`${functionName} delivery failed.`, error);
+    return { status: "failed" as const };
+  }
+}
+
+async function sendOrderConfirmation(orderId: string) {
+  return await invokeInternalEmail("send-order-email", { action: "confirmation", orderId });
+}
+
+async function sendRefundReceipt(orderId: string, refund: Record<string, any>) {
+  try {
+    const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=total,refunded_amount`);
+    const order = orders[0];
+    if (!order) return { status: "failed" as const };
+    return await invokeInternalEmail("send-store-email", {
+      action: "refund_receipt",
+      orderId,
+      refundId: text(refund.id, 80),
+      refundAmount: Number(refund.amount || 0) / 100,
+      remaining: Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0)),
+    });
+  } catch (error) {
+    console.error("Refund receipt lookup failed.", error);
+    return { status: "failed" as const };
+  }
+}
+
 async function database(path: string, method = "GET", body?: unknown) {
   const response = await network(`${projectUrl}/rest/v1/${path}`, {
     method,
@@ -343,7 +381,9 @@ async function checkoutStatus(body: Record<string, any>) {
   const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null;
   try {
     const order = await rpc("complete_stripe_order", { order_id_value: orderId, session_id_value: sessionId, payment_intent_value: paymentIntentId });
-    return json({ status: order?.payment_status === "paid" ? "paid" : "processing", order_id: orderId });
+    if (order?.payment_status !== "paid") return json({ status: "processing", order_id: orderId });
+    const receipt = await sendOrderConfirmation(orderId);
+    return json({ status: "paid", order_id: orderId, receipt_email_status: receipt.status });
   } catch (error) {
     console.error("Verified Stripe payment could not finalize the order.", error);
     return json({ status: "processing", order_id: orderId });
@@ -418,10 +458,11 @@ async function reconcileStripeRefund(order: Record<string, any>, refund: Record<
     status_value: stripeStatus,
     reason_value: stripeStatus === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${stripeStatus}.`, 240),
   });
+  const receipt = stripeStatus === "succeeded" ? await sendRefundReceipt(order.id, refund) : null;
   if (throwOnFailure && ["failed", "canceled"].includes(stripeStatus)) {
     throw new Error(text(finalized?.error || `Stripe refund ${stripeStatus}.`, 240));
   }
-  return { ...attached, ...finalized, stripe_refund_id: refund.id, refund_amount: Number(refund.amount || 0) / 100 };
+  return { ...attached, ...finalized, stripe_refund_id: refund.id, refund_amount: Number(refund.amount || 0) / 100, ...(receipt ? { receipt_email_status: receipt.status } : {}) };
 }
 
 async function findExactStripeRefund(order: Record<string, any>, row: Record<string, any>) {
