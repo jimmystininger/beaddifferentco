@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const stripeSecret = Deno.env.get("STRIPE_SECRET_KEY") || "";
 const stripeWebhookSecret = (Deno.env.get("STRIPE_WEBHOOK_SECRET") || "").trim();
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +15,35 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 });
 const text = (value: unknown, max = 500) => String(value ?? "").trim().slice(0, max);
 const network = (url: string, init: RequestInit = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(20000) });
+
+async function invokeInternalEmail(functionName: "send-order-email" | "send-store-email", payload: Record<string, unknown>) {
+  try {
+    const response = await network(`${projectUrl}/functions/v1/${functionName}`, {
+      method: "POST",
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.error || Number(result.sent) < 1) throw new Error(text(result.error || result.message || "Email service did not confirm delivery.", 240));
+    return;
+  } catch (error) {
+    console.error(`${functionName} delivery failed.`, error);
+    throw error;
+  }
+}
+
+async function sendRefundReceipt(orderId: string, refund: Record<string, any>) {
+  const orders = await database(`orders?id=eq.${encodeURIComponent(orderId)}&select=total,refunded_amount`);
+  const order = orders[0];
+  if (!order) throw new Error("Refunded order was not available for its receipt email.");
+  await invokeInternalEmail("send-store-email", {
+    action: "refund_receipt",
+    orderId,
+    refundId: text(refund.id, 80),
+    refundAmount: Number(refund.amount || 0) / 100,
+    remaining: Math.max(0, Number(order.total || 0) - Number(order.refunded_amount || 0)),
+  });
+}
 
 async function database(path: string, method = "GET", body?: unknown) {
   const response = await network(`${projectUrl}/rest/v1/${path}`, {
@@ -30,6 +60,27 @@ async function database(path: string, method = "GET", body?: unknown) {
 async function rpc(name: string, args: Record<string, unknown>) {
   const rows = await database(`rpc/${name}`, "POST", args);
   return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function stripeRefunds(paymentIntent: string) {
+  if (!stripeSecret) throw new Error("Stripe refund lookup is not configured.");
+  const refunds: Record<string, any>[] = [];
+  let startingAfter = "";
+  do {
+    const query = new URLSearchParams({ payment_intent: paymentIntent, limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const response = await network(`https://api.stripe.com/v1/refunds?${query}`, {
+      headers: { Authorization: `Basic ${btoa(`${stripeSecret}:`)}` },
+    });
+    if (!response.ok) throw new Error(`Stripe refund lookup failed (${response.status}).`);
+    const page = await response.json();
+    if (!Array.isArray(page.data)) throw new Error("Stripe returned an invalid refund list.");
+    refunds.push(...page.data);
+    if (!page.has_more) break;
+    startingAfter = text(page.data.at(-1)?.id, 255);
+    if (!startingAfter) throw new Error("Stripe returned an incomplete refund page.");
+  } while (startingAfter);
+  return refunds;
 }
 
 function hex(bytes: ArrayBuffer) {
@@ -89,6 +140,7 @@ async function finalizeRefund(refund: Record<string, any>, status: string, fallb
     status_value: status,
     reason_value: status === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${status}.`, 240),
   });
+  if (status === "succeeded") await sendRefundReceipt(orderId, refund);
 }
 
 async function handleWebhook(request: Request) {
@@ -103,7 +155,8 @@ async function handleWebhook(request: Request) {
   const object = event.data?.object || {};
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     if (object.payment_status === "paid" && object.metadata?.order_id) {
-      await rpc("complete_stripe_order", { order_id_value: object.metadata.order_id, session_id_value: object.id, payment_intent_value: typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id || null });
+      const order = await rpc("complete_stripe_order", { order_id_value: object.metadata.order_id, session_id_value: object.id, payment_intent_value: typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id || null });
+      if (order?.payment_status === "paid") await invokeInternalEmail("send-order-email", { action: "confirmation", orderId: object.metadata.order_id });
     }
   } else if (event.type === "checkout.session.expired") {
     const orderId = object.metadata?.order_id;
@@ -119,9 +172,11 @@ async function handleWebhook(request: Request) {
     if (paymentIntent) {
       const orders = await database(`orders?stripe_payment_intent_id=eq.${encodeURIComponent(paymentIntent)}&select=id`);
       const orderId = orders[0]?.id;
-      const refunds = Array.isArray(object.refunds?.data) ? object.refunds.data : [];
+      const refunds = await stripeRefunds(paymentIntent);
+      if (!refunds.length && Number(object.amount_refunded) > 0) throw new Error("Stripe reported a refund without a refund record.");
       for (const refund of refunds) {
-        if (refund.status === "succeeded") await finalizeRefund({ ...refund, payment_intent: paymentIntent }, "succeeded", orderId || null);
+        if (refund.payment_intent !== paymentIntent) throw new Error("Stripe refund payment does not match the event.");
+        if (refund.status === "succeeded") await finalizeRefund(refund, "succeeded", orderId || null);
       }
     }
   }

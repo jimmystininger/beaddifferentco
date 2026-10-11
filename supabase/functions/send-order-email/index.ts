@@ -72,8 +72,8 @@ async function sendResendEmail(to: string, subject: string, text: string, html: 
   throw new Error(`Resend rejected the message${detail ? `: ${detail}` : "."}`);
 }
 
-async function sendOrderConfirmation(orderId: string, user: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null, guestOrderToken = "") {
-  const ownershipFilter = user ? `user_id=eq.${encodeURIComponent(user.id)}` : `user_id=is.null&guest_order_token=eq.${encodeURIComponent(guestOrderToken)}`;
+async function sendOrderConfirmation(orderId: string, user: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null, guestOrderToken = "", internal = false) {
+  const ownershipFilter = internal ? "payment_status=eq.paid" : user ? `user_id=eq.${encodeURIComponent(user.id)}` : `user_id=is.null&guest_order_token=eq.${encodeURIComponent(guestOrderToken)}`;
   const response = await supabaseRequest(`orders?id=eq.${encodeURIComponent(orderId)}&${ownershipFilter}&select=id,order_number,status,total,subtotal,discount,tax_amount,tax_rate,tax_state,tax_jurisdiction,promo_code,shipping_amount,shipping_cost,shipping_name,shipping_address,customer_email,carrier,tracking_number,created_at,order_items(product_name,sku,quantity,unit_price,selected_options)`);
   if (!response.ok) throw new Error("Unable to load the order.");
   const orders = await response.json();
@@ -150,11 +150,12 @@ Deno.serve(async (request) => {
   if (textValue(payload.action, 40) !== "confirmation") return json({ error: "Unsupported email action." }, 400);
   const orderId = textValue(payload.orderId, 80);
   if (!orderId) return json({ error: "Order id is required." }, 400);
-  const user = await currentUser(request);
+  const internal = request.headers.get("Authorization") === `Bearer ${serviceRoleKey}`;
+  const user = internal ? null : await currentUser(request);
   const guestOrderToken = textValue(payload.guestOrderToken, 100);
-  if (!user && !guestOrderToken) return json({ error: "Authentication or guest order token is required." }, 401);
+  if (!user && !guestOrderToken && !internal) return json({ error: "Authentication or guest order token is required." }, 401);
   try {
-    return json(await sendOrderConfirmation(orderId, user, guestOrderToken));
+    return json(await sendOrderConfirmation(orderId, user, guestOrderToken, internal));
   } catch (error) {
     return json({ error: textValue(error instanceof Error ? error.message : error, 500) }, 502);
   }
