@@ -579,7 +579,19 @@ async function findExistingProductByEtsySkus(skus: string[]) {
     const existingSkus = skusByProduct.get(String(product.id)) || new Set<string>();
     return [...expected].every((sku) => existingSkus.has(sku));
   });
-  if (candidates.length > 1) return { product: null, ambiguous: true };
+  const skuOwners = new Map<string, Set<string>>();
+  products.forEach((product: Record<string, any>) => {
+    const productId = String(product.id);
+    const existingSkus = skusByProduct.get(productId) || new Set<string>();
+    expected.forEach((sku) => {
+      if (!existingSkus.has(sku)) return;
+      const owners = skuOwners.get(sku) || new Set<string>();
+      owners.add(productId);
+      skuOwners.set(sku, owners);
+    });
+  });
+  const duplicateSkuOwnership = [...skuOwners.values()].some((owners) => owners.size > 1);
+  if (candidates.length > 1 || duplicateSkuOwnership || (!candidates.length && skuOwners.size > 0)) return { product: null, ambiguous: true };
   if (!candidates.length) return { product: null, ambiguous: false };
   return { product: candidates[0], ambiguous: false };
 }
@@ -808,7 +820,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     }
     if (!product) {
       const skuMatch = await findExistingProductByEtsySkus(variantSkus.length ? variantSkus : [canonicalEtsySku]);
-      if (skuMatch.ambiguous) throw new Error(`Etsy listing ${listingId} matches multiple existing product pages by SKU; no duplicate page was created.`);
+      if (skuMatch.ambiguous) throw new Error(`Etsy listing ${listingId} shares SKUs with existing product pages, but the complete SKU family does not identify one unambiguous canonical page; no duplicate page was created.`);
       if (skuMatch.product) {
         product = skuMatch.product;
         productMatchedByExistingSkuSet = true;
