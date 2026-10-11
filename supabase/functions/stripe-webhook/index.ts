@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const stripeWebhookSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
+const stripeWebhookSecret = (Deno.env.get("STRIPE_WEBHOOK_SECRET") || "").trim();
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "content-type, stripe-signature",
@@ -43,7 +43,7 @@ function safeEqual(first: string, second: string) {
   return result === 0;
 }
 
-async function verifyWebhook(body: string, signature: string) {
+async function verifyWebhook(body: Uint8Array, signature: string) {
   const parts = signature.split(",").reduce<Record<string, string[]>>((result, part) => {
     const [key, value] = part.split("=", 2);
     if (key && value) (result[key] ||= []).push(value);
@@ -52,7 +52,11 @@ async function verifyWebhook(body: string, signature: string) {
   const timestamp = Number(parts.t?.[0] || 0);
   if (!timestamp || Math.abs(Date.now() / 1000 - timestamp) > 300 || !stripeWebhookSecret) return false;
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(stripeWebhookSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const expected = hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${body}`)));
+  const timestampPrefix = new TextEncoder().encode(`${timestamp}.`);
+  const signedPayload = new Uint8Array(timestampPrefix.length + body.length);
+  signedPayload.set(timestampPrefix);
+  signedPayload.set(body, timestampPrefix.length);
+  const expected = hex(await crypto.subtle.sign("HMAC", key, signedPayload));
   return (parts.v1 || []).some((value) => safeEqual(value, expected));
 }
 
@@ -88,11 +92,11 @@ async function finalizeRefund(refund: Record<string, any>, status: string, fallb
 }
 
 async function handleWebhook(request: Request) {
-  const body = await request.text();
+  const body = new Uint8Array(await request.arrayBuffer());
   if (!await verifyWebhook(body, request.headers.get("stripe-signature") || "")) return json({ error: "Invalid Stripe signature." }, 400);
   let event: Record<string, any>;
   try {
-    event = JSON.parse(body);
+    event = JSON.parse(new TextDecoder().decode(body));
   } catch {
     return json({ error: "Invalid Stripe event payload." }, 400);
   }
