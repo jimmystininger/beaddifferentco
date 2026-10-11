@@ -2109,17 +2109,19 @@ async function renderEtsyConnection(){
   const invalidateEtsyHistory=()=>{etsyBatchRowsPromise=null;etsyUnmatchedReviewsPromise=null;};
   const reviewedIds=(metadata)=>new Set(Array.isArray(metadata?.reviewed_listing_ids)?metadata.reviewed_listing_ids.map((id)=>String(id)):[]);
   const pageIsReviewed=(batch,page)=>reviewedIds(batch.metadata).has(String(page?.listing_id||''));
-  const pendingListingPages=(batch)=>{const pages=Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages:[];return pages.filter((page)=>!pageIsReviewed(batch,page));};
+  const listingReviewPages=(batch)=>{const created=Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages:[];const existing=Array.isArray(batch.metadata?.existing_pages)?batch.metadata.existing_pages:[];const seen=new Set();return [...created,...existing].filter((page)=>{const id=String(page?.listing_id||page?.product_id||'');if(!id)return true;if(seen.has(id))return false;seen.add(id);return true;});};
+  const pendingListingPages=(batch)=>listingReviewPages(batch).filter((page)=>!pageIsReviewed(batch,page));
   root.querySelector('[data-etsy-callback]').textContent='https://zejcuqhihbfpuwsjvmhc.supabase.co/functions/v1/etsy-connect/callback';
-  let activeListingRunId='',activeListingRunAt=0;
+  const listingRunIdKey='etsy-listing-run-id-v3';
+  let activeListingRunId=sessionStorage.getItem(listingRunIdKey)||'',activeListingRunAt=0;
   const listingCursorKey='etsy-listing-cursor-v2';
   const call=async(action,extra={})=>{
     if(action==='import_listings'){
       const now=Date.now();
-      if(!activeListingRunId||now-activeListingRunAt>180000)activeListingRunId=crypto.randomUUID?.()||String(now)+'-'+Math.random().toString(36).slice(2);
+      const savedOffset=Number(sessionStorage.getItem(listingCursorKey)||0);
+      if(!activeListingRunId){activeListingRunId=crypto.randomUUID?.()||String(now)+'-'+Math.random().toString(36).slice(2);sessionStorage.setItem(listingRunIdKey,activeListingRunId);}
       activeListingRunAt=now;
       extra={...extra,run_id:activeListingRunId};
-      const savedOffset=Number(sessionStorage.getItem(listingCursorKey)||0);
       if(savedOffset>0&&!Number(extra.offset))extra.offset=savedOffset;
     }
     if(!client)throw new Error('Please sign in to your administrator account.');
@@ -2133,7 +2135,7 @@ async function renderEtsyConnection(){
     const maxAttempts=action==='import_listings'?1:3;
     for(let attempt=0;attempt<maxAttempts;attempt+=1){
       const {data,error}=await client.functions.invoke('etsy-connect',{body:{action,...extra},headers:{Authorization:`Bearer ${accessToken}`}});
-      if(!error){if(data?.error)throw new Error(data.error);if(action==='import_listings'){const nextOffset=Number(data?.next_offset||0);if(data?.continue_available&&nextOffset>0)sessionStorage.setItem(listingCursorKey,String(nextOffset));else sessionStorage.removeItem(listingCursorKey);}return data;}
+      if(!error){if(data?.error)throw new Error(data.error);if(action==='import_listings'){const nextOffset=Number(data?.next_offset||0);if(data?.continue_available&&nextOffset>0)sessionStorage.setItem(listingCursorKey,String(nextOffset));else sessionStorage.removeItem(listingCursorKey);if(!data?.continue_available){sessionStorage.removeItem(listingRunIdKey);activeListingRunId='';}}return data;}
       const statusCode=Number(error.context?.status||0);
       let detail,raw='';
       try{const context=error.context;const response=context&&typeof context.clone==='function'?context.clone():context;raw=await response?.text()||'';try{detail=JSON.parse(raw);}catch(parseError){}}catch(parseError){}
@@ -2306,27 +2308,82 @@ async function renderEtsyConnection(){
       group.metadata.reviewed_listing_ids.push(...(Array.isArray(metadata.reviewed_listing_ids)?metadata.reviewed_listing_ids:[]));
       group.row_count+=Number(batch.row_count||0);
       group.applied_count+=Number(batch.applied_count||0);
-      group.matched_count=group.metadata.created_pages.length;
+      group.matched_count=listingReviewPages(group).length;
       if(batch.status==='failed')group.status='failed';
       group.metadata.warning=metadata.warning||null;
       if(metadata.error)group.metadata.error=metadata.error;
       if(new Date(batch.created_at)>new Date(group.created_at))group.created_at=batch.created_at;
     });
-    listingGroups.forEach((group)=>{group.metadata.reviewed_listing_ids=[...new Set(group.metadata.reviewed_listing_ids.map((id)=>String(id)))];const allSourcesReviewed=group.source_batches.length>0&&group.source_batches.every((source)=>Boolean(source.metadata?.reviewed)||source.status==='completed');group.metadata.reviewed=allSourcesReviewed;if(allSourcesReviewed)group.status='completed';else if(group.metadata.created_pages.length)group.status=group.metadata.reviewed_listing_ids.length>=group.metadata.created_pages.length?'completed':'staged';});
-    const rows=groupedRows.filter((batch)=>historyView==='completed'?Boolean(batch.metadata?.reviewed||batch.status==='completed')&&!((batch.metadata?.created_pages||[]).length&&pendingListingPages(batch).length):!Boolean(batch.metadata?.reviewed)&&batch.status!=='completed').sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    listingGroups.forEach((group)=>{
+      const uniquePages=(pages)=>[...new Map(pages.map((page)=>[String(page?.listing_id||page?.product_id||JSON.stringify(page)),page])).values()];
+      group.metadata.created_pages=uniquePages(group.metadata.created_pages);
+      const createdIds=new Set(group.metadata.created_pages.map((page)=>String(page?.listing_id||'')));
+      group.metadata.existing_pages=uniquePages(group.metadata.existing_pages).filter((page)=>!createdIds.has(String(page?.listing_id||'')));
+      group.metadata.failed_pages=uniquePages(group.metadata.failed_pages);
+      group.metadata.reviewed_listing_ids=[...new Set(group.metadata.reviewed_listing_ids.map((id)=>String(id)))];
+      const reviewPages=listingReviewPages(group);
+      group.matched_count=reviewPages.length;
+      const allSourcesReviewed=group.source_batches.length>0&&group.source_batches.every((source)=>Boolean(source.metadata?.reviewed)||source.status==='completed');
+      const allPagesReviewed=reviewPages.length?group.metadata.reviewed_listing_ids.length>=reviewPages.length:allSourcesReviewed;
+      group.metadata.reviewed=allPagesReviewed;
+      if(allPagesReviewed)group.status='completed';
+      else if(reviewPages.length)group.status='staged';
+    });
+    const rows=groupedRows.filter((batch)=>historyView==='completed'?Boolean(batch.metadata?.reviewed||batch.status==='completed')&&!(listingReviewPages(batch).length&&pendingListingPages(batch).length):!Boolean(batch.metadata?.reviewed)&&batch.status!=='completed').sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
     const pageCount=Math.max(1,Math.ceil(rows.length/batchPageSize));
     batchPage=Math.min(batchPage,pageCount);
     const visible=rows.slice((batchPage-1)*batchPageSize,batchPage*batchPageSize);
     const actionLabel=(batch)=>{const metadata=batch.metadata||{};if(metadata.action==='fee_resync')return 'Fee resync';if(metadata.action==='orders'||batch.import_type==='orders'||batch.kind==='orders')return 'Order import';if(metadata.action==='listings'||batch.import_type==='listings'||batch.kind==='listings')return 'Etsy listings';if(metadata.action==='reviews'||batch.import_type==='reviews'||batch.kind==='reviews')return 'Reviews';if(batch.import_type==='sales_history'||batch.kind==='sales_history')return 'Sales history';return batch.import_type||batch.kind||'Etsy action';};
-    groupedRows.forEach((batch)=>{if(actionLabel(batch)==='Etsy listings'&&Array.isArray(batch.metadata?.created_pages)){batch.applied_count=batch.metadata.created_pages.length;batch.matched_count=batch.metadata.created_pages.length;}});
+    groupedRows.forEach((batch)=>{if(actionLabel(batch)==='Etsy listings'&&Array.isArray(batch.metadata?.created_pages)){batch.applied_count=batch.metadata.created_pages.length;batch.matched_count=listingReviewPages(batch).length;}});
     const displayCount=(value)=>Number(value||0).toLocaleString();
     const feeSyncSummary=(batch)=>{const metadata=batch.metadata||{};return {receipts:Number(batch.row_count||0),lines:Number(batch.applied_count||metadata.fee_lines||0),window:String(metadata.window||'last 45 days')};};
     const followUp=(batch)=>{const metadata=batch.metadata||{};if(batch.status==='failed')return '<span class="admin-field-note">Run again</span>';if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return '<span class="admin-field-note">Checked '+displayCount(summary.receipts)+' Etsy orders and updated fees on '+displayCount(summary.lines)+' order lines ('+adminSafe(summary.window)+'). Compare that order count with Etsy before marking reviewed.</span>';}if(actionLabel(batch)==='Etsy listings'){const pages=Array.isArray(metadata.created_pages)?metadata.created_pages:[];const failed=Array.isArray(metadata.failed_pages)?metadata.failed_pages:[];const warning=metadata.warning?'<span class="admin-field-note">'+adminSafe(metadata.warning)+'</span>':'';const failedMarkup=failed.length?'<div class="admin-etsy-failed-links"><strong>Needs retry</strong><ul>'+failed.map(page=>'<li>'+adminSafe(page.title||page.listing_id||'Listing')+': '+adminSafe(page.error||'Import failed.')+'</li>').join('')+'</ul></div>':'';if(pages.length){const pageLinks=(page)=>{const links=page.links||{};const productId=String(page.product_id||'').trim();const oneSku=String(page.one_pk_sku||'').trim();const packSku=String(page.etsy_sku||'').trim()&&String(page.etsy_sku||'').trim()!==oneSku?String(page.etsy_sku||'').trim():'';const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):links.product||'';const childHref=oneSku?'admin.html?inventory=sku&sku='+encodeURIComponent(oneSku)+'&direct=inventory':links.one_pk_sku||'';const familyRows=Array.isArray(page.family_skus)&&page.family_skus.length?page.family_skus:[...((oneSku?[{one_pk_sku:oneSku,pack_size:1}]:[])),...((packSku?[{etsy_sku:packSku,one_pk_sku:oneSku,pack_size:Math.max(1,Number(String(packSku).match(/-(\d+)PK$/i)?.[1])||1)}]:[]))];const manualFamily=familyRows.some((row)=>row.manual_recipe_required===true);const family=familyRows.map((row)=>{const sku=String(row.etsy_sku||row.one_pk_sku||'').trim();const one=String(row.one_pk_sku||'').trim();const size=Math.max(1,Number(row.pack_size)||1);return '<span><strong>'+adminSafe(size>1?size+'PK':'1PK')+':</strong> '+adminSafe(sku||one)+'</span>';}).join(' · ');const recipes=familyRows.filter((row)=>Number(row.pack_size)>1).map((row)=>{const parent=String(row.etsy_sku||'').trim();const components=Array.isArray(row.recipe_components)?row.recipe_components:[];if(row.manual_recipe_required)return '<li><strong>'+adminSafe(parent)+'</strong><span>Manual recipe required</span></li>';const parts=components.length?components.map((component)=>Number(component.quantity||1)+' × '+adminSafe(component.sku||'child SKU')).join(' · '):Number(row.pack_size)+' × '+adminSafe(row.one_pk_sku||oneSku);return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span></li>';}).join('');const recipeMarkup=recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'';const childLink=childHref?'<a data-etsy-child-sku href="'+adminSafe(childHref)+'" target="_blank" rel="noopener">Edit child SKU record</a>':'';return (family?'<div class="admin-etsy-sku-family"><strong>SKU family</strong> '+family+'</div>':'')+recipeMarkup+childLink+'<a href="'+adminSafe(productHref)+'" target="_blank" rel="noopener">Edit product page</a>' +(manualFamily?'<small class="admin-field-note">Mixed/bundle listing: choose the child SKUs and quantities before saving.</small>':'');};return pages.map(page=>'<div class="admin-etsy-created-links"><strong>'+adminSafe(page.product_name||page.one_pk_sku||'Imported listing')+'</strong><br>'+pageLinks(page)+'</div>').join('<hr>')+failedMarkup+(warning?'<br>'+warning:'');}if(failed.length)return failedMarkup+(warning?'<br>'+warning:'');if(Number(batch.matched_count||0)>0)return warning+(warning?'<br>':'')+'<span class="admin-field-note">Review new listings</span>';if(Number(batch.row_count||0)>0)return warning+(warning?'<br>':'')+'<span class="admin-field-note">No new listings found</span>';}if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0)return '<button type="button" data-etsy-reapply-sales="'+adminSafe(batch.id)+'">Reapply stored Etsy sales</button><br><span class="admin-field-note">Matches newly-created SKUs without contacting Etsy again.</span>';if(actionLabel(batch)==='Reviews')return '<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':'');return '<span class="admin-field-note">No action needed</span>';};
-    const listingPageCount=(batch)=>Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages.length:Number(batch.applied_count||0);
-    const resultCell=(batch)=>{if(actionLabel(batch)==='Etsy listings')return listingPageCount(batch)+' listing'+(listingPageCount(batch)===1?'':'s')+' staged';if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.receipts)+' Etsy orders checked';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return displayCount(metadata.receipts||batch.row_count)+' Etsy orders · '+displayCount(metadata.sale_lines||batch.applied_count)+' sale lines';}return displayCount(batch.row_count)+' rows';};
-    const attentionCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const pages=listingPageCount(batch);const failed=Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0;return failed?failed+(failed===1?' retry':' retries'):pages?pages+' to review':'None';}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.lines)+' fee lines updated';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return Number(metadata.unmatched||0)?displayCount(metadata.unmatched)+' unmatched sale line'+(Number(metadata.unmatched)===1?'':'s'):Number(metadata.inventory_updated||0)+' inventory updates';}return Number(batch.matched_count||0)?displayCount(batch.matched_count)+' matched':'None';};
+    const listingCounts=(batch)=>({created:Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages.length:0,existing:Array.isArray(batch.metadata?.existing_pages)?batch.metadata.existing_pages.length:0,failed:Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0,checked:listingReviewPages(batch).length});
+    const resultCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const counts=listingCounts(batch);return displayCount(counts.checked)+' listings processed · '+displayCount(counts.created)+' new pages · '+displayCount(counts.existing)+' existing matches';}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.receipts)+' Etsy orders checked';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return displayCount(metadata.receipts||batch.row_count)+' Etsy orders · '+displayCount(metadata.sale_lines||batch.applied_count)+' sale lines';}return displayCount(batch.row_count)+' rows';};
+    const attentionCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const pending=pendingListingPages(batch).length;const failed=Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0;return (pending?displayCount(pending)+' matched listings to review':'None')+(failed?' · '+displayCount(failed)+' need retry':'');}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.lines)+' fee lines updated';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return Number(metadata.unmatched||0)?displayCount(metadata.unmatched)+' unmatched sale line'+(Number(metadata.unmatched)===1?'':'s'):Number(metadata.inventory_updated||0)+' inventory updates';}return Number(batch.matched_count||0)?displayCount(batch.matched_count)+' matched':'None';};
     const historyTabs='<div class="admin-etsy-history-tabs"><button type="button" data-etsy-history-view="active" '+(historyView==='active'?'aria-current="page"':'')+'>Needs review</button><button type="button" data-etsy-history-view="completed" '+(historyView==='completed'?'aria-current="page"':'')+'>Completed archive</button></div>';
     target.innerHTML=historyTabs+'<table class="admin-table"><thead><tr><th>Action</th><th>Status</th><th>Result</th><th>Needs attention</th><th>Ran</th><th>Follow-up</th></tr></thead><tbody>'+(visible.map((batch)=>'<tr><td>'+adminSafe(actionLabel(batch))+'</td><td>'+adminSafe(historyView==='completed'?'completed':batch.status)+'</td><td>'+adminSafe(resultCell(batch))+'</td><td>'+adminSafe(attentionCell(batch))+'</td><td>'+adminSafe(batch.created_at?new Date(batch.created_at).toLocaleString():'')+'</td><td>'+followUp(batch)+(historyView==='completed'?'<button type="button" data-etsy-restore-reviewed="'+adminSafe(batch.id)+'">Restore to needs review</button>':'<button type="button" data-etsy-mark-reviewed="'+adminSafe(batch.id)+'">Mark reviewed</button>')+'</td></tr>').join('')||'<tr><td colspan="6">'+(historyView==='completed'?'No completed Etsy actions yet.':'Nothing needs review.')+'</td></tr>')+'</tbody></table><div class="admin-pagination"><button type="button" data-etsy-batch-page="prev" '+(batchPage===1?'disabled':'')+'>Previous</button><span>Page '+batchPage+' of '+pageCount+' · '+rows.length+' actions</span><button type="button" data-etsy-batch-page="next" '+(batchPage===pageCount?'disabled':'')+'>Next</button></div>';
+    const historyTableRows=[...target.querySelectorAll('tbody tr')];
+    visible.forEach((batch,index)=>{
+      if(actionLabel(batch)!=='Etsy listings')return;
+      const existingPages=Array.isArray(batch.metadata?.existing_pages)?batch.metadata.existing_pages:[];
+      if(!existingPages.length)return;
+      const cell=historyTableRows[index]?.lastElementChild;
+      if(!cell)return;
+      if(!(Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages.length:0)){const note=cell.querySelector('.admin-field-note');if(note)note.textContent='No new pages were created. Inspect the existing product matches below.';}
+      const details=document.createElement('details');
+      details.className='admin-etsy-existing-page-review';
+      const summary=document.createElement('summary');
+      summary.textContent='Inspect '+existingPages.length+' matched existing product page'+(existingPages.length===1?'':'s');
+      details.append(summary);
+      const list=document.createElement('ul');
+      existingPages.forEach((page)=>{
+        const item=document.createElement('li');
+        const name=document.createElement('strong');
+        name.textContent=String(page.product_name||page.etsy_title||page.etsy_sku||'Matched Etsy listing');
+        item.append(name);
+        const productId=String(page.product_id||'').trim();
+        const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):String(page.links?.product||page.url||'');
+        if(productHref){const link=document.createElement('a');link.href=productHref;link.target='_blank';link.rel='noopener';link.textContent='Open matched product page';item.append(document.createTextNode(' · '),link);}
+        const variants=Array.isArray(page.family_skus)?page.family_skus:[];
+        if(variants.length){
+          const skuList=document.createElement('ul');
+          variants.forEach((variant)=>{
+            const oneSku=String(variant.one_pk_sku||'').trim();
+            const etsySku=String(variant.etsy_sku||'').trim();
+            const status=(value)=>typeof value==='boolean'?(value?'was in inventory before this scan':'was added during this scan'):'not tracked on this earlier import';
+            const skuItems=[];
+            if(oneSku)skuItems.push('1PK '+oneSku+' — '+status(variant.one_pk_sku_existed_before_run));
+            if(etsySku&&etsySku!==oneSku)skuItems.push((Number(variant.pack_size)||1)+'PK '+etsySku+' — '+status(variant.pack_sku_existed_before_run));
+            skuItems.forEach((label)=>{const skuItem=document.createElement('li');skuItem.textContent=label;skuList.append(skuItem);});
+          });
+          if(skuList.childElementCount)item.append(skuList);
+        }
+        list.append(item);
+      });
+      details.append(list);
+      cell.append(details);
+    });
     target.querySelectorAll('.admin-etsy-recipe-summary li').forEach((item)=>{
       if(item.querySelector('[data-etsy-convert-child]'))return;
       const parentSku=String(item.querySelector('strong')?.textContent||'').trim();
@@ -2354,7 +2411,7 @@ async function renderEtsyConnection(){
       if(!page)return;
       const pageNote=document.createElement('small');
       pageNote.className='admin-field-note admin-etsy-page-status';
-      pageNote.textContent=page.product_page_existed||page.created===false?'Existing product page updated with Etsy data.':'Product page created from Etsy data.';
+      pageNote.textContent=page.product_page_existed||page.created===false?'Matched an existing product page; no new page was created.':'A new product page was created during this Etsy scan.';
       block.append(pageNote);
       const familyRows=Array.isArray(page.family_skus)&&page.family_skus.length?page.family_skus:[...((page.one_pk_sku?[{one_pk_sku:page.one_pk_sku,pack_size:1}]:[])),...((page.etsy_sku&&page.etsy_sku!==page.one_pk_sku?[{etsy_sku:page.etsy_sku,one_pk_sku:page.one_pk_sku,pack_size:Math.max(1,Number(String(page.etsy_sku).match(/-(\d+)PK$/i)?.[1])||1)}]:[]))];
       block.querySelector('.admin-etsy-sku-family')?.querySelectorAll('span').forEach((entry)=>{
@@ -2362,7 +2419,8 @@ async function renderEtsyConnection(){
         if(!row||entry.querySelector('.admin-etsy-sku-status'))return;
         const status=document.createElement('small');
         status.className='admin-etsy-sku-status';
-        status.textContent=row.sku_existed?'existing canonical SKU':'created by import';
+        if(typeof row.sku_existed_before_run!=='boolean')status.textContent='Inventory status was not recorded for this earlier scan';
+        else{const statuses=[];if(typeof row.one_pk_sku_existed_before_run==='boolean')statuses.push('1PK '+(row.one_pk_sku_existed_before_run?'already in inventory before this scan':'added during this scan'));if(typeof row.pack_sku_existed_before_run==='boolean'&&String(row.etsy_sku||'').trim()!==String(row.one_pk_sku||'').trim())statuses.push((Number(row.pack_size)||1)+'PK '+(row.pack_sku_existed_before_run?'already in inventory before this scan':'added during this scan'));status.textContent=statuses.join(' · ')||'No separate SKU status';}
         entry.append(' · ',status);
       });
       block.querySelectorAll('.admin-etsy-recipe-summary li').forEach((item)=>{
@@ -2417,7 +2475,7 @@ async function renderEtsyConnection(){
     await syncEtsyConversionStates();
     target.querySelectorAll('[data-etsy-batch-page]').forEach((button)=>button.onclick=()=>{batchPage=Math.max(1,Math.min(pageCount,batchPage+(button.dataset.etsyBatchPage==='next'?1:-1)));drawBatches();});
     target.querySelectorAll('[data-etsy-history-view]').forEach((button)=>button.onclick=()=>{historyView=button.dataset.etsyHistoryView;batchPage=1;void drawBatches();});
-    const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?(Array.isArray(metadata.created_pages)?metadata.created_pages.map((page)=>String(page.listing_id||'')).filter(Boolean):[]):[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id);if(update.error)throw update.error;}};
+    const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?[...new Set([...(Array.isArray(metadata.created_pages)?metadata.created_pages:[]),...(Array.isArray(metadata.existing_pages)?metadata.existing_pages:[])].map((page)=>String(page.listing_id||'')).filter(Boolean))]:[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id);if(update.error)throw update.error;}};
     target.querySelectorAll('[data-etsy-reapply-sales]').forEach((button)=>button.onclick=async()=>{button.disabled=true;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Reapplying stored Etsy sales…';try{const result=await client.rpc('reapply_all_etsy_unmatched_sales');if(result.error)throw result.error;const data=result.data||{};if(importStatus)importStatus.textContent='Reapplied '+Number(data.matched_lines||0)+' stored sale lines without contacting Etsy. '+Number(data.remaining_lines||0)+' remain unmatched.';invalidateEtsyHistory();await drawBatches();}catch(error){if(importStatus)importStatus.textContent='Stored Etsy sales were not reapplied: '+(error.message||'Unknown error.');button.disabled=false;}});
     target.querySelectorAll('[data-etsy-mark-reviewed]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await updateReviewState(rows.find((batch)=>String(batch.id)===String(button.dataset.etsyMarkReviewed)),true);invalidateEtsyHistory();await drawBatches();}catch(error){button.disabled=false;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Could not mark this action reviewed: '+(error.message||'Unknown error.');}});
     target.querySelectorAll('[data-etsy-restore-reviewed]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await updateReviewState(rows.find((batch)=>String(batch.id)===String(button.dataset.etsyRestoreReviewed)),false);invalidateEtsyHistory();await drawBatches();}catch(error){button.disabled=false;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Could not restore this action: '+(error.message||'Unknown error.');}});
