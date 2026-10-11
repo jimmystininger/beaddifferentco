@@ -756,27 +756,37 @@ body[data-page="Admin"] .promo-form label button{margin-top:8px}
 [data-global-filter-definition]{box-sizing:border-box!important;overflow:hidden}
 .global-filter-picker{display:flex;align-items:center;gap:10px;margin:0 0 12px;font-size:13px;font-weight:700}
 .global-filter-picker select{width:260px;height:34px;padding:5px 8px;border:1px solid #aaa;border-radius:6px;background:#fff;font:inherit}
+.admin-global-filter-create{max-width:700px;box-sizing:border-box;margin-bottom:18px}
+.admin-global-filter-create input{width:100%;min-width:0;box-sizing:border-box}
+.admin-global-filter-create .admin-field-help{margin:0;color:#666;font-size:12px;line-height:1.4}
 [data-global-filter-definition] h3{font-size:20px!important;line-height:1.2!important}
 [data-global-filter-definition] h4{font-size:15px!important}
 [data-global-filter-definition] input{height:34px!important;padding:6px 9px!important;font-size:14px!important;box-sizing:border-box}
 [data-global-filter-definition] label{font-size:13px!important;gap:4px!important}
 [data-global-filter-definition] label.admin-toggle{display:flex!important;align-items:center!important;gap:8px!important;white-space:nowrap}
-[data-global-filter-definition] [data-global-filter-save] label.admin-toggle{display:none!important}
 [data-global-filter-definition] label.admin-toggle input[type="checkbox"]{width:18px!important;height:18px!important;min-width:18px!important;padding:0!important;flex:0 0 18px}
+[data-global-filter-definition] input[readonly],.admin-global-filter-create input[readonly]{background:#f4f4f4!important;color:#555!important;cursor:not-allowed}
 [data-global-filter-definition] [data-global-filter-save]>label,[data-global-filter-definition] [data-global-filter-value]>input{min-width:0!important}
 [data-global-filter-definition] [data-global-filter-save] input{width:100%!important;min-width:0!important;box-sizing:border-box!important}
-[data-global-filter-definition] [data-global-filter-save]{display:grid;grid-template-columns:minmax(260px,1fr) 210px;gap:10px 14px;align-items:end}
+[data-global-filter-definition] [data-global-filter-save]{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,210px);gap:10px 14px;align-items:end}
 [data-global-filter-definition] [data-global-filter-save] h3{grid-column:1/-1;margin:0;font-size:1.35rem}
 [data-global-filter-definition] [data-global-filter-save] label{display:grid;gap:6px;font-weight:600}
 [data-global-filter-definition] [data-global-filter-save] label.admin-toggle{display:flex;align-items:center;gap:8px;grid-column:1/-1}
-[data-global-filter-definition] [data-global-filter-save] button{grid-column:1/-1!important;width:max-content!important;min-width:140px;padding:9px 18px!important;background:#111!important;color:#fff!important;border:0!important;border-radius:999px!important}
+[data-global-filter-definition] [data-global-filter-save] .admin-actions{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+[data-global-filter-definition] [data-global-filter-save] button{width:max-content!important;min-width:140px;padding:9px 18px!important;background:#111!important;color:#fff!important;border:0!important;border-radius:999px!important}
 [data-global-filter-definition] .admin-filter-value-editor{margin-top:10px;padding-top:10px;border-top:1px solid #eee}
 [data-global-filter-definition] .admin-filter-value-editor h4{margin:0 0 12px}
-[data-global-filter-definition] [data-global-filter-value]{display:grid;grid-template-columns:minmax(220px,1fr) minmax(170px,220px) auto auto;gap:8px;align-items:center;margin:5px 0}
+[data-global-filter-definition] .admin-filter-value-editor>p{margin:0 0 10px;color:#666;font-size:12px;line-height:1.4}
+[data-global-filter-definition] [data-global-filter-value]{display:grid;grid-template-columns:minmax(150px,1fr) minmax(130px,180px) max-content max-content max-content;gap:8px;align-items:end;margin:8px 0}
+[data-global-filter-definition] [data-global-filter-value] label:not(.admin-toggle){display:grid;gap:4px}
 [data-global-filter-definition] [data-global-filter-value] .admin-toggle{display:flex;align-items:center;gap:6px;white-space:nowrap}
+[data-global-filter-definition] [data-global-filter-value-add]{display:grid;grid-template-columns:minmax(150px,1fr) minmax(130px,180px) max-content;gap:8px;align-items:end;margin-top:12px}
 [data-global-filter-definition] [data-global-filter-value] button{width:max-content!important;padding:8px 16px!important;background:#fff!important;color:#111!important;border:1px solid #aaa!important;border-radius:999px!important}
+.admin-filter-definition button.admin-filter-delete{color:#8c2530!important;border-color:#b96e76!important}
+.admin-filter-definition button.admin-filter-delete:hover{background:#fff0f1!important;color:#721c24!important}
 button[data-global-filters]{display:block;width:max-content;margin:0 calc(100% - 820px) 22px auto!important;position:relative;z-index:1}
 @media(max-width:900px){button[data-global-filters]{margin-right:0!important}}
+@media(max-width:620px){[data-global-filter-definition] [data-global-filter-save]{grid-template-columns:1fr}[data-global-filter-definition] [data-global-filter-value],[data-global-filter-definition] [data-global-filter-value-add]{grid-template-columns:1fr}[data-global-filter-definition] [data-global-filter-value] .admin-toggle{min-height:0}}
 @media(max-width:700px){[data-global-filter-definition] [data-global-filter-save],[data-global-filter-definition] [data-global-filter-value]{grid-template-columns:1fr}[data-global-filter-definition] [data-global-filter-value] button{width:100%}}
  .admin-media-sortable{transition:transform .15s,box-shadow .15s}.admin-media-sortable.is-dragging{opacity:.45}.admin-media-sortable.is-drag-over{box-shadow:0 -3px 0 #e482a4}.admin-media-drag-handle{cursor:grab;font-size:20px;letter-spacing:-4px;color:#888;padding:0 8px;user-select:none}.admin-media-drag-handle:active{cursor:grabbing}
  .admin-sku-row{position:relative;margin:14px 0;padding:18px 18px 20px;border:1px solid #d8cfd2;border-left:5px solid #e482a4;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(40,20,28,.06)}.admin-sku-row:nth-child(even){background:#fff9fb}.admin-sku-row:focus-within{border-color:#a35d78;box-shadow:0 0 0 3px rgba(228,130,164,.2)}.admin-sku-row>.admin-sku-order{background:#f7e8ee;border-radius:8px;padding:8px;margin:-4px 0 12px}.admin-sku-row .admin-sku-internal,.admin-sku-row .admin-sku-filter-editor,.admin-sku-row .admin-recipe-component-summary{margin-top:14px;border-radius:9px}.admin-sku-row .admin-sku-internal summary{padding:10px 12px;background:#f4f0f1}.admin-sku-row .admin-sku-filter-editor{border:1px solid #ead4dc}.admin-sku-row .admin-sku-filter-editor>summary{padding:11px 14px;background:#fff0f5;font-weight:700}.admin-variant-editor>[data-variant-list]{display:grid;gap:4px}.admin-sku-row [data-remove-variant]{margin-top:16px;color:#8b2f4f}
