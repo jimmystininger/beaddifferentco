@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const stripeSecret = Deno.env.get("STRIPE_SECRET_KEY") || "";
 const stripeWebhookSecret = (Deno.env.get("STRIPE_WEBHOOK_SECRET") || "").trim();
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -59,6 +60,27 @@ async function database(path: string, method = "GET", body?: unknown) {
 async function rpc(name: string, args: Record<string, unknown>) {
   const rows = await database(`rpc/${name}`, "POST", args);
   return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function stripeRefunds(paymentIntent: string) {
+  if (!stripeSecret) throw new Error("Stripe refund lookup is not configured.");
+  const refunds: Record<string, any>[] = [];
+  let startingAfter = "";
+  do {
+    const query = new URLSearchParams({ payment_intent: paymentIntent, limit: "100" });
+    if (startingAfter) query.set("starting_after", startingAfter);
+    const response = await network(`https://api.stripe.com/v1/refunds?${query}`, {
+      headers: { Authorization: `Basic ${btoa(`${stripeSecret}:`)}` },
+    });
+    if (!response.ok) throw new Error(`Stripe refund lookup failed (${response.status}).`);
+    const page = await response.json();
+    if (!Array.isArray(page.data)) throw new Error("Stripe returned an invalid refund list.");
+    refunds.push(...page.data);
+    if (!page.has_more) break;
+    startingAfter = text(page.data.at(-1)?.id, 255);
+    if (!startingAfter) throw new Error("Stripe returned an incomplete refund page.");
+  } while (startingAfter);
+  return refunds;
 }
 
 function hex(bytes: ArrayBuffer) {
@@ -150,9 +172,11 @@ async function handleWebhook(request: Request) {
     if (paymentIntent) {
       const orders = await database(`orders?stripe_payment_intent_id=eq.${encodeURIComponent(paymentIntent)}&select=id`);
       const orderId = orders[0]?.id;
-      const refunds = Array.isArray(object.refunds?.data) ? object.refunds.data : [];
+      const refunds = await stripeRefunds(paymentIntent);
+      if (!refunds.length && Number(object.amount_refunded) > 0) throw new Error("Stripe reported a refund without a refund record.");
       for (const refund of refunds) {
-        if (refund.status === "succeeded") await finalizeRefund({ ...refund, payment_intent: paymentIntent }, "succeeded", orderId || null);
+        if (refund.payment_intent !== paymentIntent) throw new Error("Stripe refund payment does not match the event.");
+        if (refund.status === "succeeded") await finalizeRefund(refund, "succeeded", orderId || null);
       }
     }
   }
