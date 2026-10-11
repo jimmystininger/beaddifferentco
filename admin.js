@@ -2507,8 +2507,24 @@ const restoreAdminRequestedBehavior=()=>{
     if(storefrontIndex<0)return;
     if(!headers.some((header)=>header.textContent.trim().toLowerCase()==='feature')){const header=document.createElement('th');header.textContent='Feature';headers[storefrontIndex].insertAdjacentElement('afterend',header);table.querySelectorAll('tbody tr').forEach((row)=>{const storefront=row.children[storefrontIndex];if(!storefront)return;const cell=document.createElement('td');const id=storefront.querySelector('[data-toggle-visible]')?.dataset.toggleVisible;if(!id)return;const button=document.createElement('button');button.type='button';button.dataset.toggleFeatured=id;button.textContent='FEATURE';cell.append(button);storefront.insertAdjacentElement('afterend',cell);});}
     const featureButtons=[...table.querySelectorAll('[data-toggle-featured]')];
-    const ids=[...new Set(featureButtons.map((button)=>button.dataset.toggleFeatured).filter(Boolean))];
-    if(ids.length&&window.beadSupabase){void cloudAdmin().from('products').select('id,featured').in('id',ids).then((result)=>{if(result.error)return;const state=new Map((result.data||[]).map((row)=>[row.id,row.featured===true]));featureButtons.forEach((button)=>{const featured=state.get(button.dataset.toggleFeatured)===true;button.dataset.featured=String(featured);button.textContent=featured?'UNFEATURE':'FEATURE';});});}
+    const ids=[...new Set(featureButtons.map((button)=>button.dataset.toggleFeatured).filter(Boolean))].sort();
+    const hydrationKey=ids.join('|');
+    if(ids.length&&window.beadSupabase&&table.dataset.featureStateHydrationKey!==hydrationKey){
+     table.dataset.featureStateHydrationKey=hydrationKey;
+     table.dataset.featureStateHydration='loading';
+     void cloudAdmin().from('products').select('id,featured').in('id',ids).then((result)=>{
+      if(!table.isConnected||table.dataset.featureStateHydrationKey!==hydrationKey)return;
+      if(result.error){table.dataset.featureStateHydration='failed';return;}
+      const state=new Map((result.data||[]).map((row)=>[row.id,row.featured===true]));
+      table.querySelectorAll('[data-toggle-featured]').forEach((button)=>{
+       const featured=state.get(button.dataset.toggleFeatured)===true;
+       const label=featured?'UNFEATURE':'FEATURE';
+       button.dataset.featured=String(featured);
+       if(button.textContent!==label)button.textContent=label;
+      });
+      table.dataset.featureStateHydration='loaded';
+     }).catch(()=>{if(table.isConnected)table.dataset.featureStateHydration='failed';});
+    }
   });
 };
 const adminRestorationObserver=new MutationObserver(()=>restoreAdminRequestedBehavior());
@@ -2542,7 +2558,7 @@ const installProductEditorRestorations=async()=>{
     select.dispatchEvent(new Event('change',{bubbles:true}));
   }catch(error){form.dataset.editorRestorations='ready';}
 };
-const productEditorRestorationObserver=new MutationObserver(()=>{restoreAdminRequestedBehavior();void installProductEditorRestorations();});
+const productEditorRestorationObserver=new MutationObserver(()=>{void installProductEditorRestorations();});
 productEditorRestorationObserver.observe(document.body,{childList:true,subtree:true});
 void installProductEditorRestorations();
 document.addEventListener('click',async(event)=>{
