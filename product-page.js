@@ -1,4 +1,25 @@
-const productPageEscape=(value)=>String(value??'').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));function openProductImageLightbox(image){if(!image)return;let dialog=document.querySelector('[data-product-image-lightbox]');if(!dialog){dialog=document.createElement('dialog');dialog.className='product-image-lightbox';dialog.dataset.productImageLightbox='';dialog.innerHTML='<form method="dialog"><button type="submit" class="product-image-lightbox-close" aria-label="Close full-size image">×</button><img data-lightbox-image alt=""></form>';dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});document.body.append(dialog);}const fullImage=dialog.querySelector('[data-lightbox-image]');fullImage.src=image.currentSrc||image.src;fullImage.alt=image.alt;dialog.showModal();}
+const productPageEscape=(value)=>String(value??'').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+const productPagePreviewImage=(value)=>window.storefrontCardImageUrl?.(value)||value;
+function openProductImageLightbox(image){if(!image)return;let dialog=document.querySelector('[data-product-image-lightbox]');if(!dialog){dialog=document.createElement('dialog');dialog.className='product-image-lightbox';dialog.dataset.productImageLightbox='';dialog.innerHTML='<form method="dialog"><button type="submit" class="product-image-lightbox-close" aria-label="Close full-size image">×</button><img data-lightbox-image alt=""></form>';dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close();});document.body.append(dialog);}const fullImage=dialog.querySelector('[data-lightbox-image]');fullImage.src=image.dataset.fullSrc||image.currentSrc||image.src;fullImage.alt=image.alt;dialog.showModal();}
+function prepareProductPageMedia(item){
+  const fullImageByPreview=new Map();
+  const previewUrl=(value)=>{const source=String(value||'');if(!source)return'';const preview=productPagePreviewImage(source);fullImageByPreview.set(preview,source);return preview;};
+  item.images=(Array.isArray(item.images)?item.images:[]).map(previewUrl);
+  item.image=previewUrl(item.image);
+  item.media=(Array.isArray(item.media)?item.media:[]).map((entry)=>entry.type==='image'?{...entry,url:previewUrl(entry.url),fullUrl:entry.url}:entry);
+  item.options=(item.options||[]).map((option)=>({...option,values:(option.values||[]).map((value)=>typeof value==='object'&&value.imageUrl?{...value,imageUrl:previewUrl(value.imageUrl)}:value)}));
+  return fullImageByPreview;
+}
+function optimizeProductPageGallery(main,fullImageByPreview){
+  const fullImageFor=(value)=>{const source=String(value||'');return fullImageByPreview.get(source)||fullImageByPreview.get(new URL(source,location.href).href)||source;};
+  const optimizeHero=()=>{const hero=main.querySelector('.product-page-main-image');if(!hero)return;const preview=hero.getAttribute('src')||hero.src;hero.dataset.fullSrc=fullImageFor(preview);hero.src=productPagePreviewImage(preview);hero.loading='eager';hero.decoding='async';hero.fetchPriority='high';};
+  optimizeHero();
+  main.querySelectorAll('.product-page-thumbnail').forEach((button)=>{const source=button.dataset.fullImage||button.dataset.image||button.querySelector('img')?.getAttribute('src');if(!source)return;button.dataset.fullImage=fullImageFor(source);const thumbnail=button.querySelector('img');if(thumbnail){thumbnail.src=productPagePreviewImage(source);thumbnail.loading='lazy';thumbnail.decoding='async';}});
+  main.addEventListener('click',(event)=>{const button=event.target.closest?.('.product-page-thumbnail');if(!button)return;const image=main.querySelector('.product-page-main-image');if(!image)return;const full=button.dataset.fullImage||button.dataset.image||image.src;image.dataset.fullSrc=full;image.src=productPagePreviewImage(button.dataset.image||full);});
+  main.addEventListener('change',(event)=>{if(event.target.matches?.('[data-option-index]'))queueMicrotask(optimizeHero);});
+  window.addEventListener('bead-inventory-recipes-ready',()=>queueMicrotask(optimizeHero));
+  window.addEventListener('bead-catalog-media-ready',()=>queueMicrotask(optimizeHero));
+}
 
 function productOptionPrice(option,value){
   if(value&&typeof value==='object')return Number(value.price)||0;
@@ -188,7 +209,32 @@ const setProductSearchMetadata=(item)=>{
 
 const requestedProductId=new URLSearchParams(location.search).get('id');
 if(requestedProductId)window.setStorefrontSeo?.({canonicalPath:`/product.html?id=${encodeURIComponent(requestedProductId)}`});
-Promise.all([catalogReady,window.catalogMetadataReady||catalogReady]).then(async()=>{const main=document.querySelector('main');if(window.storeCatalogError){main.innerHTML='<section class="store-page product-unavailable"><h1>Product temporarily unavailable</h1><p>We could not load this product right now. Please try again shortly.</p><button type="button" class="cta">Try again</button></section>';main.querySelector('button')?.addEventListener('click',()=>location.reload());return;}const item=findProduct(requestedProductId);if(!item||!isProductVisible(item)){window.setStorefrontSeo?.({robots:'noindex,follow'});main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';return;}setProductSearchMetadata(item);await Promise.all([window.shippingSettingsReady,window.siteSettingsReady]);trackProductEvent(item.id,'view');renderProductPage(item);const heroImage=main.querySelector('.product-page-main-image');if(heroImage)heroImage.alt=item.imageAlt||item.name;enhanceProductShippingCard();fillProductDescriptionFallback();restoreProductPageMediaOrder(item);installCanonicalProductPageFilters(item);void hydrateProductReviews(item);});
+catalogReady.then(()=>{
+  const main=document.querySelector('main');
+  if(window.storeCatalogError){
+    main.innerHTML='<section class="store-page product-unavailable"><h1>Product temporarily unavailable</h1><p>We could not load this product right now. Please try again shortly.</p><button type="button" class="cta">Try again</button></section>';
+    main.querySelector('button')?.addEventListener('click',()=>location.reload());
+    return;
+  }
+  const item=findProduct(requestedProductId);
+  if(!item||!isProductVisible(item)){
+    window.setStorefrontSeo?.({robots:'noindex,follow'});
+    main.innerHTML='<section class="store-page product-unavailable"><h1>Item unavailable</h1><p>This item is not currently available for purchase.</p><a class="cta" href="shop-all.html">Continue shopping</a></section>';
+    return;
+  }
+  setProductSearchMetadata(item);
+  const fullImageByPreview=prepareProductPageMedia(item);
+  trackProductEvent(item.id,'view');
+  renderProductPage(item);
+  const heroImage=main.querySelector('.product-page-main-image');
+  if(heroImage)heroImage.alt=item.imageAlt||item.name;
+  enhanceProductShippingCard();
+  fillProductDescriptionFallback();
+  restoreProductPageMediaOrder(item);
+  optimizeProductPageGallery(main,fullImageByPreview);
+  installCanonicalProductPageFilters(item);
+  void hydrateProductReviews(item);
+});
 
 async function hydrateProductReviews(item){
   const section=document.querySelector('.product-page-reviews');
@@ -350,6 +396,8 @@ function restoreProductPageMediaOrder(item){
       image.className='product-page-main-image';
       image.src=entry.url;
       image.alt=entry.alt||item.name;
+      image.dataset.fullSrc=entry.fullUrl||entry.url;
+      image.decoding='async';
       trigger.append(image);
       trigger.addEventListener('click',()=>openProductImageLightbox(image));
       mediaElement.append(trigger);
@@ -363,6 +411,7 @@ function restoreProductPageMediaOrder(item){
     button.type='button';
     button.className='product-page-thumbnail';
     button.setAttribute('aria-label',`View ${entry.type==='video'?'video':'image'} ${index+1}`);
+    button.dataset.fullImage=entry.fullUrl||entry.url;
     if(entry.type==='video'){
       button.classList.add('product-page-video-thumbnail');
       button.textContent='Video';
@@ -370,6 +419,8 @@ function restoreProductPageMediaOrder(item){
       const image=document.createElement('img');
       image.src=entry.url;
       image.alt='';
+      image.loading='lazy';
+      image.decoding='async';
       button.append(image);
     }
     button.addEventListener('click',()=>showMedia(index));
@@ -378,8 +429,4 @@ function restoreProductPageMediaOrder(item){
   showMedia(0);
 }
 
-catalogReady.then(()=>{
-  const item=findProduct(new URLSearchParams(location.search).get('id'));
-  if(item&&isProductVisible(item))restoreProductPageMediaOrder(item);
-});
 window.addEventListener('bead-categories-ready',updateProductPageCategoryLabels);
