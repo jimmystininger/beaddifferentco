@@ -168,9 +168,34 @@ async function previewOrders(adminId: string, offset: number, minCreated?: numbe
   // Etsy allows a larger receipt page than the old 25-row preview. Fetching
   // up to 100 receipts per sync keeps the one-click import to fewer Edge
   // invocations without widening the date window.
-  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=100&offset=${offset}${dateFilter}`, connection.access_token);
+  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=100&offset=${offset}&sort_on=created&sort_order=desc${dateFilter}`, connection.access_token);
   const receipts = list(page.results);
-  const receiptTransactions = await concurrent(receipts, 2, async (receipt) => {
+  const receiptIds = [...new Set(receipts.map((receipt) => String(receipt.receipt_id || '').trim()).filter(Boolean))];
+  const existingOrderIds = new Set<string>();
+  for (const table of ['etsy_sale_lines', 'etsy_import_sales']) {
+    for (let index = 0; index < receiptIds.length; index += 50) {
+      const receiptChunk = receiptIds.slice(index, index + 50);
+      for (let offset = 0; ; offset += 1000) {
+        const rows = await database(`${table}?select=external_order_id&external_order_id=in.(${receiptChunk.map((id) => encodeURIComponent(id)).join(',')})&limit=1000&offset=${offset}`);
+        rows.forEach((row: Record<string, any>) => {
+          const id = String(row.external_order_id || '').trim();
+          if (id) existingOrderIds.add(id);
+        });
+        if (rows.length < 1000) break;
+      }
+    }
+  }
+  let foundExistingOrder = false;
+  const newReceipts = receipts.filter((receipt) => {
+    const receiptId = String(receipt.receipt_id || '').trim();
+    if (!receiptId) return false;
+    if (existingOrderIds.has(receiptId)) {
+      foundExistingOrder = true;
+      return false;
+    }
+    return !foundExistingOrder;
+  });
+  const receiptTransactions = await concurrent(newReceipts, 2, async (receipt) => {
     const receiptId = String(receipt.receipt_id || '');
     const transactions = list(receipt.transactions).length ? list(receipt.transactions) : list(await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/transactions`, connection.access_token));
     return { receipt, transactions };
@@ -215,34 +240,10 @@ async function previewOrders(adminId: string, offset: number, minCreated?: numbe
       };
     });
   });
-  const orderIds = [...new Set(sales.map((sale) => String(sale.external_order_id || '')).filter(Boolean))];
-  const existingRows = orderIds.length
-    ? await database(`etsy_sale_lines?select=external_order_id,external_line_id,etsy_sku,sale_date,status,quantity,refunded_quantity,gross_revenue,discount_amount,refund_amount,shipping_revenue,sales_tax,marketplace_fees,currency,matched_inventory_sku&external_order_id=in.(${orderIds.map((id) => encodeURIComponent(id)).join(',')})&limit=1000`)
-    : [];
-  const existingByKey = new Map(existingRows.map((row: Record<string, any>) => [`${String(row.external_order_id || '')}\u0000${String(row.external_line_id || '')}`, row]));
-  const sameAmount = (left: unknown, right: unknown) => Math.abs((Number(left) || 0) - (Number(right) || 0)) < 0.000001;
-  const changedSales = sales.filter((sale) => {
-    const existing = existingByKey.get(`${String(sale.external_order_id)}\u0000${String(sale.external_line_id)}`);
-    if (!existing) return true;
-    const fieldsMatch = String(existing.etsy_sku || '').trim().toLowerCase() === String(sale.etsy_sku || '').trim().toLowerCase()
-      && Date.parse(String(existing.sale_date || '')) === Date.parse(String(sale.sale_date || ''))
-      && String(existing.status || '').toLowerCase() === String(sale.status || '').toLowerCase()
-      && sameAmount(existing.quantity, sale.quantity)
-      && sameAmount(existing.refunded_quantity, sale.refunded_quantity)
-      && sameAmount(existing.gross_revenue, sale.gross_revenue)
-      && sameAmount(existing.discount_amount, sale.discount_amount)
-      && sameAmount(existing.refund_amount, sale.refund_amount)
-      && sameAmount(existing.shipping_revenue, sale.shipping_revenue)
-      && sameAmount(existing.sales_tax, sale.sales_tax)
-      && sameAmount(existing.marketplace_fees, sale.marketplace_fees)
-      && String(existing.currency || 'USD').toUpperCase() === String(sale.currency || 'USD').toUpperCase()
-      && String(existing.matched_inventory_sku || '').trim().toLowerCase() === String(sale.matched_inventory_sku || existing.matched_inventory_sku || '').trim().toLowerCase();
-    return !fieldsMatch;
-  });
-  const unmatchedSkus = [...new Set(changedSales.filter((sale) => !sale.matched_inventory_sku).map((sale) => String(sale.etsy_sku || '').trim()).filter(Boolean))];
-  const batchId = changedSales.length ? await createImportBatch(adminId, 'orders', { sales: changedSales }, { action: 'orders', scope: 'sales_and_inventory_metrics', min_created: minCreated || null, unmatched_skus: unmatchedSkus }) : undefined;
-  const total = (key: string) => changedSales.reduce((sum, sale) => sum + (Number(sale[key]) || 0), 0);
-  return { batch_id: batchId, next_offset: offset + receipts.length, has_more: receipts.length === 100, receipts: new Set(changedSales.map((sale) => sale.external_order_id)).size, sales: changedSales.length, matched: changedSales.filter((sale) => sale.matched_inventory_sku).length, unmatched: changedSales.filter((sale) => !sale.matched_inventory_sku).length, unmatched_skus: unmatchedSkus, min_created: minCreated || null, totals: { revenue: total('gross_revenue'), discounts: total('discount_amount'), shipping: total('shipping_revenue'), tax: total('sales_tax'), fees: total('marketplace_fees'), refunds: total('refund_amount') } };
+  const unmatchedSkus = [...new Set(sales.filter((sale) => !sale.matched_inventory_sku).map((sale) => String(sale.etsy_sku || '').trim()).filter(Boolean))];
+  const batchId = sales.length ? await createImportBatch(adminId, 'orders', { sales }, { action: 'orders', scope: 'new_sales_and_inventory_metrics', min_created: minCreated || null, unmatched_skus: unmatchedSkus }) : undefined;
+  const total = (key: string) => sales.reduce((sum, sale) => sum + (Number(sale[key]) || 0), 0);
+  return { batch_id: batchId, next_offset: offset + receipts.length, has_more: !foundExistingOrder && receipts.length === 100, receipts: new Set(sales.map((sale) => sale.external_order_id)).size, sales: sales.length, matched: sales.filter((sale) => sale.matched_inventory_sku).length, unmatched: sales.filter((sale) => !sale.matched_inventory_sku).length, unmatched_skus: unmatchedSkus, min_created: minCreated || null, totals: { revenue: total('gross_revenue'), discounts: total('discount_amount'), shipping: total('shipping_revenue'), tax: total('sales_tax'), fees: total('marketplace_fees'), refunds: total('refund_amount') } };
 }
 async function finalizeOrderImport(adminId: string, batchId: string, summary: Record<string, unknown>) {
   const id = String(batchId || '').trim();
@@ -255,7 +256,7 @@ async function finalizeOrderImport(adminId: string, batchId: string, summary: Re
   const unmatched = Math.max(0, Math.floor(Number(summary.unmatched) || 0));
   const inventoryUpdated = Math.max(0, Math.floor(Number(summary.inventory_updated) || 0));
   const result = { status: 'applied', receipts, sales, matched, unmatched, inventory_updated: inventoryUpdated };
-  const metadata = { ...(batches[0].metadata || {}), action: 'orders', scope: 'sales_and_inventory_metrics', receipts, sale_lines: sales, unmatched, inventory_updated: inventoryUpdated, applied_at: new Date().toISOString() };
+  const metadata = { ...(batches[0].metadata || {}), action: 'orders', scope: 'new_sales_and_inventory_metrics', receipts, sale_lines: sales, unmatched, inventory_updated: inventoryUpdated, applied_at: new Date().toISOString() };
   // Clear the staged JSON after the RPC has applied it. History keeps the
   // compact summary, not another copy of every Etsy sale line.
   await updateImportBatch(id, { status: 'applied', row_count: receipts, matched_count: matched, applied_count: sales, metadata, result, payload: {} });
@@ -1454,7 +1455,7 @@ Deno.serve(async (request: Request) => {
     if (body.action === 'import_orders') {
       const offset = Math.max(0, Math.floor(Number(body.offset) || 0));
       const syncStart = offset === 0 && !(Number(body.min_created) > 0) ? await orderSyncStart() : { min_created: Number(body.min_created) > 0 ? Math.floor(Number(body.min_created)) : undefined };
-      return json({ ...(await previewOrders(adminId, offset, syncStart.min_created)), min_created: syncStart.min_created || null, scope: 'sales_and_inventory_metrics' });
+      return json({ ...(await previewOrders(adminId, offset, syncStart.min_created)), min_created: syncStart.min_created || null, scope: 'new_sales_and_inventory_metrics' });
     }
     if (body.action === 'finalize_order_import') return json(await finalizeOrderImport(adminId, String(body.batch_id || ''), body));
     if (body.action === 'preview_reviews') return json(await previewReviews(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
