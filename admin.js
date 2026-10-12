@@ -2236,14 +2236,13 @@ async function renderEtsyConnection(){
           familyRows.forEach((row)=>{
             const oneSku=String(row.one_pk_sku||'').trim();
             const etsySku=String(row.etsy_sku||'').trim();
-            const size=Math.max(1,Number(row.pack_size)||1);
             if(row.one_pk_sku_existed_before_run===false&&oneSku&&!seenSkus.has(oneSku.toUpperCase())){
               seenSkus.add(oneSku.toUpperCase());
-              createdSkus.push('<li><strong>1PK:</strong> '+adminSafe(oneSku)+'</li>');
+              createdSkus.push('<li><strong>'+adminSafe(oneSku)+'</strong> <a href="'+adminSafe('admin.html?inventory=sku&sku='+encodeURIComponent(oneSku)+'&direct=inventory')+'" target="_blank" rel="noopener">Edit child SKU record</a></li>');
             }
-            if(row.pack_sku_existed_before_run===false&&etsySku&&etsySku!==oneSku&&!seenSkus.has(etsySku.toUpperCase())){
+            if(row.pack_sku_existed_before_run===false&&etsySku&&etsySku.toUpperCase()!==oneSku.toUpperCase()&&!seenSkus.has(etsySku.toUpperCase())){
               seenSkus.add(etsySku.toUpperCase());
-              createdSkus.push('<li><strong>'+adminSafe(size+'PK')+':</strong> '+adminSafe(etsySku)+'</li>');
+              createdSkus.push('<li><strong>'+adminSafe(etsySku)+'</strong> <a href="'+adminSafe('admin.html?inventory=sku&sku='+encodeURIComponent(etsySku)+'&direct=inventory')+'" target="_blank" rel="noopener">Edit child SKU record</a></li>');
             }
           });
           const seenRecipes=new Set();
@@ -2253,11 +2252,14 @@ async function renderEtsyConnection(){
             seenRecipes.add(parent.toUpperCase());
             const components=Array.isArray(row.recipe_components)?row.recipe_components:[];
             const parts=components.map((component)=>Number(component.quantity||1)+' × '+adminSafe(component.sku||'child SKU')).join(' · ');
-            return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span></li>';
+            return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span> <a href="'+adminSafe('admin.html?inventory=adjust&recipe='+encodeURIComponent(parent))+'" target="_blank" rel="noopener">Edit recipe</a></li>';
           }).filter(Boolean).join('');
-          return (createdSkus.length?'<ul class="admin-etsy-created-skus">'+createdSkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'');
+          const productId=String(page.product_id||'').trim();
+          const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):String(page.links?.product||page.url||'');
+          const productLink=productHref?'<a href="'+adminSafe(productHref)+'" target="_blank" rel="noopener">Edit product page</a>':'';
+          return (createdSkus.length?'<ul class="admin-etsy-created-skus">'+createdSkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'')+productLink;
         };
-        const createdMarkup=pages.map((page)=>'<div class="admin-etsy-created-links"><strong>'+adminSafe(page.product_name||page.one_pk_sku||'Imported listing')+'</strong>'+createdDetails(page)+'</div>').join('<hr>');
+        const createdMarkup=pages.map((page)=>'<div class="admin-etsy-created-links">'+createdDetails(page)+'</div>').join('<hr>');
         return createdMarkup+failedMarkup+(warning?'<br>'+warning:'');
       }
       if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0)return '<button type="button" data-etsy-reapply-sales="'+adminSafe(batch.id)+'">Reapply stored Etsy sales</button><br><span class="admin-field-note">Matches newly-created SKUs without contacting Etsy again.</span>';
