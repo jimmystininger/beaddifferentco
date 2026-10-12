@@ -1285,7 +1285,7 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
   if(!listingId||!variants.length){alert('The saved Etsy SKU family is incomplete. Refresh the import history and try again.');return;}
   const dialog=document.createElement('dialog');
   dialog.className='admin-etsy-correction-dialog';
-  dialog.innerHTML='<form class="admin-etsy-correction-form"><button type="button" class="admin-dialog-close" data-close-correction aria-label="Close">×</button><p class="kicker">LOCAL SKU CORRECTION</p><h2>Correct imported SKUs</h2><p>Etsy SKUs below are read-only and remain exactly as Etsy supplied them. Edit our local 1PK SKU and the recipe for each package variant.</p><div data-correction-variants>Loading this listing’s local SKUs and recipes…</div><datalist data-correction-sku-options></datalist><p data-correction-status role="status"></p><div class="admin-actions"><button type="button" data-cancel-correction>Cancel</button><button type="submit" class="cta" data-save-correction disabled>Save local corrections</button></div></form>';
+  dialog.innerHTML='<form class="admin-etsy-correction-form"><button type="button" class="admin-dialog-close" data-close-correction aria-label="Close">×</button><p class="kicker">LOCAL SKU CORRECTION</p><h2>Correct imported SKUs</h2><p>Etsy SKUs below are read-only and remain exactly as Etsy supplied them. Edit our local 1PK SKU and the recipe for each package variant. Each package recipe is saved independently, so changing a 5-pack does not overwrite a 20-pack.</p><div data-correction-variants>Loading this listing’s local SKUs and recipes…</div><datalist data-correction-sku-options></datalist><p data-correction-status role="status"></p><div class="admin-actions"><button type="button" data-cancel-correction>Cancel</button><button type="submit" class="cta" data-save-correction disabled>Save local corrections</button></div></form>';
   document.body.append(dialog);
   const close=()=>{if(dialog.open)dialog.close();dialog.remove();};
   dialog.querySelector('[data-close-correction]').onclick=close;
@@ -1306,8 +1306,14 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
       if((result.data||[]).length<1000)break;
     }
     const byId=new Map(inventory.map((row)=>[String(row.id),row]));
-    const childFor=new Map(inventory.filter((row)=>row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId&&String(row.source_metadata?.disposition||'')==='inventory').map((row)=>[String(row.source_metadata?.etsy_sku||'').trim().toUpperCase(),row]));
-    const parentIds=[...new Set(variants.map((variant)=>inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase()&&row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId)?.id).filter(Boolean))];
+    const childFor=new Map(variants.map((variant)=>{
+      const etsySku=String(variant.etsy_sku||'').trim().toUpperCase();
+      const localSku=String(variant.one_pk_sku||'').trim().toUpperCase();
+      const child=inventory.find((row)=>String(row.source_metadata?.source||'')==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId&&String(row.source_metadata?.etsy_sku||'').trim().toUpperCase()===etsySku)
+        ||inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===localSku);
+      return[etsySku,child];
+    }).filter(([,child])=>child));
+    const parentIds=[...new Set(variants.map((variant)=>inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase()&&(String(row.source_metadata?.etsy_sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase()||(row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId)) )?.id).filter(Boolean))];
     const recipes=[];
     for(let start=0;start<parentIds.length;start+=100){
       const result=await cloudAdmin().from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity,sort_order').in('bundle_sku_id',parentIds.slice(start,start+100)).order('sort_order');
@@ -1321,9 +1327,9 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
     variantsHost.innerHTML=variants.map((variant,index)=>{
       const etsySku=String(variant.etsy_sku||'').trim();
       const child=childFor.get(etsySku.toUpperCase());
-      const parent=inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===etsySku.toUpperCase()&&row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId);
+      const parent=inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===etsySku.toUpperCase()&&(String(row.source_metadata?.etsy_sku||'').trim().toUpperCase()===etsySku.toUpperCase()||(row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId)));
       let components=parent?recipesByParent.get(String(parent.id))||[]:[];
-      if(Number(variant.pack_size||0)>1&&!components.length&&child)components=[{sku:child.sku,quantity:Number(variant.pack_size)}];
+      if(!components.length&&Array.isArray(variant.recipe_components))components=variant.recipe_components.map((component)=>({sku:String(component.sku||''),quantity:Number(component.quantity)||1}));
       const recipeEditable=Number(variant.pack_size||0)>1||components.length>0;
       return '<section class="admin-etsy-correction-variant" data-correction-variant="'+index+'"><h3>Etsy SKU <code>'+adminSafe(etsySku)+'</code> <small>· '+Number(variant.pack_size||1)+' pack</small></h3><label>Our local 1PK SKU<input data-local-onepk value="'+adminSafe(child?.sku||variant.one_pk_sku||'')+'" maxlength="120" required></label>'+(recipeEditable?'<fieldset><legend>Our recipe for this Etsy package</legend><div data-recipe-lines>'+components.map((component)=>'<div class="admin-etsy-correction-line"><label>Inventory component SKU<input list="'+datalist.id+'" data-recipe-sku value="'+adminSafe(component.sku)+'" required></label><label>Quantity<input data-recipe-quantity type="number" min="1" step="1" value="'+Number(component.quantity||1)+'" required></label><button type="button" data-remove-recipe-line aria-label="Remove recipe component">Remove</button></div>').join('')+'</div><button type="button" data-add-recipe-line>Add component</button><small>Use this recipe to represent mixed packs; it does not change the Etsy SKU.</small></fieldset>':'')+'</section>';
     }).join('');
@@ -1337,10 +1343,15 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
       if(save.disabled)return;
       const rows=variants.map((variant,index)=>{
         const section=variantsHost.querySelector('[data-correction-variant="'+index+'"]');
-        const row={etsy_sku:String(variant.etsy_sku||'').trim(),one_pk_sku:section.querySelector('[data-local-onepk]').value.trim(),pack_size:Number(variant.pack_size)||1};
-        if(section.querySelector('[data-recipe-lines]'))row.recipe_components=[...section.querySelectorAll('.admin-etsy-correction-line')].map((line)=>({sku:line.querySelector('[data-recipe-sku]').value.trim(),quantity:Number(line.querySelector('[data-recipe-quantity]').value)}));
+        const etsySku=String(variant.etsy_sku||'').trim();
+        const previousOnePk=String(childFor.get(etsySku.toUpperCase())?.sku||variant.one_pk_sku||'').trim();
+        const onePkSku=section.querySelector('[data-local-onepk]').value.trim();
+        const row={etsy_sku:etsySku,one_pk_sku:onePkSku,pack_size:Number(variant.pack_size)||1};
+        if(section.querySelector('[data-recipe-lines]'))row.recipe_components=[...section.querySelectorAll('.admin-etsy-correction-line')].map((line)=>({sku:line.querySelector('[data-recipe-sku]').value.trim().toUpperCase()===previousOnePk.toUpperCase()?onePkSku:line.querySelector('[data-recipe-sku]').value.trim(),quantity:Number(line.querySelector('[data-recipe-quantity]').value)}));
         return row;
       });
+      const missingRecipe=rows.find((row)=>row.pack_size>1&&(!row.recipe_components?.length||row.recipe_components.some((component)=>!component.sku||!Number.isInteger(component.quantity)||component.quantity<1)));
+      if(missingRecipe){status.textContent='Add or restore the full recipe for Etsy package '+missingRecipe.etsy_sku+' before saving. No SKU or recipe was changed.';return;}
       save.disabled=true;
       status.textContent='Saving our local SKU names and recipes…';
       const result=await cloudAdmin().rpc('correct_imported_etsy_sku_family',{listing_id_value:listingId,variant_rows_value:rows});
@@ -1377,14 +1388,14 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
     const hasRecipe=(recipeResult.data||[]).length>0;
     const calculatedParent=hasRecipe||String(record.item_type||'').toLowerCase()==='non-inventory'||String(record.hierarchy||'').toLowerCase()==='parent';
     const currentRole=calculatedParent?'recipe_parent':'inventory';
-    dialog.querySelector('.admin-inventory-sku-identity').innerHTML='<strong>SKU</strong><code>'+adminSafe(record.sku)+'</code><span>SKU identity cannot be changed.</span>';
+    dialog.querySelector('.admin-inventory-sku-identity').innerHTML='<strong>SKU</strong><span>SKU changes update this inventory item everywhere it is referenced.</span>';
     const note=dialog.querySelector('[data-sku-editor-note]');
-    note.textContent=calculatedParent?'This SKU is a recipe parent. Its available quantity, cost, and weight follow its saved recipe and child SKUs.':locked?'Inventory setup is finalized. Cost, unit, weight, reserve, and low-stock settings remain protected; on-hand quantity can still be adjusted with a recorded note.':'Changes here apply only to this inventory SKU. Quantity changes are recorded in inventory history.';
+    note.textContent=calculatedParent?'This SKU is a recipe parent. Its available quantity, cost, and weight follow its saved recipe and child SKUs.':locked?'Inventory setup is finalized. Cost, unit, weight, reserve, and low-stock settings remain protected; on-hand quantity can still be adjusted with a recorded note.':'SKU changes keep linked product variants and recipes connected. Quantity changes are recorded in inventory history.';
     const fields=dialog.querySelector('[data-sku-editor-fields]');
     const protectedDisabled=locked?'disabled':'';
     const inventoryFields='<div class="admin-inventory-sku-grid" data-sku-editor-inventory-fields '+(calculatedParent?'hidden':'')+'><label>Cost<input name="cost" type="number" min="0" step="0.01" value="'+(record.cost??'')+'" '+protectedDisabled+'></label><label>Weight<input name="weight_value" type="number" min="0" step="0.001" value="'+(record.weight_value??'')+'" '+protectedDisabled+'></label><label>Weight unit<select name="weight_unit" '+protectedDisabled+'><option value="oz" '+(record.weight_unit==='oz'?'selected':'')+'>oz</option><option value="lb" '+(record.weight_unit==='lb'?'selected':'')+'>lb</option><option value="g" '+(record.weight_unit==='g'?'selected':'')+'>g</option><option value="kg" '+(record.weight_unit==='kg'?'selected':'')+'>kg</option></select></label><label>Reserve buffer<input name="reserve_quantity" type="number" min="0" step="1" value="'+Number(record.reserve_quantity||0)+'" '+protectedDisabled+'></label><label>Low stock minimum<input name="reorder_point" type="number" min="0" step="1" value="'+Number(record.reorder_point||0)+'" '+protectedDisabled+'></label></div>';
     const quantityFields='<div class="admin-inventory-sku-stock" data-sku-editor-quantity-fields '+(calculatedParent?'hidden':'')+'><p>Current on-hand quantity: <strong>'+Number(record.quantity_on_hand||0)+'</strong></p><div class="admin-inventory-sku-grid"><label>Change on-hand by<input name="quantity_delta" type="number" step="1" placeholder="Positive or negative whole number"></label><label class="admin-inventory-sku-adjustment-note">Note for this quantity change<input name="quantity_note" type="text" maxlength="240" placeholder="Required only when quantity changes"></label></div></div>';
-    fields.innerHTML='<div class="admin-inventory-sku-grid"><label>Product name<input name="name" type="text" maxlength="240" value="'+adminSafe(record.name||'')+'" required></label><label>SKU type<select name="sku_role"><option value="inventory" '+(currentRole==='inventory'?'selected':'')+'>Inventory / child</option><option value="recipe_parent" '+(currentRole==='recipe_parent'?'selected':'')+'>Parent / non-inventory</option></select></label><label>Price<input name="price" type="number" min="0" step="0.01" value="'+(record.price??'')+'"></label><label>Unit<input name="unit_type" type="text" maxlength="80" value="'+adminSafe(record.unit_type||'Each')+'" '+protectedDisabled+' required></label><label>Preferred vendor<input name="preferred_vendor" type="text" maxlength="160" value="'+adminSafe(record.preferred_vendor||'')+'"></label><label class="admin-inventory-sku-check"><input name="discontinued" type="checkbox" '+(record.discontinued?'checked':'')+'> Discontinued</label></div>'+inventoryFields+quantityFields;
+    fields.innerHTML='<div class="admin-inventory-sku-grid"><label>Product name<input name="name" type="text" maxlength="240" value="'+adminSafe(record.name||'')+'" required></label><label>SKU<input name="sku" type="text" maxlength="120" value="'+adminSafe(record.sku||'')+'" required></label><label>SKU type<select name="sku_role"><option value="inventory" '+(currentRole==='inventory'?'selected':'')+'>Inventory / child</option><option value="recipe_parent" '+(currentRole==='recipe_parent'?'selected':'')+'>Parent / non-inventory</option></select></label><label>Price<input name="price" type="number" min="0" step="0.01" value="'+(record.price??'')+'"></label><label>Unit<input name="unit_type" type="text" maxlength="80" value="'+adminSafe(record.unit_type||'Each')+'" '+protectedDisabled+' required></label><label>Preferred vendor<input name="preferred_vendor" type="text" maxlength="160" value="'+adminSafe(record.preferred_vendor||'')+'"></label><label class="admin-inventory-sku-check"><input name="discontinued" type="checkbox" '+(record.discontinued?'checked':'')+'> Discontinued</label></div>'+inventoryFields+quantityFields;
     const roleInput=fields.querySelector('[name="sku_role"]');
     const syncRoleFields=()=>{const parent=roleInput.value==='recipe_parent';fields.querySelector('[data-sku-editor-inventory-fields]').hidden=parent;fields.querySelector('[data-sku-editor-quantity-fields]').hidden=parent;};
     roleInput.addEventListener('change',syncRoleFields);
@@ -1418,12 +1429,14 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
       event.preventDefault();
       if(saveButton.disabled)return;
       const name=form.elements.name.value.trim();
+      const nextSku=form.elements.sku.value.trim().toUpperCase();
       const unit=form.elements.unit_type.value.trim();
       const nextRole=form.elements.sku_role.value;
       const nextIsParent=nextRole==='recipe_parent';
       const quantityDelta=nextIsParent?0:(form.elements.quantity_delta.value.trim()===''?0:Number(form.elements.quantity_delta.value));
       const quantityNote=nextIsParent?'':form.elements.quantity_note.value.trim();
       if(!name||!unit){status.textContent='Product name and unit are required.';return;}
+      if(!/^[A-Z0-9][A-Z0-9._/-]{0,119}$/.test(nextSku)){status.textContent='Enter a valid SKU using letters, numbers, periods, underscores, slashes, or hyphens.';return;}
       if(!Number.isFinite(quantityDelta)||!Number.isInteger(quantityDelta)){status.textContent='Quantity change must be a whole number.';return;}
       if(quantityDelta&&!quantityNote){status.textContent='Add a note explaining the quantity change so it is recorded in inventory history.';return;}
       const readOptionalNumber=(field,label,integer=false)=>{const raw=form.elements[field]?.value.trim()??'';if(raw==='')return null;const value=Number(raw);if(!Number.isFinite(value)||value<0||(integer&&!Number.isInteger(value)))throw new Error(label+' must be a non-negative '+(integer?'whole ':'')+'number.');return value;};
@@ -1436,11 +1449,20 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
       status.textContent='Saving SKU details…';
       let detailsSaved=false;
       let roleSaved=false;
+      let skuRenamed=false;
       try{
         const currentHierarchy=String(record.hierarchy||'').toLowerCase();
         const currentType=String(record.item_type||'').toLowerCase();
         const roleNeedsUpdate=nextRole!==currentRole||record.source_metadata?.disposition!==nextRole||(nextIsParent?currentHierarchy!=='parent'||currentType!=='non-inventory':currentHierarchy==='parent'||currentHierarchy==='single'||currentType!=='inventory');
         let expectedUpdatedAt=record.updated_at;
+        if(nextSku!==String(record.sku||'').trim().toUpperCase()){
+          status.textContent='Updating SKU and its linked product options and recipes…';
+          const renamed=await cloudAdmin().rpc('rename_inventory_sku',{inventory_sku_id_value:record.id,new_sku_value:nextSku});
+          if(renamed.error)throw renamed.error;
+          record.sku=nextSku;
+          expectedUpdatedAt=renamed.data?.updated_at||expectedUpdatedAt;
+          skuRenamed=true;
+        }
         if(roleNeedsUpdate){
           status.textContent='Saving SKU type…';
           const roleUpdate=await cloudAdmin().rpc('apply_inventory_sku_disposition',{inventory_sku_id_value:record.id,disposition_value:nextRole});
@@ -1461,7 +1483,7 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
         await onSaved();
         close();
       }catch(error){
-        status.textContent=(detailsSaved?'SKU details were saved, but the remaining change failed: ':roleSaved?'SKU type was saved, but the remaining change failed: ':'SKU was not saved: ')+(error?.message||'Unknown database error.');
+        status.textContent=(detailsSaved?'SKU details were saved, but the remaining change failed: ':roleSaved?'SKU type was saved, but the remaining change failed: ':skuRenamed?'The SKU name was updated, but the remaining changes failed: ':'SKU was not saved: ')+(error?.message||'Unknown database error.');
         saveButton.disabled=false;
       }
     };
