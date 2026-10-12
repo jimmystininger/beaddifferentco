@@ -215,6 +215,10 @@ catalogReady.then(()=>{
   const fullImageByPreview=prepareProductPageMedia(item);
   trackProductEvent(item.id,'view');
   renderProductPage(item);
+  void hydrateProductReviews(item).catch(()=>{
+    const section=document.querySelector('.product-page-reviews');
+    if(section)section.innerHTML='<h2>Reviews</h2><p>Product reviews are temporarily unavailable. Please try again later.</p>';
+  });
   const heroImage=main.querySelector('.product-page-main-image');
   if(heroImage)heroImage.alt=item.imageAlt||item.name;
   enhanceProductShippingCard();
@@ -222,7 +226,6 @@ catalogReady.then(()=>{
   restoreProductPageMediaOrder(item);
   optimizeProductPageGallery(main,fullImageByPreview);
   installCanonicalProductPageFilters(item);
-  void hydrateProductReviews(item);
 });
 
 async function hydrateProductReviews(item){
