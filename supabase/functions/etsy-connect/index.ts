@@ -275,7 +275,8 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     ? Math.floor(Number(minModifiedValue))
     : Math.max(nowSeconds - 45 * 24 * 60 * 60, Number.isFinite(priorCheckpoint) && priorCheckpoint > 0 ? priorCheckpoint - 300 : nowSeconds - 45 * 24 * 60 * 60);
   const offset = Math.max(0, Math.floor(Number(offsetValue) || 0));
-  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=100&offset=${offset}&sort_on=updated&sort_order=asc&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token);
+  const pageSize = 20;
+  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=${pageSize}&offset=${offset}&sort_on=updated&sort_order=asc&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token);
   const receipts = list(page.results);
   const receiptIds = [...new Set(receipts.map((receipt) => String(receipt.receipt_id || '').trim()).filter(Boolean))];
   const existingLines: Record<string, any>[] = [];
@@ -352,7 +353,7 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
   const updatedAt = new Date().toISOString();
   await concurrent(updates, 4, (update) => database(`etsy_sale_lines?id=eq.${encodeURIComponent(update.id)}`, 'PATCH', { status: update.status, refunded_quantity: update.refunded_quantity, refund_amount: update.refund_amount, updated_at: updatedAt }, 'return=minimal'));
   const nextOffset = offset + receipts.length;
-  const hasMore = receipts.length === 100;
+  const hasMore = receipts.length === pageSize;
   const summary = {
     scanned_receipts: Math.max(0, Number(priorSummary.scanned_receipts) || 0) + receipts.length,
     updated_lines: Math.max(0, Number(priorSummary.updated_lines) || 0) + updates.length,

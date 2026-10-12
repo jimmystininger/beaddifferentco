@@ -2420,7 +2420,7 @@ async function renderEtsyConnection(){
     // Listing scans are intentionally long-running and bounded server-side.
     // Retrying a resource-limited scan multiplies concurrent Edge Function
     // workers and can turn one click into several overlapping scans.
-    const maxAttempts=action==='import_listings'?1:3;
+    const maxAttempts=['import_listings','sync_order_statuses'].includes(action)?1:3;
     for(let attempt=0;attempt<maxAttempts;attempt+=1){
       const {data,error}=await client.functions.invoke('etsy-connect',{body:{action,...extra},headers:{Authorization:`Bearer ${accessToken}`}});
       if(!error){if(data?.error)throw new Error(data.error);if(action==='import_listings'){const nextOffset=Number(data?.next_offset||0);const scanWaiting=data?.scan_waiting===true||/already running|still running/i.test(String(data?.warning||''));if(data?.continue_available&&nextOffset>0)sessionStorage.setItem(listingCursorKey,String(nextOffset));else if(!scanWaiting)sessionStorage.removeItem(listingCursorKey);if(!data?.continue_available&&!scanWaiting){sessionStorage.removeItem(listingRunIdKey);activeListingRunId='';}}return data;}
