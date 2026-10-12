@@ -276,9 +276,32 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     : Math.max(nowSeconds - 45 * 24 * 60 * 60, Number.isFinite(priorCheckpoint) && priorCheckpoint > 0 ? priorCheckpoint - 300 : nowSeconds - 45 * 24 * 60 * 60);
   const offset = Math.max(0, Math.floor(Number(offsetValue) || 0));
   const pageSize = 20;
-  const page = await etsy(`shops/${connection.shop_id}/receipts?limit=${pageSize}&offset=${offset}&sort_on=updated&sort_order=asc&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token);
-  const receipts = list(page.results);
-  const receiptIds = [...new Set(receipts.map((receipt) => String(receipt.receipt_id || '').trim()).filter(Boolean))];
+  const ledgerOffset = Math.max(0, Math.floor(Number(priorSummary.ledger_offset) || 0));
+  const [cancelledPage, ledgerPage] = await Promise.all([
+    etsy(`shops/${connection.shop_id}/receipts?limit=${pageSize}&offset=${offset}&sort_on=updated&sort_order=asc&was_canceled=true&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token),
+    etsy(`shops/${connection.shop_id}/payment-account/ledger-entries?min_created=${minModified}&max_created=${maxModified}&limit=100&offset=${ledgerOffset}`, connection.access_token),
+  ]);
+  const cancelledReceipts = list(cancelledPage?.results);
+  const ledgerEntries = list(ledgerPage?.results);
+  const refundEntryIds = [...new Set(ledgerEntries.filter((entry) => {
+    const hasSuccessfulAdjustment = list(entry.payment_adjustments).some((adjustment) => adjustment.is_success === true);
+    return hasSuccessfulAdjustment || String(entry.ledger_type || '').trim().toLowerCase() === 'refund';
+  }).map((entry) => String(entry.entry_id || '').trim()).filter(Boolean))];
+  const refundEntryChunks = Array.from({ length: Math.ceil(refundEntryIds.length / 25) }, (_, index) => refundEntryIds.slice(index * 25, index * 25 + 25));
+  const refundPaymentPages = await concurrent(refundEntryChunks, 2, (chunk) => etsy(`shops/${connection.shop_id}/payment-account/ledger-entries/payments?ledger_entry_ids=${encodeURIComponent(chunk.join(','))}`, connection.access_token));
+  const refundPaymentsByReceipt = new Map<string, Map<string, Record<string, any>>>();
+  refundPaymentPages.flatMap((page) => list(page?.results)).forEach((payment) => {
+    const receiptId = String(payment.receipt_id || '').trim();
+    if (!receiptId) return;
+    const validRefunds = list(payment.refunds).filter((refund) => !refund.status || /^(success|succeeded|complete|completed|refunded|processed)$/i.test(String(refund.status).trim()));
+    if (!validRefunds.length) return;
+    const paymentKey = String(payment.payment_id || JSON.stringify({ receiptId, refunds: validRefunds }));
+    const payments = refundPaymentsByReceipt.get(receiptId) || new Map<string, Record<string, any>>();
+    if (!payments.has(paymentKey)) payments.set(paymentKey, { ...payment, refunds: validRefunds });
+    refundPaymentsByReceipt.set(receiptId, payments);
+  });
+  const cancelledById = new Map(cancelledReceipts.map((receipt) => [String(receipt.receipt_id || '').trim(), receipt]));
+  const receiptIds = [...new Set([...cancelledById.keys(), ...refundPaymentsByReceipt.keys()].filter(Boolean))];
   const existingLines: Record<string, any>[] = [];
   for (let index = 0; index < receiptIds.length; index += 50) {
     const chunk = receiptIds.slice(index, index + 50);
@@ -296,40 +319,28 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     rows.push(line);
     linesByReceipt.set(key, rows);
   });
-  const relevantReceipts = receipts.filter((receipt) => (linesByReceipt.get(String(receipt.receipt_id || '').trim()) || []).length);
-  const paymentResults = await concurrent(relevantReceipts, 2, async (receipt) => {
-    const receiptId = String(receipt.receipt_id || '').trim();
-    try {
-      const paymentPage = await etsy(`shops/${connection.shop_id}/receipts/${encodeURIComponent(receiptId)}/payments`, connection.access_token);
-      const payments = Array.isArray(paymentPage.results) ? list(paymentPage.results) : paymentPage && typeof paymentPage === 'object' ? [paymentPage] : [];
-      return { receiptId, payments };
-    } catch (error) {
-      if (error instanceof Error && /\(404\)/.test(error.message)) return { receiptId, payments: [] };
-      throw error;
-    }
-  });
-  const paymentsByReceipt = new Map(paymentResults.map((entry) => [entry.receiptId, entry.payments]));
   const updates: { id: string; status: string; refunded_quantity: number; refund_amount: number }[] = [];
-  let cancelledReceipts = 0;
-  let refundedReceipts = 0;
+  let cancelledReceiptCount = 0;
+  let refundedReceiptCount = 0;
   let partialRefundReceipts = 0;
-  for (const receipt of receipts) {
-    const receiptId = String(receipt.receipt_id || '').trim();
+  for (const receiptId of receiptIds) {
     const lines = linesByReceipt.get(receiptId) || [];
     if (!lines.length) continue;
-    const status = receiptStatus(receipt);
-    const fullReversal = ['cancelled', 'refunded', 'returned'].includes(status);
+    const receipt = cancelledById.get(receiptId);
+    const cancelled = Boolean(receipt);
     const paymentRefundTotals: number[] = [];
-    for (const payment of paymentsByReceipt.get(receiptId) || []) {
+    for (const payment of (refundPaymentsByReceipt.get(receiptId) || new Map()).values()) {
       list(payment.refunds).forEach((refund) => {
-        if (!refund.status || /success|complete|refund/i.test(String(refund.status))) paymentRefundTotals.push(Math.abs(money(refund.amount)));
+        paymentRefundTotals.push(Math.abs(money(refund.amount)));
       });
     }
     const totalGross = lines.reduce((sum, line) => sum + Math.max(0, Number(line.gross_revenue) - Number(line.discount_amount)), 0);
     const paymentRefundTotal = paymentRefundTotals.reduce((sum, amount) => sum + amount, 0);
     const effectiveRefundTotal = Math.min(totalGross, paymentRefundTotal);
-    const hasPartialRefund = !fullReversal && effectiveRefundTotal > 0;
-    if (!fullReversal && !hasPartialRefund) continue;
+    const fullReversal = cancelled || (totalGross > 0 && effectiveRefundTotal >= totalGross - 0.01);
+    const hasRefund = effectiveRefundTotal > 0;
+    if (!fullReversal && !hasRefund) continue;
+    const status = cancelled ? 'cancelled' : fullReversal ? 'refunded' : 'paid';
     const updateCountBeforeReceipt = updates.length;
     let allocated = 0;
     lines.forEach((line, index) => {
@@ -345,21 +356,23 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
       updates.push({ id: String(line.id), status: nextStatus, refunded_quantity: refundedQuantity, refund_amount: nextRefund });
     });
     if (updates.length > updateCountBeforeReceipt) {
-      if (status === 'cancelled') cancelledReceipts += 1;
-      else if (fullReversal) refundedReceipts += 1;
+      if (status === 'cancelled') cancelledReceiptCount += 1;
+      else if (fullReversal) refundedReceiptCount += 1;
       else partialRefundReceipts += 1;
     }
   }
   const updatedAt = new Date().toISOString();
   await concurrent(updates, 4, (update) => database(`etsy_sale_lines?id=eq.${encodeURIComponent(update.id)}`, 'PATCH', { status: update.status, refunded_quantity: update.refunded_quantity, refund_amount: update.refund_amount, updated_at: updatedAt }, 'return=minimal'));
-  const nextOffset = offset + receipts.length;
-  const hasMore = receipts.length === pageSize;
+  const nextOffset = offset + pageSize;
+  const nextLedgerOffset = ledgerOffset + ledgerEntries.length;
+  const hasMore = cancelledReceipts.length === pageSize || ledgerEntries.length === 100;
   const summary = {
-    scanned_receipts: Math.max(0, Number(priorSummary.scanned_receipts) || 0) + receipts.length,
+    scanned_receipts: Math.max(0, Number(priorSummary.scanned_receipts) || 0) + receiptIds.length,
     updated_lines: Math.max(0, Number(priorSummary.updated_lines) || 0) + updates.length,
-    cancelled_receipts: Math.max(0, Number(priorSummary.cancelled_receipts) || 0) + cancelledReceipts,
-    refunded_receipts: Math.max(0, Number(priorSummary.refunded_receipts) || 0) + refundedReceipts,
+    cancelled_receipts: Math.max(0, Number(priorSummary.cancelled_receipts) || 0) + cancelledReceiptCount,
+    refunded_receipts: Math.max(0, Number(priorSummary.refunded_receipts) || 0) + refundedReceiptCount,
     partial_refund_receipts: Math.max(0, Number(priorSummary.partial_refund_receipts) || 0) + partialRefundReceipts,
+    ledger_offset: nextLedgerOffset,
   };
   let batchId: string | undefined;
   if (!hasMore) {
