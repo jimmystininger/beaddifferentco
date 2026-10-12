@@ -397,19 +397,27 @@ function productNameFromListing(title: string, listingId: string) {
   return cleanText(candidate).slice(0, 120).trim() || `Etsy listing ${listingId}`;
 }
 function packSizeForSku(sku: string) {
-  // Etsy SKUs commonly end in a numeric pack suffix (1PK, 2PK, 5PK,
-  // 10PK, etc.). Keep the complete numeric suffix instead of treating an
-  // unlisted size as part of the base SKU; otherwise `...-2PK` becomes the
-  // invalid child `...-2PK-1PK` and receives a one-unit recipe.
-  const match = String(sku || '').match(/(?:^|-)(\d{1,3})PK$/i);
+  const match = String(sku || '').match(/(?:^|-)(\d{1,3})(?:PK|PC|CT)$/i);
   return match ? Math.max(1, Number(match[1])) : 1;
+}
+function packUnitForSku(sku: string) {
+  const match = String(sku || '').match(/(?:^|-)(\d{1,3})(PK|PC|CT)$/i);
+  return match?.[2]?.toUpperCase() || 'PK';
+}
+function packVariantLabel(sku: string) {
+  return `${packSizeForSku(sku)}${packUnitForSku(sku)}`;
+}
+function packChoiceLabel(sku: string) {
+  const unit = packUnitForSku(sku);
+  return `${packSizeForSku(sku)} ${unit === 'PC' ? 'Pieces' : unit === 'CT' ? 'Count' : packSizeForSku(sku) === 1 ? 'Bead' : 'Beads'}`;
 }
 function onePackSkuFor(etsySku: string, listingId: string, title: string) {
   const normalized = normalizeSku(etsySku) || normalizeSku(`ETSY-${listingId}`) || normalizeSku(title) || `ETSY-${listingId}`;
-  return /-\d{1,3}PK$/i.test(normalized) ? normalized.replace(/-\d{1,3}PK$/i, '-1PK') : normalized;
+  if (/-\d{1,3}PK$/i.test(normalized)) return normalized.replace(/-\d{1,3}PK$/i, '-1PK');
+  return /-\d{1,3}(?:PC|CT)$/i.test(normalized) ? `${normalized}-1PK` : normalized;
 }
 function etsyFamilyBaseSku(sku: string) {
-  return normalizeSku(sku).replace(/-\d{1,3}PK$/i, '');
+  return normalizeSku(sku).replace(/(?:-\d{1,3}PK|-\d{1,3}(?:PC|CT))+$/i, '');
 }
 function orderEtsyVariantRows(variants: { sku: string; price: number; quantity: number; label: string }[]) {
   const familyOrder = new Map<string, number>();
@@ -446,7 +454,7 @@ function listingVariantsFrom(listing: Record<string, any>, detail: Record<string
     const propertyValues = list(product.property_values);
     const propertyLabel = propertyValues.flatMap((property) => list(property.values || property.value || property.value_names)).map((value) => cleanText(value)).filter(Boolean).join(' / ');
     const packSize = packSizeForSku(sku);
-    const label = propertyLabel || `${packSize} ${packSize === 1 ? 'Bead' : 'Beads'}`;
+    const label = propertyLabel || packChoiceLabel(sku);
     return { sku, price, quantity: Number.isFinite(rawQuantity) ? Math.max(0, Math.floor(rawQuantity)) : 0, label };
   }).filter(Boolean) as { sku: string; price: number; quantity: number; label: string }[];
 }
@@ -657,7 +665,7 @@ async function upsertEtsyProductOptionValue(optionId: string, variant: { sku: st
   const existing = packSize === 1 ? existingParent || existingChild : existingParent;
   const payload = {
     option_id: optionId,
-    label: variant.label || `${packSize}PK`,
+    label: variant.label || packChoiceLabel(String(variant.sku || parent.sku || '')),
     price_delta: Number(variant.price) - Number(listingPrice),
     sku: String(parent.sku || variant.sku).trim(),
     inventory_sku: String(parent.sku || variant.sku).trim(),
@@ -790,7 +798,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
       const packExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
       return { etsy_sku: variantCanonical, one_pk_sku: variantOneSku, pack_size: variantPackSize, label: variant.label, quantity: variant.quantity, manual_recipe_required: false, recipe_components: [], recipe_created: false, sku_existed: onePkExistedBeforeRun || packExistedBeforeRun, one_pk_sku_existed: onePkExistedBeforeRun, pack_sku_existed: packExistedBeforeRun, sku_existed_before_run: onePkExistedBeforeRun || packExistedBeforeRun, one_pk_sku_existed_before_run: onePkExistedBeforeRun, pack_sku_existed_before_run: packExistedBeforeRun };
     });
-    if (family.length) await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', { sku_filter_definitions: [{ label: 'Quantity', options: Object.fromEntries(family.map((variant) => [variant.etsy_sku, variant.label || `${variant.pack_size} ${variant.pack_size === 1 ? 'Bead' : 'Beads'}`])) }] }, 'return=minimal');
+    if (family.length) await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', { sku_filter_definitions: [{ label: 'Quantity', options: Object.fromEntries(family.map((variant) => [variant.etsy_sku, variant.label || packChoiceLabel(variant.etsy_sku)])) }] }, 'return=minimal');
     // Repair every Etsy variation, including the first one. Older imports
     // could leave the first 1PK/parent pair incomplete, and skipping index 0
     // made that state permanent on every later scan.
@@ -804,7 +812,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
       const packSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
       const variantChild = await findOrCreateInventorySku(variantOneSku, { sku: variantOneSku, name: productName, variant_name: '1PK', quantity_on_hand: variant.quantity * variantPackSize, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: variantPackSize > 1 ? Math.round((variant.price / variantPackSize) * 100) / 100 : variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: 1, imported_quantity: variant.quantity * variantPackSize, imported_at: new Date().toISOString() } }, inventoryCache);
       const physicalChild = await ensurePhysicalInventorySku(variantChild);
-      const variantParent = await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: `${variantPackSize}PK`, quantity_on_hand: variant.quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_quantity: variant.quantity, imported_at: new Date().toISOString() } }, inventoryCache);
+      const variantParent = await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: packVariantLabel(variantCanonical), quantity_on_hand: variant.quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_quantity: variant.quantity, imported_at: new Date().toISOString() } }, inventoryCache);
       const recipe = await ensureEtsyRecipe(variantParent, physicalChild, variantPackSize);
       const familyRow = family.find((entry) => entry.etsy_sku === variantCanonical);
       if (familyRow) {
@@ -830,7 +838,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     if (existingListingRows[0]) {
       const existingRaw = existingListingRows[0].raw_payload && typeof existingListingRows[0].raw_payload === 'object' ? existingListingRows[0].raw_payload : {};
       const variantPayload = variantRows.length ? { variant_skus: family.map((variant) => variant.etsy_sku), variants: family } : {};
-      await database(`etsy_import_listings?id=eq.${encodeURIComponent(String(existingListingRows[0].id))}`, 'PATCH', { batch_id: batchId, proposed_product_name: productName, proposed_product_sku: etsySku, proposed_single_sku: oneSku, proposed_product_id: product.id, raw_payload: { ...existingRaw, listing_id: listingId, title, description, sku: etsySku, ...variantPayload, one_pk_sku: oneSku, price: listingPrice, quantity, category_slug: categorySlug, updated_timestamp: detail.updated_timestamp || listing.updated_timestamp || null }, updated_at: new Date().toISOString() }, 'return=minimal');
+      await database(`etsy_import_listings?id=eq.${encodeURIComponent(String(existingListingRows[0].id))}`, 'PATCH', { proposed_product_name: productName, proposed_product_sku: etsySku, proposed_single_sku: oneSku, proposed_product_id: product.id, raw_payload: { ...existingRaw, listing_id: listingId, title, description, sku: etsySku, ...variantPayload, one_pk_sku: oneSku, price: listingPrice, quantity, category_slug: categorySlug, updated_timestamp: detail.updated_timestamp || listing.updated_timestamp || null }, updated_at: new Date().toISOString() }, 'return=minimal');
     } else {
       const rawPayload = { listing_id: listingId, title, description, sku: etsySku, variant_skus: family.map((variant) => variant.etsy_sku), variants: family, one_pk_sku: oneSku, price: listingPrice, quantity, category_slug: categorySlug, images, url: detail.url || listing.url || null, updated_timestamp: detail.updated_timestamp || listing.updated_timestamp || null };
       await database('etsy_import_listings', 'POST', { batch_id: batchId, external_listing_id: listingId, title, proposed_product_name: productName, proposed_product_sku: etsySku, proposed_single_sku: oneSku, proposed_product_id: product.id, review_status: 'pending', raw_payload: rawPayload, updated_at: new Date().toISOString() }, 'return=minimal');
@@ -911,7 +919,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     familyRecipeBySku.set(canonicalEtsySku, { recipe_created: false, recipe_components: [], one_pk_sku_existed: oneSkuExisted, pack_sku_existed: oneSkuExisted });
   }
   if (!product) {
-    const initialSkuFilterDefinitions = [{ label: 'Quantity', options: Object.fromEntries(orderedVariantRows.map((variant) => [normalizeSku(variant.sku), variant.label || `${packSizeForSku(variant.sku)} ${packSizeForSku(variant.sku) === 1 ? 'Bead' : 'Beads'}`])) }];
+    const initialSkuFilterDefinitions = [{ label: 'Quantity', options: Object.fromEntries(orderedVariantRows.map((variant) => [normalizeSku(variant.sku), variant.label || packChoiceLabel(variant.sku)])) }];
     const inserted = await database('products', 'POST', { external_id: oneSku, sku: oneSku, etsy_listing_id: Number(listingId), category_slug: categorySlug, name: productName, seo_title: title, short_description: description.slice(0, 240) || null, description: description || null, item_details: `Imported from Etsy listing ${listingId}. Tags: ${tags.join(', ') || 'None'}. Materials: ${materials.join(', ') || 'None'}.`, shipping_details: null, price: unitPrice, quantity: quantity * packSize, visible: false, waitlist_enabled: false, estimated_cost: 0, low_stock_threshold: 0, badges: [], promo_skus: [], etsy_units_per_sale: 1, sku_filter_definitions: initialSkuFilterDefinitions, featured: false, added_at: stamp(detail.created_timestamp || listing.created_timestamp) });
     product = inserted[0];
     created = true;
@@ -924,7 +932,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const existingOptionValues = await database(`product_option_values?option_id=eq.${encodeURIComponent(option.id)}&select=id,inventory_sku_id,sku,inventory_sku,sort_order&limit=500`);
   const existingMappings = await database(`product_etsy_mappings?product_id=eq.${encodeURIComponent(product.id)}&select=id,etsy_sku&limit=500`);
   const mappingsBySku = new Map(existingMappings.map((row: Record<string, any>) => [normalizeSku(row.etsy_sku), row]));
-  const primaryVariant = orderedVariantRows.find((variant) => normalizeSku(variant.sku) === normalizeSku(canonicalEtsySku)) || orderedVariantRows[0] || { sku: canonicalEtsySku, price: listingPrice, quantity, label: `${packSize}PK` };
+  const primaryVariant = orderedVariantRows.find((variant) => normalizeSku(variant.sku) === normalizeSku(canonicalEtsySku)) || orderedVariantRows[0] || { sku: canonicalEtsySku, price: listingPrice, quantity, label: packChoiceLabel(canonicalEtsySku) };
   await upsertEtsyChildProductOptionValue(option.id, primaryVariant, childInventory, listingPrice, images[0] || '', optionOrder.get(oneSku) || 0, existingOptionValues);
   if (normalizeSku(canonicalEtsySku) !== normalizeSku(oneSku)) await upsertEtsyProductOptionValue(option.id, primaryVariant, parentInventory, childInventory, listingPrice, images[0] || '', optionOrder.get(canonicalEtsySku) || 0, existingOptionValues);
   // Keep every Etsy variation on the one staged product page. Each variant
@@ -939,16 +947,16 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     const variantPackSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
     const variantChild = await findOrCreateInventorySku(variantOneSku, { sku: variantOneSku, name: productName, variant_name: '1PK', quantity_on_hand: variant.quantity * variantPackSize, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: variantPackSize > 1 ? Math.round((variant.price / variantPackSize) * 100) / 100 : variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: 1, imported_quantity: variant.quantity * variantPackSize, imported_at: new Date().toISOString() } }, inventoryCache);
     const physicalChild = await ensurePhysicalInventorySku(variantChild);
-    const variantParent = await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: `${variantPackSize}PK`, quantity_on_hand: variant.quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_quantity: variant.quantity, imported_at: new Date().toISOString() } }, inventoryCache);
+    const variantParent = await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: packVariantLabel(variantCanonical), quantity_on_hand: variant.quantity, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_quantity: variant.quantity, imported_at: new Date().toISOString() } }, inventoryCache);
     const recipe = await ensureEtsyRecipe(variantParent, physicalChild, variantPackSize);
     familyRecipeBySku.set(variantCanonical, { recipe_created: recipe.created, recipe_components: recipe.components, one_pk_sku_existed: variantOneSkuExisted, pack_sku_existed: variantPackSkuExisted });
     if (option?.id) {
       await upsertEtsyChildProductOptionValue(option.id, variant, physicalChild, listingPrice, images[0] || '', optionOrder.get(variantOneSku) || 0, existingOptionValues);
       if (variantCanonical !== variantOneSku) await upsertEtsyProductOptionValue(option.id, variant, variantParent, physicalChild, listingPrice, images[0] || '', optionOrder.get(variantCanonical) || 0, existingOptionValues);
     }
-    const variantMapping = mappingsBySku.get(variantCanonical) || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: 1, active: true, sort_order: optionOrder.get(variantCanonical) || 0 }))[0];
+    const variantMapping = mappingsBySku.get(variantCanonical) || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: Math.max(1, variantPackSize), active: true, sort_order: optionOrder.get(variantCanonical) || 0 }))[0];
     if (variantMapping?.id) mappingsBySku.set(variantCanonical, variantMapping);
-    if (variantMapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: variantMapping.id, inventory_sku_id: physicalChild.id, inventory_sku: variantOneSku, inventory_units: 1, sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
+    if (variantMapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: variantMapping.id, inventory_sku_id: physicalChild.id, inventory_sku: variantOneSku, inventory_units: Math.max(1, variantPackSize), sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
   }
   await ensureEtsyProductImages(String(product.id), images, title);
   const mappingKey = normalizeSku(etsySku);
@@ -965,7 +973,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     return { etsy_sku: variantCanonical, one_pk_sku: variantOneSku, pack_size: variantPackSize, label: variant.label, quantity: variant.quantity, manual_recipe_required: false, recipe_components: recipe?.recipe_components || [], recipe_created: recipe?.recipe_created || false, sku_existed: Boolean(onePkExistedBeforeRun || packExistedBeforeRun), one_pk_sku_existed: Boolean(onePkExistedBeforeRun), pack_sku_existed: Boolean(packExistedBeforeRun), sku_existed_before_run: Boolean(onePkExistedBeforeRun || packExistedBeforeRun), one_pk_sku_existed_before_run: Boolean(onePkExistedBeforeRun), pack_sku_existed_before_run: Boolean(packExistedBeforeRun) };
   });
   await database('rpc/sync_etsy_product_sku_family', 'POST', { target_product_id: product.id, variant_rows: familySkus }, 'return=representation');
-  const skuFilterDefinitions = [{ label: 'Quantity', options: Object.fromEntries(familySkus.map((variant) => [variant.etsy_sku, variant.label || `${variant.pack_size} ${variant.pack_size === 1 ? 'Bead' : 'Beads'}`])) }];
+  const skuFilterDefinitions = [{ label: 'Quantity', options: Object.fromEntries(familySkus.map((variant) => [variant.etsy_sku, variant.label || packChoiceLabel(variant.etsy_sku)])) }];
   const rawPayload = { listing_id: listingId, title, description, sku: etsySku, variant_skus: variantSkus, variants: familySkus, one_pk_sku: oneSku, price: listingPrice, quantity, category_slug: categorySlug, sku_filter_definitions: skuFilterDefinitions, etsy_category_path: detail.category_path || detail.taxonomy_path || listing.category_path || listing.taxonomy_path || null, tags, materials, images, url: detail.url || listing.url || null, updated_timestamp: detail.updated_timestamp || listing.updated_timestamp || null };
   const listingRows = await database(`etsy_import_listings?external_listing_id=eq.${encodeURIComponent(listingId)}&select=id&limit=1`);
   const listingPayload = { batch_id: batchId, external_listing_id: listingId, title, proposed_product_name: productName, proposed_product_sku: etsySku, proposed_single_sku: oneSku, proposed_product_id: product.id, review_status: 'pending', raw_payload: rawPayload, updated_at: new Date().toISOString() };

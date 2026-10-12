@@ -845,6 +845,26 @@ body[data-page="Admin"] [data-create-sku-form]>label.admin-toggle input[type="ch
 .admin-sku-pages-dialog ul{display:grid;gap:8px;margin:0;padding-left:20px}
 .admin-sku-pages-dialog a{color:inherit}
 .admin-sku-pages-dialog form>button{justify-self:end;border:1px solid #aaa;border-radius:999px;background:#fff;padding:7px 12px;cursor:pointer}
+.admin-inventory-sku-dialog{box-sizing:border-box;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid #d8cfd2;border-radius:16px;padding:28px;background:var(--site-page-background-color,#fffdfb);color:var(--site-header-text-color,#111);box-shadow:0 24px 80px rgba(0,0,0,.28)}
+.admin-inventory-sku-dialog::backdrop{background:rgba(17,17,17,.5)}
+.admin-inventory-sku-editor{position:relative;display:grid;gap:16px;padding:4px}
+.admin-inventory-sku-editor>.kicker{margin:0;color:#6a5261;font-size:12px;letter-spacing:.12em;font-weight:700}
+.admin-inventory-sku-editor h2{margin:0;font-size:28px}
+.admin-inventory-sku-identity{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0;padding:12px;border-radius:9px;background:#f7f1e8}
+.admin-inventory-sku-identity code{font-size:15px;font-weight:700}
+.admin-inventory-sku-identity span{color:#655d5a;font-size:13px}
+.admin-inventory-sku-note,.admin-inventory-sku-status{margin:0;color:#625a57;font-size:14px;line-height:1.5}
+.admin-inventory-sku-fields{display:grid;gap:14px}
+.admin-inventory-sku-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.admin-inventory-sku-grid label{display:grid;align-content:start;gap:6px;font-size:13px;font-weight:700}
+.admin-inventory-sku-grid input:not([type=checkbox]),.admin-inventory-sku-grid select{box-sizing:border-box;width:100%;min-height:42px;border:1px solid #aaa;border-radius:7px;padding:9px 10px;background:#fff;font:15px Arial,sans-serif}
+.admin-inventory-sku-grid input:disabled,.admin-inventory-sku-grid select:disabled{background:#f1eeed;color:#777}
+.admin-inventory-sku-grid .admin-inventory-sku-check{display:flex;align-items:center;gap:9px;min-height:42px}
+.admin-inventory-sku-check input{width:18px;height:18px;margin:0}
+.admin-inventory-sku-stock{padding:14px;border:1px solid #e2d9d5;border-radius:10px;background:#fffaf5}
+.admin-inventory-sku-dialog .admin-actions{justify-content:flex-end}
+.admin-inventory-sku-dialog .admin-actions button:disabled{opacity:.55;cursor:wait}
+@media(max-width:600px){.admin-inventory-sku-dialog{padding:20px}.admin-inventory-sku-editor h2{font-size:23px}.admin-inventory-sku-grid{grid-template-columns:1fr}}
 .admin-sku-row:has(>.admin-recipe-component-summary)> .admin-recipe-component-summary{grid-row:4}
 .admin-sku-row:has(>.admin-recipe-component-summary)> .admin-sku-filter-editor{grid-row:5}
 .admin-sku-row:has(>.admin-recipe-component-summary)> .admin-product-page-options-row{grid-row:6}
