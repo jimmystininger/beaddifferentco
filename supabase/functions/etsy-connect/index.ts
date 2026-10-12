@@ -729,7 +729,7 @@ async function ensureEtsyProductImages(productId: string, images: string[], titl
 async function fetchEtsyListingDetail(connection: Record<string, any>, listing: Record<string, any>) {
   const listingId = String(listing.listing_id || listing.id || '').trim();
   if (!listingId) throw new Error('Etsy returned a listing without an ID.');
-  const detail = await etsy(`listings/${encodeURIComponent(listingId)}?includes=Inventory,Images,Translations`, connection.access_token);
+  const detail = await etsy(`listings/${encodeURIComponent(listingId)}?includes=Images,Translations`, connection.access_token);
   if (!Array.isArray(detail.inventory?.products)) {
     try { detail.inventory = await etsy(`listings/${encodeURIComponent(listingId)}/inventory`, connection.access_token); }
     catch (error) { detail.inventory_fetch_error = error instanceof Error ? error.message : 'Etsy inventory could not be verified.'; }

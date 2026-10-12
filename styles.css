@@ -1023,3 +1023,6 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .admin-member-action-dialog .admin-member-note-form .admin-note-status{flex-basis:100%;margin:0}
 .admin-member-action-dialog .member-review-photo{max-width:120px;max-height:120px;object-fit:cover;border-radius:8px;margin:8px 8px 0 0}
 @media(max-width:620px){.admin-member-action-dialog{width:calc(100vw - 20px);max-height:calc(100vh - 20px);padding:22px 16px}.admin-member-action-dialog .admin-member-pagination{gap:8px}.admin-member-action-dialog .admin-member-pagination span{font-size:11px;text-align:center}}
+.admin-member-canonical-link{display:inline-block;margin-top:8px;color:var(--site-banner-color,#6d315f);font-weight:700;text-underline-offset:3px}
+a.admin-member-order-row{text-decoration:none}
+a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visible{outline:2px solid var(--site-banner-color,#6d315f);outline-offset:3px}
