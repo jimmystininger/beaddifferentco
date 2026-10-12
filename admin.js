@@ -2616,7 +2616,7 @@ async function renderEtsyConnection(){
     const importStatus=root.querySelector('[data-etsy-import-status]');
     button.disabled=true;
     let offset=0,minLastModified=null,maxLastModified=null,summary={scanned_receipts:0,updated_lines:0,cancelled_receipts:0,refunded_receipts:0,partial_refund_receipts:0};
-    importStatus.textContent='Checking Etsy for updated refunds and cancellations…';
+    importStatus.textContent='Checking Etsy cancellation records and refund adjustments…';
     try{
       let done=false;
       do{
@@ -2628,10 +2628,10 @@ async function renderEtsyConnection(){
         if(result.error||result.ok===false)throw new Error(result.error||'Etsy status sync failed.');
         minLastModified=Number(result.min_last_modified)||minLastModified;
         maxLastModified=Number(result.max_last_modified)||maxLastModified;
-        summary={scanned_receipts:Number(result.scanned_receipts)||0,updated_lines:Number(result.updated_lines)||0,cancelled_receipts:Number(result.cancelled_receipts)||0,refunded_receipts:Number(result.refunded_receipts)||0,partial_refund_receipts:Number(result.partial_refund_receipts)||0};
+        summary={scanned_receipts:Number(result.scanned_receipts)||0,updated_lines:Number(result.updated_lines)||0,cancelled_receipts:Number(result.cancelled_receipts)||0,refunded_receipts:Number(result.refunded_receipts)||0,partial_refund_receipts:Number(result.partial_refund_receipts)||0,ledger_offset:Number(result.ledger_offset)||0};
         done=result.done===true;
         offset=Number(result.next_offset)||0;
-        importStatus.textContent=done?'Etsy status sync complete: '+summary.cancelled_receipts+' cancelled, '+summary.refunded_receipts+' fully refunded, '+summary.partial_refund_receipts+' partially refunded orders; '+summary.updated_lines+' sale lines updated. Inventory quantities were not changed.':'Checked '+summary.scanned_receipts+' recently changed Etsy receipts so far…';
+        importStatus.textContent=done?'Etsy status sync complete: '+summary.cancelled_receipts+' cancelled, '+summary.refunded_receipts+' fully refunded, '+summary.partial_refund_receipts+' partially refunded orders; '+summary.updated_lines+' sale lines updated. Inventory quantities were not changed.':'Checked '+summary.scanned_receipts+' Etsy cancellation/refund candidates so far…';
       }while(!done);
       invalidateEtsyHistory();
       await drawBatches();
