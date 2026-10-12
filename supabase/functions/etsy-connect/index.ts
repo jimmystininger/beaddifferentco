@@ -1135,11 +1135,11 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
     return { ok: false, error: message, batch_id: batchId, run_id: runId, history_recorded: true, rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, done: true };
   }
 }
-async function repairExistingEtsyListings(adminId: string, rawBatchIds: unknown, startOffset = 0) {
+async function repairExistingEtsyListings(rawBatchIds: unknown, startOffset = 0) {
   const batchIds = Array.isArray(rawBatchIds) ? [...new Set(rawBatchIds.map((id) => String(id || '').trim()).filter(Boolean))] : [];
   if (!batchIds.length || batchIds.length > 100 || batchIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) throw new Error('Choose a valid Etsy listing import batch to repair.');
-  const batchRows = await database(`etsy_import_batches?id=in.(${batchIds.map(encodeURIComponent).join(',')})&created_by=eq.${encodeURIComponent(adminId)}&select=id,kind,metadata&order=id.asc&limit=100`);
-  if (batchRows.length !== batchIds.length || batchRows.some((row: Record<string, any>) => row.kind !== 'listings')) throw new Error('One or more Etsy listing batches are unavailable for this administrator.');
+  const batchRows = await database(`etsy_import_batches?id=in.(${batchIds.map(encodeURIComponent).join(',')})&select=id,kind,metadata&order=id.asc&limit=100`);
+  if (batchRows.length !== batchIds.length || batchRows.some((row: Record<string, any>) => row.kind !== 'listings')) throw new Error('One or more selected batches are missing or are not Etsy listing imports.');
   const pageTargets = new Map<string, { sourceBatchIds: string[] }>();
   for (const batch of batchRows) {
     const metadata = batch.metadata && typeof batch.metadata === 'object' ? batch.metadata : {};
@@ -1267,7 +1267,7 @@ Deno.serve(async (request: Request) => {
     if (body.action === 'finalize_order_import') return json(await finalizeOrderImport(adminId, String(body.batch_id || ''), body));
     if (body.action === 'preview_reviews') return json(await previewReviews(adminId, Math.max(0, Math.floor(Number(body.offset) || 0))));
     if (body.action === 'import_listings') return json(await importEtsyListings(adminId, String(body.run_id || '').trim(), Number(body.offset) || 0));
-    if (body.action === 'repair_existing_listings') return json(await repairExistingEtsyListings(adminId, body.batch_ids, Number(body.offset) || 0));
+    if (body.action === 'repair_existing_listings') return json(await repairExistingEtsyListings(body.batch_ids, Number(body.offset) || 0));
     if (body.action === 'order_sync_start') return json(await orderSyncStart());
     if (body.action === 'sync_financials' || body.action === 'backfill_historical_fees') {
       let connection = (await database('etsy_connections?id=eq.true'))[0];
