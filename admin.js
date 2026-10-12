@@ -2364,8 +2364,12 @@ async function renderEtsyConnection(){
     if(result.error){target.innerHTML='<p class="admin-empty">Import history is unavailable until the staged-import migration is applied.</p>';return;}
     if(!etsyUnmatchedReviewsPromise)etsyUnmatchedReviewsPromise=client.from('etsy_import_reviews').select('id,etsy_sku,rating,body,reviewer_name').eq('match_status','unmatched').is('applied_review_id',null).order('created_at',{ascending:false}).limit(100).then((result)=>{if(result.error)etsyUnmatchedReviewsPromise=null;return result;}).catch((error)=>{etsyUnmatchedReviewsPromise=null;throw error;});
     const unmatchedResult=await etsyUnmatchedReviewsPromise;
-    const unmatchedSalesResult=await client.from('etsy_sale_lines').select('etsy_sku,external_order_id,sale_date,raw_data').or('match_status.eq.unmatched,matched_inventory_sku.is.null').order('sale_date',{ascending:false}).limit(100);
-    const canonicalUnmatchedSales=unmatchedSalesResult.error?null:(unmatchedSalesResult.data||[]);
+    const [unmatchedSalesResult,hiddenSalesResult]=await Promise.all([
+      client.from('etsy_sale_lines').select('etsy_sku,external_order_id,external_line_id,sale_date,raw_data').or('match_status.eq.unmatched,matched_inventory_sku.is.null').order('sale_date',{ascending:false}).limit(100),
+      client.from('etsy_sale_line_exclusions').select('external_order_id,external_line_id')
+    ]);
+    const hiddenSaleLineKeys=new Set((hiddenSalesResult.data||[]).map((sale)=>JSON.stringify([sale.external_order_id,sale.external_line_id])));
+    const canonicalUnmatchedSales=unmatchedSalesResult.error?null:(unmatchedSalesResult.data||[]).filter((sale)=>hiddenSalesResult.error||!hiddenSaleLineKeys.has(JSON.stringify([sale.external_order_id,sale.external_line_id])));
     const rawRows=result.data||[];
     const groupedRows=[];
     const listingGroups=new Map();
