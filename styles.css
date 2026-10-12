@@ -863,6 +863,10 @@ body[data-page="Admin"] [data-create-sku-form]>label.admin-toggle input[type="ch
 .admin-inventory-sku-check input{width:18px;height:18px;margin:0}
 .admin-inventory-sku-stock{padding:14px;border:1px solid #e2d9d5;border-radius:10px;background:#fffaf5}
 .admin-inventory-sku-dialog .admin-actions{justify-content:flex-end}
+.admin-inventory-sku-dialog .admin-delete-sku-button{margin-right:auto;color:#8b3333}
+.admin-inventory-sku-delete-confirmation{padding:14px;border:1px solid #b88b8b;border-radius:10px;background:#fff8f6}
+.admin-inventory-sku-delete-confirmation[hidden]{display:none}
+.admin-inventory-sku-delete-confirmation p{margin:0 0 12px}
 .admin-inventory-sku-dialog .admin-actions button:disabled{opacity:.55;cursor:wait}
 @media(max-width:600px){.admin-inventory-sku-dialog{padding:20px}.admin-inventory-sku-editor h2{font-size:23px}.admin-inventory-sku-grid{grid-template-columns:1fr}}
 .admin-sku-row:has(>.admin-recipe-component-summary)> .admin-recipe-component-summary{grid-row:4}
