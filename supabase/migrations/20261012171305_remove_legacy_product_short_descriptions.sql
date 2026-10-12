@@ -23,10 +23,16 @@ for each row execute function public.refresh_product_search_text();
 
 revoke all on function public.refresh_product_search_text() from public, anon, authenticated;
 
+drop trigger if exists prevent_locked_product_page_edits on public.products;
+
 update public.products
 set search_text = concat_ws(' ', name, seo_title, description, item_details, shipping_details);
 
 alter table public.products drop column short_description;
+
+create trigger prevent_locked_product_page_edits
+before update on public.products
+for each row execute function public.prevent_locked_product_page_edits();
 
 create function public.get_storefront_category_products(
   category_slugs text[] default '{}',
