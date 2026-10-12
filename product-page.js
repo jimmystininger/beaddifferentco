@@ -260,6 +260,8 @@ async function hydrateProductReviews(item){
     }else if(window.reviewTools){
       reviews=window.reviewTools.read().filter((review)=>review.productId===item.id&&review.status==='approved');
       totalReviewCount=reviews.length;
+    }else{
+      throw new Error('Product reviews service is unavailable');
     }
   }catch(error){
     setReviewMessage('Product reviews are temporarily unavailable. Please try again later.');
