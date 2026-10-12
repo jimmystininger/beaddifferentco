@@ -47,9 +47,7 @@ begin
   end if;
 
   update public.inventory_skus
-  set sku = new_sku,
-      source_metadata = jsonb_set(coalesce(source_metadata, '{}'::jsonb), '{corrected_one_pk_sku}', to_jsonb(new_sku), true),
-      updated_at = timezone('utc', now())
+  set sku = new_sku, updated_at = timezone('utc', now())
   where id = inventory_record.id
   returning * into inventory_record;
 
@@ -234,6 +232,9 @@ begin
     end if;
 
     perform public.rename_inventory_sku(child_record.id, corrected_sku);
+    update public.inventory_skus
+    set source_metadata = jsonb_set(coalesce(source_metadata, '{}'::jsonb), '{corrected_one_pk_sku}', to_jsonb(corrected_sku), true)
+    where id = child_record.id;
 
     if variant ? 'recipe_components' then
       components := coalesce(variant->'recipe_components', '[]'::jsonb);

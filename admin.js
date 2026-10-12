@@ -1285,7 +1285,7 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
   if(!listingId||!variants.length){alert('The saved Etsy SKU family is incomplete. Refresh the import history and try again.');return;}
   const dialog=document.createElement('dialog');
   dialog.className='admin-etsy-correction-dialog';
-  dialog.innerHTML='<form class="admin-etsy-correction-form"><button type="button" class="admin-dialog-close" data-close-correction aria-label="Close">×</button><p class="kicker">LOCAL SKU CORRECTION</p><h2>Correct imported SKUs</h2><p>Etsy SKUs below are read-only and remain exactly as Etsy supplied them. Edit our local 1PK SKU and the recipe for each package variant. Each package recipe is saved independently, so changing a 5-pack does not overwrite a 20-pack.</p><div data-correction-variants>Loading this listing’s local SKUs and recipes…</div><datalist data-correction-sku-options></datalist><p data-correction-status role="status"></p><div class="admin-actions"><button type="button" data-cancel-correction>Cancel</button><button type="submit" class="cta" data-save-correction disabled>Save local corrections</button></div></form>';
+  dialog.innerHTML='<form class="admin-etsy-correction-form"><button type="button" class="admin-dialog-close" data-close-correction aria-label="Close">×</button><p class="kicker">LOCAL SKU CORRECTION</p><h2>Correct imported SKUs</h2><div data-correction-variants>Loading this listing’s local SKUs and recipes…</div><datalist data-correction-sku-options></datalist><p data-correction-status role="status"></p><div class="admin-actions"><button type="button" data-cancel-correction>Cancel</button><button type="submit" class="cta" data-save-correction disabled>Save local corrections</button></div></form>';
   document.body.append(dialog);
   const close=()=>{if(dialog.open)dialog.close();dialog.remove();};
   dialog.querySelector('[data-close-correction]').onclick=close;
@@ -1331,7 +1331,7 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
       let components=parent?recipesByParent.get(String(parent.id))||[]:[];
       if(!components.length&&Array.isArray(variant.recipe_components))components=variant.recipe_components.map((component)=>({sku:String(component.sku||''),quantity:Number(component.quantity)||1}));
       const recipeEditable=Number(variant.pack_size||0)>1||components.length>0;
-      return '<section class="admin-etsy-correction-variant" data-correction-variant="'+index+'"><h3>Etsy SKU <code>'+adminSafe(etsySku)+'</code> <small>· '+Number(variant.pack_size||1)+' pack</small></h3><label>Our local 1PK SKU<input data-local-onepk value="'+adminSafe(child?.sku||variant.one_pk_sku||'')+'" maxlength="120" required></label>'+(recipeEditable?'<fieldset><legend>Our recipe for this Etsy package</legend><div data-recipe-lines>'+components.map((component)=>'<div class="admin-etsy-correction-line"><label>Inventory component SKU<input list="'+datalist.id+'" data-recipe-sku value="'+adminSafe(component.sku)+'" required></label><label>Quantity<input data-recipe-quantity type="number" min="1" step="1" value="'+Number(component.quantity||1)+'" required></label><button type="button" data-remove-recipe-line aria-label="Remove recipe component">Remove</button></div>').join('')+'</div><button type="button" data-add-recipe-line>Add component</button><small>Use this recipe to represent mixed packs; it does not change the Etsy SKU.</small></fieldset>':'')+'</section>';
+      return '<section class="admin-etsy-correction-variant" data-correction-variant="'+index+'"><h3>Etsy SKU <code>'+adminSafe(etsySku)+'</code> <small>· '+Number(variant.pack_size||1)+' pack</small></h3><label>Our local 1PK SKU<input data-local-onepk value="'+adminSafe(child?.sku||variant.one_pk_sku||'')+'" maxlength="120" required></label>'+(recipeEditable?'<fieldset><legend>Our recipe for this Etsy package</legend><div data-recipe-lines>'+components.map((component)=>'<div class="admin-etsy-correction-line"><label>Inventory component SKU<input list="'+datalist.id+'" data-recipe-sku value="'+adminSafe(component.sku)+'" required></label><label>Quantity<input data-recipe-quantity type="number" min="1" step="1" value="'+Number(component.quantity||1)+'" required></label><button type="button" data-remove-recipe-line aria-label="Remove recipe component">Remove</button></div>').join('')+'</div><button type="button" data-add-recipe-line>Add component</button></fieldset>':'')+'</section>';
     }).join('');
     variantsHost.querySelectorAll('[data-add-recipe-line]').forEach((button)=>button.onclick=()=>{const line=document.createElement('div');line.className='admin-etsy-correction-line';line.innerHTML='<label>Inventory component SKU<input list="'+datalist.id+'" data-recipe-sku required></label><label>Quantity<input data-recipe-quantity type="number" min="1" step="1" value="1" required></label><button type="button" data-remove-recipe-line aria-label="Remove recipe component">Remove</button>';button.before(line);line.querySelector('[data-remove-recipe-line]').onclick=()=>line.remove();});
     variantsHost.querySelectorAll('[data-remove-recipe-line]').forEach((button)=>button.onclick=()=>button.closest('.admin-etsy-correction-line')?.remove());
@@ -2549,14 +2549,12 @@ async function renderEtsyConnection(){
       if(actionLabel(batch)==='Etsy listings'){
         const pages=listingReviewPages(batch);
         const repairIssues=Array.isArray(metadata.repair_issues)?metadata.repair_issues:[];
-        const repairTargets=[...(Array.isArray(metadata.created_pages)?metadata.created_pages:[]),...(Array.isArray(metadata.existing_pages)?metadata.existing_pages:[]),...(Array.isArray(metadata.failed_pages)?metadata.failed_pages:[]),...repairIssues].filter((page)=>/^\d+$/.test(String(page?.listing_id||'')));
-        const repairButton=repairTargets.length?'<button type="button" data-etsy-repair-listings="'+adminSafe(batch.id)+'">Repair imported SKU families</button>':'';
         const failed=Array.isArray(metadata.failed_pages)?metadata.failed_pages:[];
         const attentionItems=[...new Map([...failed,...repairIssues].filter(Boolean).map((issue)=>[String(issue.listing_id||''),issue])).values()];
-        const nextStepFor=(error)=>{if(/physical inventory child|recipe parent/i.test(error))return 'Check this SKU in SKU Search. Confirm it belongs to this Etsy listing and is Inventory / child, then run Repair again.';if(/response omits|every expected SKU/i.test(error))return 'Check the named variation SKUs in Etsy. Restore missing variations or provide their saved source details before retrying; the importer will not invent them.';if(/incomplete SKU|no explicit SKU/i.test(error))return 'Give every variation a SKU in Etsy, then run Repair again.';if(/multiple|different product page|different Etsy listing/i.test(error))return 'Resolve the conflicting product-page or listing link before retrying.';return 'Review this listing and its SKU family, then run Repair again.';};
+        const nextStepFor=(error)=>{if(/physical inventory child|recipe parent/i.test(error))return 'Use Correct local SKUs & recipes on this imported listing to verify its local inventory SKU and package recipes.';if(/response omits|every expected SKU/i.test(error))return 'Check the variation SKUs in Etsy. The importer will not invent missing Etsy variation data.';if(/incomplete SKU|no explicit SKU/i.test(error))return 'Give every variation a SKU in Etsy before importing this listing.';if(/multiple|different product page|different Etsy listing/i.test(error))return 'Resolve the conflicting product-page or listing link before importing this listing again.';return 'Review the Etsy listing data and correct its local SKUs & recipes if it has already been imported.';};
         const oldWarning=String(metadata.warning||'');
         const scanWarning=oldWarning.replace(/The scan paused at a listing that could not be imported\. Run the import again to retry it and continue\./g,'').replace(/\d+ listings? need a retry\./g,'').trim();
-        const warningText=[scanWarning,oldWarning!==scanWarning&&failed.length?failed.length+' listing'+(failed.length===1?'':'s')+' need attention. Use Repair imported SKU families to review them.':''].filter(Boolean).join(' ');
+        const warningText=[scanWarning,oldWarning!==scanWarning&&failed.length?failed.length+' listing'+(failed.length===1?'':'s')+' need attention. Review Etsy variation data or correct the local SKUs & recipes for imported listings.':''].filter(Boolean).join(' ');
         const warning=warningText?'<span class="admin-field-note">'+adminSafe(warningText)+'</span>':'';
         const failedMarkup=attentionItems.length?'<div class="admin-etsy-failed-links"><strong>Needs attention ('+attentionItems.length+')</strong><ul>'+attentionItems.map(issue=>{const error=String(issue.error||'Import failed.');return '<li><strong>Etsy listing '+adminSafe(issue.listing_id||'unknown')+'</strong>: '+adminSafe(error)+'<br><small>Next step: '+adminSafe(nextStepFor(error))+'</small></li>';}).join('')+'</ul></div>':'';
         const createdDetails=(page)=>{
@@ -2583,7 +2581,7 @@ async function renderEtsyConnection(){
           return '<div><strong>'+adminSafe(pageTitle)+'</strong></div>'+(inventorySkus.length?'<ul class="admin-etsy-created-skus">'+inventorySkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Saved recipes</strong><ul>'+recipes+'</ul></div>':'')+correctButton+productLink+addPageButton;
         };
         const createdMarkup=pages.map(createdDetails).filter(Boolean).map((markup)=>'<div class="admin-etsy-created-links">'+markup+'</div>').join('<hr>');
-        return repairButton+createdMarkup+failedMarkup+(warning?'<br>'+warning:'');
+        return createdMarkup+failedMarkup+(warning?'<br>'+warning:'');
       }
       if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0){const unmatchedSkus=Array.isArray(metadata.unmatched_skus)?metadata.unmatched_skus:[];return '<button type="button" data-etsy-reapply-sales="'+adminSafe(batch.id)+'">Reapply stored Etsy sales</button><br><span class="admin-field-note">Matches newly-created SKUs without contacting Etsy again.</span>'+(unmatchedSkus.length?'<ul>'+unmatchedSkus.map((sku)=>'<li>'+adminSafe(sku)+'</li>').join('')+'</ul>':'');}
       if(actionLabel(batch)==='Reviews')return '<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':'');
@@ -2602,44 +2600,6 @@ async function renderEtsyConnection(){
     target.querySelectorAll('[data-correct-imported-etsy-family]').forEach((button)=>button.onclick=async()=>{const batch=visible.find((row)=>actionLabel(row)==='Etsy listings'&&listingReviewPages(row).some((page)=>String(page.listing_id||'')===String(button.dataset.correctImportedEtsyFamily)));const page=batch&&listingReviewPages(batch).find((entry)=>String(entry.listing_id||'')===String(button.dataset.correctImportedEtsyFamily));if(!page)return;button.disabled=true;try{await openImportedEtsySkuCorrection(page,async()=>{invalidateEtsyHistory();await drawBatches();});}finally{button.disabled=false;}});
     target.querySelectorAll('[data-etsy-add-product-page]').forEach((button)=>button.onclick=()=>{const url=new URL('admin.html?new=item',window.location.href);window.open(url.href,'_blank','noopener');});
     const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?[...new Set(listingReviewPages({...batch,metadata}).map((page)=>String(page.listing_id||'')).filter(Boolean))]:[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id).select('id').maybeSingle();if(update.error)throw update.error;if(!update.data)throw new Error('No Etsy history row was updated. Your admin session may have expired; refresh and sign in again.');}};
-      target.querySelectorAll('[data-etsy-repair-listings]').forEach((button)=>button.onclick=async()=>{
-        button.disabled=true;
-        const importStatus=root.querySelector('[data-etsy-import-status]');
-        const batch=visible.find((row)=>String(row.id)===String(button.dataset.etsyRepairListings));
-        const batchIds=[...(batch?.source_batches||[{id:batch?.id}])].map((source)=>String(source.id||'')).filter(Boolean);
-        if(!batchIds.length){if(importStatus)importStatus.textContent='That Etsy import batch is unavailable. Refresh the page and try again.';button.disabled=false;return;}
-        const cursorKey='etsy-family-repair:v2:'+batchIds.slice().sort().join(',');
-        let offset=Math.max(0,Number(sessionStorage.getItem(cursorKey)||0));
-        let processed=0,repaired=0,failed=0,skipped=0,skuCount=0,recipeCount=0,totalTargets=0;
-        const issues=[];
-        try{
-          let done=false;
-          do{
-            const response=await client.functions.invoke('etsy-connect',{body:{action:'repair_existing_listings',batch_ids:batchIds,offset}});
-            if(response.error)throw response.error;
-            const data=response.data||{};
-            if(data.error)throw new Error(data.error);
-            totalTargets=Number(data.total)||totalTargets;
-            if(importStatus)importStatus.textContent='Repairing Etsy SKU families: '+Math.min(offset+1,totalTargets)+' of '+totalTargets+' listings…';
-            for(const item of data.items||[]){
-              processed+=1;
-              if(item.status==='repaired'){repaired+=1;skuCount+=Number(item.sku_count||0);recipeCount+=Number(item.recipes_created||0);}
-              else{if(item.status==='failed')failed+=1;else if(item.status==='skipped')skipped+=1;issues.push(String(item.listing_id||'Listing')+': '+String(item.error||item.reason||'Needs attention.'));}
-            }
-            const nextOffset=Number(data.next_offset);
-            if(!Number.isFinite(nextOffset)||nextOffset<=offset&&!data.done)throw new Error('The repair did not advance. Try again; no page was created.');
-            offset=nextOffset;
-            done=data.done===true;
-            if(done)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,String(offset));
-          }while(!done);
-          if(importStatus)importStatus.textContent='Rechecked '+processed+' of '+totalTargets+' imported Etsy listings. '+repaired+' repaired; '+skuCount+' Etsy SKU variants verified; '+recipeCount+' missing recipes created; '+skipped+' safely skipped; '+failed+' need attention.'+(issues.length?' See each listing and next step in Needs attention below.':'');
-          invalidateEtsyHistory();
-          await drawBatches();
-        }catch(error){
-          if(importStatus)importStatus.textContent='Etsy family repair paused at listing '+(offset+1)+': '+(error.message||'Try again.');
-          button.disabled=false;
-        }
-      });
      target.querySelectorAll('[data-etsy-reapply-sales]').forEach((button)=>button.onclick=async()=>{button.disabled=true;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Reapplying stored Etsy sales…';try{const result=await client.rpc('reapply_all_etsy_unmatched_sales');if(result.error)throw result.error;const data=result.data||{};if(importStatus)importStatus.textContent='Reapplied '+Number(data.matched_lines||0)+' stored sale lines without contacting Etsy. '+Number(data.remaining_lines||0)+' remain unmatched.';invalidateEtsyHistory();await drawBatches();}catch(error){if(importStatus)importStatus.textContent='Stored Etsy sales were not reapplied: '+(error.message||'Unknown error.');button.disabled=false;}});
     target.querySelectorAll('[data-etsy-mark-reviewed]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await updateReviewState(rows.find((batch)=>String(batch.id)===String(button.dataset.etsyMarkReviewed)),true);invalidateEtsyHistory();await drawBatches();}catch(error){button.disabled=false;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Could not mark this action reviewed: '+(error.message||'Unknown error.');}});
     target.querySelectorAll('[data-etsy-restore-reviewed]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await updateReviewState(rows.find((batch)=>String(batch.id)===String(button.dataset.etsyRestoreReviewed)),false);invalidateEtsyHistory();await drawBatches();}catch(error){button.disabled=false;const importStatus=root.querySelector('[data-etsy-import-status]');if(importStatus)importStatus.textContent='Could not restore this action: '+(error.message||'Unknown error.');}});
