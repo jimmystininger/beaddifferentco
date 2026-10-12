@@ -1013,3 +1013,5 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .payment-success-order strong{display:block;margin-top:6px;color:#251b25;font:700 14px/1.35 Arial,sans-serif;letter-spacing:0;overflow-wrap:anywhere;text-transform:none}
 .payment-success-card .cta{display:inline-block;min-width:220px;background:#5b284f;color:#fff;padding:15px 26px;border-radius:28px;font-size:12px;font-weight:700;letter-spacing:1px;text-decoration:none}
 .payment-success-card .cta:hover{background:#3d1b36;color:#fff}
+.admin-sku-row-actions{display:grid;justify-items:start;gap:8px}
+.admin-sku-row-actions button{box-sizing:border-box;min-width:108px;margin:0;text-align:center;white-space:nowrap}
