@@ -285,7 +285,7 @@ async function paymentsFromLedger(connection: Record<string, any>, windowStart: 
   return pages.flatMap((page) => list(page?.results));
 }
 async function syncReceiptFees(connection: Record<string, any>, historical = false, startCursor = '') {
-  // Use Etsy's ledger-to-payments endpoint one 31-day window at a time, then
+  // Use Etsy's ledger-to-payments endpoint one 7-day window at a time, then
   // join payment fees to our imported sales locally instead of making one
   // request per receipt. The cursor keeps each invocation bounded/resumable.
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -293,7 +293,7 @@ async function syncReceiptFees(connection: Record<string, any>, historical = fal
   const periodStart = nowSeconds - periodSeconds;
   const cursorSeconds = Number(startCursor);
   const windowStart = Number.isFinite(cursorSeconds) && cursorSeconds >= periodStart && cursorSeconds <= nowSeconds ? Math.floor(cursorSeconds) : periodStart;
-  const windowEnd = Math.min(nowSeconds, windowStart + 31 * 24 * 60 * 60 - 1);
+  const windowEnd = Math.min(nowSeconds, windowStart + 7 * 24 * 60 * 60 - 1);
   const since = new Date(windowStart * 1000).toISOString();
   const until = new Date((windowEnd + 1) * 1000).toISOString();
   const payments = await paymentsFromLedger(connection, windowStart, windowEnd);
@@ -583,6 +583,17 @@ async function preloadInventorySkus(skus: string[]) {
   }
   return cache;
 }
+async function correctedLocalSkuOverrides(listingId: string) {
+  const rows = await database(`inventory_skus?source_metadata->>etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=sku,source_metadata&limit=1000`);
+  const overrides = new Map<string, string>();
+  for (const row of rows) {
+    const metadata = row.source_metadata && typeof row.source_metadata === 'object' ? row.source_metadata : {};
+    const etsySku = normalizeSku(metadata.etsy_sku);
+    const correctedSku = normalizeSku(metadata.corrected_one_pk_sku || row.sku);
+    if (metadata.source === 'etsy_listing' && etsySku && correctedSku && String(metadata.disposition || '') === 'inventory') overrides.set(etsySku, correctedSku);
+  }
+  return overrides;
+}
 function inventorySkuExistedBeforeRun(cache: Map<string, Record<string, any>>, sku: string, runStartedAt: string) {
   const row = cache.get(normalizeSku(sku));
   const createdAt = Date.parse(String(row?.created_at || ''));
@@ -751,14 +762,13 @@ async function upsertEtsyProductOptionValue(optionId: string, variant: { sku: st
   }
 }
 async function syncMissingEtsyProductData(productId: string, values: { listingId: string; title: string; description: string; categorySlug: string; tags: string[]; materials: string[] }) {
-  const currentRows = await database(`products?id=eq.${encodeURIComponent(productId)}&select=etsy_listing_id,category_slug,seo_title,short_description,description,item_details&limit=1`);
+  const currentRows = await database(`products?id=eq.${encodeURIComponent(productId)}&select=etsy_listing_id,category_slug,seo_title,description,item_details&limit=1`);
   const current = currentRows[0];
   if (!current) return;
   const updates: Record<string, unknown> = {};
   if (!current.etsy_listing_id) updates.etsy_listing_id = Number(values.listingId);
   if ((!current.category_slug || current.category_slug === 'uncategorized') && values.categorySlug !== 'uncategorized') updates.category_slug = values.categorySlug;
   if (!String(current.seo_title || '').trim()) updates.seo_title = values.title;
-  if (!String(current.short_description || '').trim() && values.description) updates.short_description = values.description.slice(0, 240);
   if (!String(current.description || '').trim() && values.description) updates.description = values.description;
   if (!String(current.item_details || '').trim()) updates.item_details = `Imported from Etsy listing ${values.listingId}. Tags: ${values.tags.join(', ') || 'None'}. Materials: ${values.materials.join(', ') || 'None'}.`;
   if (Object.keys(updates).length) await database(`products?id=eq.${encodeURIComponent(productId)}`, 'PATCH', updates, 'return=minimal');
@@ -798,13 +808,15 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   if (!orderedVariantRows.length) throw new Error(`Etsy returned no explicit SKU variants for listing ${listingId}; no SKU or product page was created.`);
   const uniqueVariantSkus = new Set(orderedVariantRows.map((variant) => normalizeSku(variant.sku)));
   const variantSkus = [...new Set(orderedVariantRows.map((variant) => normalizeSku(variant.sku)).filter(Boolean))];
+  const correctedSkuOverrides = await correctedLocalSkuOverrides(listingId);
+  const localOnePackSkuFor = (sku: string) => correctedSkuOverrides.get(normalizeSku(sku)) || onePackSkuFor(sku, listingId, title);
   const skuMatch = await findExistingProductByEtsySkus(variantSkus.length ? variantSkus : [canonicalEtsySku]);
   if (skuMatch.allSkusRepresented) {
     return { listing_id: listingId, created: false, repaired: false, skipped: true, product_page_existed: true, family_skus: variantSkus.map((sku) => ({ etsy_sku: sku })), skip_reason: 'Every unique Etsy SKU in this family is already represented on existing product pages.' };
   }
   if (uniqueVariantSkus.size !== orderedVariantRows.length) throw new Error(`Etsy returned the same SKU more than once for listing ${listingId}; no family changes were made.`);
-  const oneSku = onePackSkuFor(canonicalEtsySku, listingId, title);
-  const inventoryCache = await preloadInventorySkus([...variantRows.flatMap((variant) => [variant.sku, onePackSkuFor(variant.sku, listingId, title)]), canonicalEtsySku, oneSku]);
+  const oneSku = localOnePackSkuFor(canonicalEtsySku);
+  const inventoryCache = await preloadInventorySkus([...variantRows.flatMap((variant) => [variant.sku, localOnePackSkuFor(variant.sku)]), canonicalEtsySku, oneSku]);
   const packSize = packSizeForSku(canonicalEtsySku);
   const listingPrice = listingPriceFrom(listing, detail);
   const unitPrice = packSize > 1 ? Math.round((listingPrice / packSize) * 100) / 100 : listingPrice;
@@ -817,7 +829,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   };
   orderedVariantRows.forEach((variant) => {
     const variantCanonical = normalizeSku(variant.sku);
-    const variantOneSku = onePackSkuFor(variantCanonical, listingId, title);
+    const variantOneSku = localOnePackSkuFor(variantCanonical);
     addOptionOrder(variantCanonical);
   });
   const recipeText = [title, description, etsySku, detail.category_path, detail.taxonomy_path, listing.category_path, listing.taxonomy_path].filter(Boolean).join(' ');
@@ -828,7 +840,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const images = listingImagesFrom(listing, detail);
   const tags = listingValues(detail.tags).map(cleanText).slice(0, 40);
   const materials = listingValues(detail.materials).map(cleanText).slice(0, 40);
-  const existingByListing = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id,external_id,name,category_slug,seo_title,short_description,description&limit=1`);
+  const existingByListing = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id,external_id,name,category_slug,seo_title,description&limit=1`);
   let product = existingByListing[0];
   let created = false;
   let productMatchedByExistingSkuSet = false;
@@ -845,7 +857,6 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     if (!existingOnly && (String(product.name || '').trim() === title || !String(product.name || '').trim())) productRepair.name = productName;
     // Preserve an admin's edits, but backfill missing copy from Etsy so an
     // older staged page does not render an empty product-description panel.
-    if (!existingOnly && description && !String(product.short_description || '').trim()) productRepair.short_description = description.slice(0, 240);
     if (!existingOnly && description && !String(product.description || '').trim()) productRepair.description = description;
     if (Object.keys(productRepair).length) await database(`products?id=eq.${encodeURIComponent(String(product.id))}`, 'PATCH', productRepair, 'return=minimal');
     // Etsy can store several pack SKUs under one listing. Older imports only
@@ -859,7 +870,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     let repaired = !existingOption[0];
     const family = orderedVariantRows.map((variant) => {
       const variantCanonical = normalizeSku(variant.sku) || `ETSY-${listingId}`;
-      const variantOneSku = onePackSkuFor(variantCanonical, listingId, title);
+      const variantOneSku = localOnePackSkuFor(variantCanonical);
       const variantPackSize = packSizeForSku(variantCanonical);
       const onePkExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, variantOneSku, runStartedAt);
       const packExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
@@ -871,7 +882,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     for (const variant of orderedVariantRows) {
       const variantCanonical = normalizeSku(variant.sku);
       if (!variantCanonical) continue;
-      const variantOneSku = onePackSkuFor(variantCanonical, listingId, title);
+      const variantOneSku = localOnePackSkuFor(variantCanonical);
       const variantPackSize = packSizeForSku(variantCanonical);
       const variantRecipeText = [title, description, variantCanonical, detail.category_path, detail.taxonomy_path].filter(Boolean).join(' ');
       const oneSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantOneSku, runStartedAt);
@@ -957,7 +968,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   }
   if (!product) {
     const initialSkuFilterDefinitions = [{ label: 'Quantity', options: Object.fromEntries(orderedVariantRows.map((variant) => [normalizeSku(variant.sku), variant.label || packChoiceLabel(variant.sku)])) }];
-    const inserted = await database('products', 'POST', { external_id: oneSku, sku: oneSku, etsy_listing_id: Number(listingId), category_slug: categorySlug, name: productName, seo_title: title, short_description: description.slice(0, 240) || null, description: description || null, item_details: `Imported from Etsy listing ${listingId}. Tags: ${tags.join(', ') || 'None'}. Materials: ${materials.join(', ') || 'None'}.`, shipping_details: null, price: unitPrice, quantity: quantity * packSize, visible: false, waitlist_enabled: false, estimated_cost: 0, low_stock_threshold: 0, badges: [], promo_skus: [], etsy_units_per_sale: 1, sku_filter_definitions: initialSkuFilterDefinitions, featured: false, added_at: stamp(detail.created_timestamp || listing.created_timestamp) });
+    const inserted = await database('products', 'POST', { external_id: oneSku, sku: oneSku, etsy_listing_id: Number(listingId), category_slug: categorySlug, name: productName, seo_title: title, description: description || null, item_details: `Imported from Etsy listing ${listingId}. Tags: ${tags.join(', ') || 'None'}. Materials: ${materials.join(', ') || 'None'}.`, shipping_details: null, price: unitPrice, quantity: quantity * packSize, visible: false, waitlist_enabled: false, estimated_cost: 0, low_stock_threshold: 0, badges: [], promo_skus: [], etsy_units_per_sale: 1, sku_filter_definitions: initialSkuFilterDefinitions, featured: false, added_at: stamp(detail.created_timestamp || listing.created_timestamp) });
     product = inserted[0];
     created = true;
   }
@@ -976,7 +987,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   // parent does not already have one.
   for (const variant of orderedVariantRows) {
     const variantCanonical = normalizeSku(variant.sku);
-    const variantOneSku = onePackSkuFor(variant.sku, listingId, title);
+    const variantOneSku = localOnePackSkuFor(variant.sku);
     if (!variantCanonical || variantCanonical === canonicalEtsySku) continue;
     const variantPackSize = packSizeForSku(variant.sku);
     const variantOneSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantOneSku, runStartedAt);
@@ -1000,7 +1011,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   if (mapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: mapping.id, inventory_sku_id: childInventory.id, inventory_sku: oneSku, inventory_units: Math.max(1, packSize), sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
   const familySkus = orderedVariantRows.map((variant) => {
     const variantCanonical = normalizeSku(variant.sku);
-    const variantOneSku = onePackSkuFor(variant.sku, listingId, title);
+    const variantOneSku = localOnePackSkuFor(variant.sku);
     const variantPackSize = packSizeForSku(variant.sku);
     const recipe = familyRecipeBySku.get(variantCanonical);
     const onePkExistedBeforeRun = recipe?.one_pk_sku_existed || false;

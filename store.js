@@ -86,7 +86,6 @@ const mapStorefrontListingRows=(rows,optionRows=[])=>rows.map((item)=>({
   addedAt:item.added_at,
   waitlist:item.waitlist_enabled,
   description:item.description||'',
-  shortDescription:item.short_description||'',
   itemDetails:item.item_details||'',
   shippingDetails:item.shipping_details||'',
   etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,
@@ -188,7 +187,7 @@ async function loadCatalog(){
   const homepage=document.body.dataset.page==='Home';
   const productPageId=document.body.dataset.page==='Product'?(document.body.dataset.productId||new URLSearchParams(location.search).get('id')||''):'';
   const productQueryFor=()=>{
-    let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions');
+    let productQuery=client.from('products').select('id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions');
     if(document.body.dataset.page!=='Admin')productQuery=productQuery.eq('visible',true);
     if(productPageId){const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;productQuery=productQuery.eq(uuidPattern.test(productPageId)?'id':'external_id',productPageId).neq('id',crypto.randomUUID());}
     return productQuery;
@@ -301,7 +300,7 @@ async function loadCatalog(){
     let hydratedOptionRows=optionResult.data||[];
     try{hydratedOptionRows=await hydrateStorefrontOptionInventory(client,hydratedOptionRows);}catch(error){window.storeCatalogOptionsError=error;}
     catalog=mapRows(data,imagesByProduct,hydratedOptionRows);
-    catalog.forEach((item)=>{item.shortDescription=item.shortDescription||item.short_description||'';if(!item.description)item.description=item.shortDescription;});
+
     window.dispatchEvent(new Event('bead-catalog-enriched'));
     return catalog;
   };
@@ -328,7 +327,7 @@ async function loadCatalog(){
   };
   const fastCategoryRender=document.body.dataset.categoryLayout==='true';
   catalog=mapRows(data);
-  catalog.forEach((item)=>{item.shortDescription=item.shortDescription||item.short_description||'';if(!item.description)item.description=item.shortDescription;});
+
   if(fastCategoryRender)void enrichCatalog().then(applyPageScopedSkuOptions).catch((enrichmentError)=>{window.storeCatalogAncillaryError=enrichmentError;});
   else {await enrichCatalog();await applyPageScopedSkuOptions();}
   return catalog;
@@ -412,7 +411,7 @@ async function loadCartCatalog(additionalIds=[]){
   try{storedBag=JSON.parse(localStorage.getItem(storeKeys.bag)||'[]');}catch(error){}
   let ids=[...new Set(storedBag.map((entry)=>String(entry?.id||'').trim()).filter(Boolean))];
   ids=[...new Set(ids.concat((Array.isArray(additionalIds)?additionalIds:[]).map((id)=>String(id||'').trim()).filter(Boolean)))];
-    const productFields='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
+    const productFields='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,sku_filter_definitions';
   const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const loadRows=async(productIds)=>{
     const externalIds=productIds.filter((id)=>!uuidPattern.test(id));
@@ -461,7 +460,6 @@ async function loadCartCatalog(additionalIds=[]){
   const imageResult=await fetchStoreBatches(rows.map((item)=>item.id),(batch)=>client.from('product_images').select('id,product_id,url,alt_text,sort_order,media_type').in('product_id',batch).order('sort_order').order('id'));
   const imagesByProduct=new Map();(imageResult.data||[]).forEach((image)=>{const images=imagesByProduct.get(image.product_id)||[];images.push(image);imagesByProduct.set(image.product_id,images);});
    const cartProducts=rows.map((item)=>{const media=imagesByProduct.get(item.id)||[];return{...item,id:item.external_id||item.id,databaseId:item.id,externalId:item.external_id,seoTitle:item.seo_title||item.name,searchText:item.search_text||item.seo_title||item.name,category:item.subcategory_slug||item.category_slug,image:media.find((entry)=>entry.media_type!=='video')?.url||'product-mix.jpg',images:media.filter((entry)=>entry.media_type!=='video').map((entry)=>entry.url),media:media.map((entry)=>({url:entry.url,type:entry.media_type||'image'})),options:[],price:Number(item.price)||0,promoPrice:item.promo_price===null||item.promo_price===undefined?null:Number(item.promo_price),promoStartsAt:item.promo_starts_at||null,promoEndsAt:item.promo_ends_at||null,displayPrice:Number(item.price)||0,promoDiscountPercent:Number(item.promo_discount_percent)||0,promoSkus:Array.isArray(item.promo_skus)?item.promo_skus:[],addedAt:item.added_at,waitlist:item.waitlist_enabled,description:item.description||'',itemDetails:item.item_details||'',shippingDetails:item.shipping_details||'',etsyUnitsPerSale:Number(item.etsy_units_per_sale)||1,quantity:Number(item.quantity)||0,lowStockThreshold:Number(item.low_stock_threshold)||0,badges:Array.isArray(item.badges)?item.badges:[]};});
-   cartProducts.forEach((item)=>{item.shortDescription=item.shortDescription||item.short_description||'';if(!item.description)item.description=item.shortDescription;});
    if(document.body.dataset.page==='Product'&&catalog.length){const merged=new Map(catalog.map((item)=>[String(item.id||item.externalId||item.databaseId),item]));cartProducts.forEach((item)=>merged.set(String(item.id||item.externalId||item.databaseId),item));catalog=[...merged.values()];}else catalog=cartProducts;
   window.storeCartCatalogState='ready';
   return catalog;

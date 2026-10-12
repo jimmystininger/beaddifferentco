@@ -1,10 +1,10 @@
 (function(root){
-  const fields='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,short_description,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions';
+  const fields='id,external_id,sku,category_slug,subcategory_slug,name,seo_title,search_text,description,item_details,shipping_details,etsy_units_per_sale,price,promo_price,promo_starts_at,promo_ends_at,promo_discount_percent,promo_skus,quantity,visible,waitlist_enabled,added_at,low_stock_threshold,badges,featured,sku_filter_definitions';
   const build=(item)=>{
     const id=item.externalId||item.external_id||item.id;
     const name=item.name||'Product Details';
     const seoTitle=item.seoTitle||item.seo_title||name;
-    const productDescription=String(item.shortDescription||item.short_description||item.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+    const productDescription=String(item.description||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
     const searchDescription=productDescription||`Shop ${name} at Bead Different Co. Explore beads and creative supplies for your next project.`;
     return{title:`${seoTitle} | Bead Different Co.`,description:searchDescription.slice(0,160),searchDescription,canonicalPath:`/product.html?id=${encodeURIComponent(id)}`};
   };
