@@ -1003,7 +1003,7 @@ body[data-theme-ready][data-page="Account"] .profile-order-tracking a:hover,body
 .admin-etsy-recipe-summary li>.admin-etsy-recipe-status{flex:1 1 100%;order:5;min-width:0;overflow-wrap:anywhere}
 
 .store-page h1{font-family:Arial,sans-serif;font-style:normal;font-weight:700;line-height:1.1;letter-spacing:-.02em}
-@media(max-width:700px){.featured-copy{aspect-ratio:9/7;min-height:0;overflow:visible;padding:24px 18px}.product-page-layout>.product-page-reviews{order:3;grid-column:auto}.product-page-purchase h1,.store-page h1{font-family:Arial,sans-serif;font-style:normal}}
+@media(max-width:700px){.featured-copy{aspect-ratio:9/7;min-height:0;overflow:visible;padding:24px 18px}.product-page-purchase h1,.store-page h1{font-family:Arial,sans-serif;font-style:normal}}
 
 .payment-success-page{min-height:100vh;background:#fffdfb;color:#251b25;font-family:Arial,sans-serif}
 .payment-success-shell{display:flex;align-items:center;justify-content:center;min-height:100vh;min-width:0;padding:32px 20px}
