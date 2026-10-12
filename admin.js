@@ -1315,9 +1315,32 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
     const roleInput=fields.querySelector('[name="sku_role"]');
     const syncRoleFields=()=>{const parent=roleInput.value==='recipe_parent';fields.querySelector('[data-sku-editor-inventory-fields]').hidden=parent;fields.querySelector('[data-sku-editor-quantity-fields]').hidden=parent;};
     roleInput.addEventListener('change',syncRoleFields);
+    const form=dialog.querySelector('form');
+    const deleteButton=document.createElement('button');
+    deleteButton.type='button';
+    deleteButton.textContent='Delete SKU';
+    deleteButton.className='admin-delete-sku-button';
+    form.querySelector('.admin-actions').prepend(deleteButton);
+    const confirmation=document.createElement('div');
+    confirmation.className='admin-inventory-sku-delete-confirmation';
+    confirmation.hidden=true;
+    confirmation.innerHTML='<p>Delete <strong>'+adminSafe(record.sku)+'</strong> from canonical inventory? This cannot be undone. Protected SKU links and history cannot be deleted.</p><div class="admin-actions"><button type="button" data-cancel-delete-sku>Cancel</button><button type="button" data-confirm-delete-sku>Confirm Delete</button></div>';
+    form.querySelector('.admin-actions').before(confirmation);
+    deleteButton.onclick=()=>{confirmation.hidden=false;deleteButton.disabled=true;saveButton.disabled=true;status.textContent='Choose Cancel or Confirm Delete.';};
+    confirmation.querySelector('[data-cancel-delete-sku]').onclick=()=>{confirmation.hidden=true;deleteButton.disabled=false;saveButton.disabled=false;status.textContent='Deletion cancelled. No changes were made.';};
+    confirmation.querySelector('[data-confirm-delete-sku]').onclick=async(event)=>{
+      const confirmButton=event.currentTarget;
+      confirmButton.disabled=true;
+      saveButton.disabled=true;
+      status.textContent='Deleting SKU…';
+      const result=await cloudAdmin().rpc('delete_unused_inventory_sku',{inventory_sku_id_value:record.id});
+      if(result.error){status.textContent='SKU was not deleted: '+(result.error.message||'Unknown database error.');confirmButton.disabled=false;return;}
+      status.textContent='SKU deleted.';
+      await onSaved();
+      close();
+    };
     saveButton.disabled=false;
     status.textContent='Edit the fields you need, then save this SKU.';
-    const form=dialog.querySelector('form');
     form.onsubmit=async(event)=>{
       event.preventDefault();
       if(saveButton.disabled)return;
@@ -2387,8 +2410,26 @@ async function renderEtsyConnection(){
     const listingSkuCandidates=visible.filter((batch)=>actionLabel(batch)==='Etsy listings').flatMap((batch)=>listingReviewPages(batch).flatMap((page)=>{const family=Array.isArray(page.family_skus)?page.family_skus:[];return [...family.flatMap((row)=>[row.one_pk_sku,row.etsy_sku]),page.one_pk_sku,page.etsy_sku].map((sku)=>String(sku||'').trim()).filter(Boolean);}));
     const inventoryBySku=new Map();
     const inventoryLookupValues=[...new Set(listingSkuCandidates.flatMap((sku)=>[sku,sku.toLowerCase()]))];
-    for(let start=0;start<inventoryLookupValues.length;start+=100){const lookup=await client.from('inventory_skus').select('id,sku,created_at,source_metadata').in('sku',inventoryLookupValues.slice(start,start+100));if(lookup.error){const status=root.querySelector('[data-etsy-import-status]');if(status)status.textContent='Imported SKU details could not be verified; no unverified SKU is labeled as created.';break;}for(const row of lookup.data||[]){const key=String(row.sku||'').trim().toUpperCase();if(!inventoryBySku.has(key))inventoryBySku.set(key,[]);inventoryBySku.get(key).push(row);}}
-     const createdInventorySkus=(batch,page)=>{const listingId=String(page?.listing_id||'').trim();const startedAt=Date.parse(String(batch.run_started_at||batch.created_at||''));const family=Array.isArray(page?.family_skus)?page.family_skus:[];const candidates=[...family.flatMap((row)=>[row.one_pk_sku,row.etsy_sku]),page?.one_pk_sku,page?.etsy_sku].map((sku)=>String(sku||'').trim()).filter(Boolean);const matches=[];const seen=new Set();for(const sku of candidates){for(const row of inventoryBySku.get(sku.toUpperCase())||[]){const metadata=row.source_metadata||{};const createdAt=Date.parse(String(row.created_at||''));if(String(metadata.etsy_listing_id||'')!==listingId||!Number.isFinite(createdAt)||Number.isFinite(startedAt)&&createdAt<startedAt)continue;const recordId=String(row.id||`${row.sku}:${row.created_at}`);if(seen.has(recordId))continue;seen.add(recordId);matches.push({id:row.id,sku:String(row.sku||sku).trim()});}}return matches;};
+    let recipeLookupError=null;
+    for(let start=0;start<inventoryLookupValues.length;start+=100){const lookup=await client.from('inventory_skus').select('id,sku').in('sku',inventoryLookupValues.slice(start,start+100));if(lookup.error){recipeLookupError=lookup.error;const status=root.querySelector('[data-etsy-import-status]');if(status)status.textContent='Imported SKU and recipe details could not be loaded. Refresh to retry.';break;}for(const row of lookup.data||[]){const key=String(row.sku||'').trim().toUpperCase();if(!inventoryBySku.has(key))inventoryBySku.set(key,[]);inventoryBySku.get(key).push(row);}}
+    const inventoryById=new Map([...inventoryBySku.values()].flat().map((row)=>[row.id,row]));
+    const recipeParentSkus=visible.filter((batch)=>actionLabel(batch)==='Etsy listings').flatMap((batch)=>listingReviewPages(batch).flatMap((page)=>Array.isArray(page.family_skus)?page.family_skus.map((row)=>String(row.etsy_sku||'').trim().toUpperCase()):[]));
+    const recipeParentIds=[...new Set(recipeParentSkus.flatMap((sku)=>(inventoryBySku.get(sku)||[]).map((row)=>row.id)).filter(Boolean))];
+    const recipesByParentId=new Map();
+    if(!recipeLookupError&&recipeParentIds.length){
+      const lookup=await adminBatchRows(recipeParentIds,(batch)=>client.from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity,sort_order').in('bundle_sku_id',batch).order('sort_order'),100);
+      if(lookup.error)recipeLookupError=lookup.error;
+      else{
+        const missingChildIds=[...new Set((lookup.data||[]).map((row)=>row.component_sku_id).filter((id)=>!inventoryById.has(id)))];
+        if(missingChildIds.length){
+          const children=await adminBatchRows(missingChildIds,(batch)=>client.from('inventory_skus').select('id,sku').in('id',batch),100);
+          if(children.error)recipeLookupError=children.error;
+          else (children.data||[]).forEach((row)=>inventoryById.set(row.id,row));
+        }
+        if(!recipeLookupError)(lookup.data||[]).forEach((row)=>{const components=recipesByParentId.get(row.bundle_sku_id)||[];components.push({sku:inventoryById.get(row.component_sku_id)?.sku||'Unknown child SKU',quantity:Number(row.quantity)||1});recipesByParentId.set(row.bundle_sku_id,components);});
+      }
+    }
+    const listingInventorySkus=(page)=>{const family=Array.isArray(page?.family_skus)?page.family_skus:[];const candidates=[...family.flatMap((row)=>[row.one_pk_sku,row.etsy_sku]),page?.one_pk_sku,page?.etsy_sku].map((sku)=>String(sku||'').trim()).filter(Boolean);const matches=[];const seen=new Set();for(const sku of candidates){for(const row of inventoryBySku.get(sku.toUpperCase())||[]){if(seen.has(row.id))continue;seen.add(row.id);matches.push({id:row.id,sku:String(row.sku||sku).trim()});}}return matches;};
     groupedRows.forEach((batch)=>{if(actionLabel(batch)==='Etsy listings'&&Array.isArray(batch.metadata?.created_pages)){batch.applied_count=batch.metadata.created_pages.length;batch.matched_count=listingReviewPages(batch).length;}});
     const displayCount=(value)=>Number(value||0).toLocaleString();
     const feeSyncSummary=(batch)=>{const metadata=batch.metadata||{};return {receipts:Number(batch.row_count||0),lines:Number(batch.applied_count||metadata.fee_lines||0),window:String(metadata.window||'last 45 days')};};
@@ -2408,24 +2449,25 @@ async function renderEtsyConnection(){
         const failedMarkup=failed.length?'<div class="admin-etsy-failed-links"><strong>Needs retry</strong><ul>'+failed.map(page=>'<li>'+adminSafe(page.title||page.listing_id||'Listing')+': '+adminSafe(page.error||'Import failed.')+'</li>').join('')+'</ul></div>':'';
         const createdDetails=(page)=>{
           const familyRows=Array.isArray(page.family_skus)?page.family_skus:[];
-          const createdSkus=[];
-          createdInventorySkus(batch,page).forEach((sku)=>createdSkus.push('<li><strong>'+adminSafe(sku.sku)+'</strong> <button type="button" data-edit-created-inventory-sku="'+adminSafe(sku.id)+'">Edit SKU</button></li>'));
+          const inventorySkus=[];
+          listingInventorySkus(page).forEach((sku)=>inventorySkus.push('<li><strong>'+adminSafe(sku.sku)+'</strong> <button type="button" data-edit-created-inventory-sku="'+adminSafe(sku.id)+'">Edit SKU</button></li>'));
           const seenRecipes=new Set();
-          const recipes=familyRows.filter((row)=>row.recipe_created===true).map((row)=>{
+          const recipes=familyRows.map((row)=>{
             const parent=String(row.etsy_sku||'').trim();
             if(!parent||seenRecipes.has(parent.toUpperCase()))return '';
             seenRecipes.add(parent.toUpperCase());
-            const components=Array.isArray(row.recipe_components)?row.recipe_components:[];
-            const parts=components.map((component)=>Number(component.quantity||1)+' × '+adminSafe(component.sku||'child SKU')).join(' · ');
+            const parentId=inventoryBySku.get(parent.toUpperCase())?.[0]?.id;
+            const components=recipesByParentId.get(parentId)||[];
+            if(Number(row.pack_size||0)<=1&&!components.length)return '';
+            const parts=recipeLookupError?'Saved recipe could not be loaded. Refresh to retry.':components.length?components.map((component)=>component.quantity+' × '+adminSafe(component.sku)).join(' · '):'No saved recipe';
             return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span> <a href="'+adminSafe('admin.html?inventory=adjust&recipe='+encodeURIComponent(parent))+'" target="_blank" rel="noopener">Edit recipe</a></li>';
           }).filter(Boolean).join('');
-          const pageId=String(page.listing_id||page.product_id||'');
-          const isNewProductPage=(Array.isArray(metadata.created_pages)?metadata.created_pages:[]).some((createdPage)=>String(createdPage?.listing_id||createdPage?.product_id||'')===pageId);
-          if(!createdSkus.length&&!recipes&&!isNewProductPage)return '';
           const productId=String(page.product_id||'').trim();
           const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):String(page.links?.product||page.url||'');
           const productLink=productHref?'<a href="'+adminSafe(productHref)+'" target="_blank" rel="noopener">Edit product page</a>':'';
-          return (createdSkus.length?'<ul class="admin-etsy-created-skus">'+createdSkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'')+productLink;
+          const addPageButton='<button type="button" data-etsy-add-product-page>Add second product page</button>';
+          const pageTitle=String(page.product_name||page.etsy_title||page.title||page.listing_id||'Etsy listing').trim();
+          return '<div><strong>'+adminSafe(pageTitle)+'</strong></div>'+(inventorySkus.length?'<ul class="admin-etsy-created-skus">'+inventorySkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Saved recipes</strong><ul>'+recipes+'</ul></div>':'')+productLink+addPageButton;
         };
         const createdMarkup=pages.map(createdDetails).filter(Boolean).map((markup)=>'<div class="admin-etsy-created-links">'+markup+'</div>').join('<hr>');
         return repairButton+createdMarkup+failedMarkup+(warning?'<br>'+warning:'');
@@ -2441,7 +2483,8 @@ async function renderEtsyConnection(){
     target.innerHTML=historyTabs+'<table class="admin-table"><thead><tr><th>Action</th><th>Status</th><th>Result</th><th>Needs attention</th><th>Ran</th><th>Follow-up</th></tr></thead><tbody>'+(visible.map((batch)=>'<tr><td>'+adminSafe(actionLabel(batch))+'</td><td>'+adminSafe(historyView==='completed'?'completed':batch.status)+'</td><td>'+adminSafe(resultCell(batch))+'</td><td>'+adminSafe(attentionCell(batch))+'</td><td>'+adminSafe(batch.created_at?new Date(batch.created_at).toLocaleString():'')+'</td><td>'+followUp(batch)+(historyView==='completed'?'<button type="button" data-etsy-restore-reviewed="'+adminSafe(batch.id)+'">Restore to needs review</button>':'<button type="button" data-etsy-mark-reviewed="'+adminSafe(batch.id)+'">Mark reviewed</button>')+'</td></tr>').join('')||'<tr><td colspan="6">'+(historyView==='completed'?'No completed Etsy actions yet.':'Nothing needs review.')+'</td></tr>')+'</tbody></table><div class="admin-pagination"><button type="button" data-etsy-batch-page="prev" '+(batchPage===1?'disabled':'')+'>Previous</button><span>Page '+batchPage+' of '+pageCount+' · '+rows.length+' actions</span><button type="button" data-etsy-batch-page="next" '+(batchPage===pageCount?'disabled':'')+'>Next</button></div>';
     target.querySelectorAll('[data-etsy-batch-page]').forEach((button)=>button.onclick=()=>{batchPage=Math.max(1,Math.min(pageCount,batchPage+(button.dataset.etsyBatchPage==='next'?1:-1)));drawBatches();});
     target.querySelectorAll('[data-etsy-history-view]').forEach((button)=>button.onclick=()=>{historyView=button.dataset.etsyHistoryView;batchPage=1;void drawBatches();});
-     target.querySelectorAll('[data-edit-created-inventory-sku]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await openInventorySkuEditor(button.dataset.editCreatedInventorySku);}finally{button.disabled=false;}});
+     target.querySelectorAll('[data-edit-created-inventory-sku]').forEach((button)=>button.onclick=async()=>{button.disabled=true;try{await openInventorySkuEditor(button.dataset.editCreatedInventorySku,async()=>{invalidateEtsyHistory();await drawBatches();});}finally{button.disabled=false;}});
+    target.querySelectorAll('[data-etsy-add-product-page]').forEach((button)=>button.onclick=()=>{const url=new URL('admin.html?new=item',window.location.href);window.open(url.href,'_blank','noopener');});
     const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?[...new Set(listingReviewPages({...batch,metadata}).map((page)=>String(page.listing_id||'')).filter(Boolean))]:[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id);if(update.error)throw update.error;}};
       target.querySelectorAll('[data-etsy-repair-listings]').forEach((button)=>button.onclick=async()=>{
         button.disabled=true;
@@ -2449,7 +2492,7 @@ async function renderEtsyConnection(){
         const batch=visible.find((row)=>String(row.id)===String(button.dataset.etsyRepairListings));
         const batchIds=[...(batch?.source_batches||[{id:batch?.id}])].map((source)=>String(source.id||'')).filter(Boolean);
         if(!batchIds.length){if(importStatus)importStatus.textContent='That Etsy import batch is unavailable. Refresh the page and try again.';button.disabled=false;return;}
-        const cursorKey='etsy-family-repair:v1:'+batchIds.slice().sort().join(',');
+        const cursorKey='etsy-family-repair:v2:'+batchIds.slice().sort().join(',');
         let offset=Math.max(0,Number(sessionStorage.getItem(cursorKey)||0));
         let processed=0,repaired=0,failed=0,skipped=0,skuCount=0,recipeCount=0,totalTargets=0;
         const issues=[];
@@ -2465,7 +2508,7 @@ async function renderEtsyConnection(){
             for(const item of data.items||[]){
               processed+=1;
               if(item.status==='repaired'){repaired+=1;skuCount+=Number(item.sku_count||0);recipeCount+=Number(item.recipes_created||0);}
-              else{if(item.status==='failed')failed+=1;else if(item.status==='skipped')skipped+=1;if(issues.length<3)issues.push(String(item.listing_id||'Listing')+': '+String(item.error||item.reason||'Needs attention.'));}
+              else{if(item.status==='failed')failed+=1;else if(item.status==='skipped')skipped+=1;issues.push(String(item.listing_id||'Listing')+': '+String(item.error||item.reason||'Needs attention.'));}
             }
             const nextOffset=Number(data.next_offset);
             if(!Number.isFinite(nextOffset)||nextOffset<=offset&&!data.done)throw new Error('The repair did not advance. Try again; no page was created.');
@@ -2473,7 +2516,7 @@ async function renderEtsyConnection(){
             done=data.done===true;
             if(done)sessionStorage.removeItem(cursorKey);else sessionStorage.setItem(cursorKey,String(offset));
           }while(!done);
-          const issueSummary=issues.length?' First issues: '+issues.join(' · '):'';
+          const issueSummary=issues.length?' Issues: '+issues.join(' · '):'';
           if(importStatus)importStatus.textContent='Rechecked '+processed+' of '+totalTargets+' imported Etsy listings. '+repaired+' repaired; '+skuCount+' Etsy SKU variants verified; '+recipeCount+' missing recipes created; '+skipped+' safely skipped; '+failed+' need attention.'+issueSummary;
           invalidateEtsyHistory();
           await drawBatches();
