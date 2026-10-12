@@ -2163,129 +2163,9 @@ async function renderEtsyConnection(){
       batchPage=1;
     }catch(error){/* History must not prevent a completed Etsy action from being reported. */}
   };
-  let etsyRecipeInventoryPromise=null;
-  const openEtsyRecipeBuilder=async(parentSku,defaultChildSku)=>{
-    const parent=String(parentSku||'').trim();
-    if(!parent)return;
-    const dialog=document.createElement('dialog');
-    dialog.className='admin-etsy-recipe-dialog';
-    dialog.innerHTML='<form method="dialog" class="admin-etsy-recipe-modal"><button type="submit" class="admin-dialog-close" aria-label="Close">×</button><p class="kicker">MANUAL RECIPE</p><h3>Build recipe for '+adminSafe(parent)+'</h3><p>Choose the child SKUs and quantities this Etsy pack consumes. Nothing is saved until you click Save recipe.</p><div data-etsy-recipe-lines></div><button type="button" data-etsy-recipe-add>Add another child SKU</button><div class="admin-actions"><button type="button" class="cta" data-etsy-recipe-save>Save recipe</button><button type="button" data-etsy-recipe-cancel>Cancel</button><p data-etsy-recipe-status role="status"></p></div></form>';
-    document.body.append(dialog);
-    const modal=dialog.querySelector('.admin-etsy-recipe-modal');
-    const lines=dialog.querySelector('[data-etsy-recipe-lines]');
-    const status=dialog.querySelector('[data-etsy-recipe-status]');
-    let inventory=[];
-    try{
-      if(!etsyRecipeInventoryPromise){
-        etsyRecipeInventoryPromise=cloudAdmin().from('inventory_skus').select('id,sku,name,item_type').order('sku').limit(2000).then((result)=>{
-          if(result.error)throw result.error;
-          return (result.data||[]).filter((row)=>String(row.item_type||'Inventory').toLowerCase()!=='non-inventory');
-        }).catch((error)=>{etsyRecipeInventoryPromise=null;throw error;});
-      }
-      inventory=await etsyRecipeInventoryPromise;
-    }catch(error){status.textContent='Could not load child SKUs: '+(error.message||'Unknown error.');}
-    const options=()=>inventory.map((row)=>'<option value="'+adminSafe(row.sku)+'">'+adminSafe(row.sku)+' — '+adminSafe(row.name||row.sku)+'</option>').join('');
-    const addLine=(sku='',quantity=1)=>{const row=document.createElement('div');row.className='admin-etsy-recipe-line';row.innerHTML='<label>Child SKU<select data-etsy-recipe-sku><option value="">Choose a physical child SKU</option>'+options()+'</select></label><label>Quantity<input data-etsy-recipe-quantity type="number" min="1" step="1" value="'+Math.max(1,Number(quantity)||1)+'"></label><button type="button" data-etsy-recipe-remove>Remove</button>';lines.append(row);row.querySelector('[data-etsy-recipe-sku]').value=sku||'';row.querySelector('[data-etsy-recipe-remove]').onclick=()=>row.remove();};
-    addLine(defaultChildSku,1);
-    dialog.querySelector('[data-etsy-recipe-add]').onclick=()=>addLine('',1);
-    dialog.querySelector('[data-etsy-recipe-cancel]').onclick=()=>dialog.close();
-    dialog.querySelector('[data-etsy-recipe-save]').onclick=async()=>{
-      const components=[...lines.querySelectorAll('.admin-etsy-recipe-line')].map((row)=>({sku:String(row.querySelector('[data-etsy-recipe-sku]')?.value||'').trim(),quantity:Math.max(1,Number(row.querySelector('[data-etsy-recipe-quantity]')?.value)||0)})).filter((row)=>row.sku&&row.quantity>0);
-      if(!components.length){status.textContent='Choose at least one child SKU.';return;}
-      const parentResult=await cloudAdmin().from('inventory_skus').select('id').eq('sku',parent).maybeSingle();
-      if(parentResult.error||!parentResult.data){status.textContent='Parent SKU was not found in inventory.';return;}
-      const childResult=await adminBatchRows([...new Set(components.map((row)=>row.sku))],(batch)=>cloudAdmin().from('inventory_skus').select('id,sku').in('sku',batch));
-      if(childResult.error){status.textContent=childResult.error.message||'Child SKUs could not be loaded.';return;}
-      const childBySku=new Map((childResult.data||[]).map((row)=>[String(row.sku).toLowerCase(),row]));
-      if(components.some((row)=>!childBySku.has(row.sku.toLowerCase()))){status.textContent='Every selected child SKU must exist in inventory.';return;}
-      const remove=await cloudAdmin().from('inventory_bundle_components').delete().eq('bundle_sku_id',parentResult.data.id);
-      if(remove.error){status.textContent=remove.error.message||'The existing recipe could not be replaced.';return;}
-      const insert=await cloudAdmin().from('inventory_bundle_components').insert(components.map((row,index)=>({bundle_sku_id:parentResult.data.id,component_sku_id:childBySku.get(row.sku.toLowerCase()).id,quantity:row.quantity,sort_order:index})));
-      if(insert.error){status.textContent=insert.error.message||'The recipe could not be saved.';return;}
-      status.textContent='Recipe saved.';
-      window.setTimeout(()=>dialog.close(),350);
-    };
-    dialog.addEventListener('close',()=>dialog.remove(),{once:true});
-    dialog.showModal();
-  };
-  const bindEtsyReviewControls=(target)=>{
-    target.querySelectorAll('.admin-etsy-created-links').forEach((block)=>{
-      const family=block.querySelector('.admin-etsy-sku-family');
-      const productLink=[...block.querySelectorAll('a')].find((link)=>/edit product page/i.test(link.textContent||''));
-      const productId=productLink?new URL(productLink.href,location.href).searchParams.get('edit')||'':'';
-      if(family&&!block.querySelector('.admin-etsy-recipe-summary')){
-        family.querySelectorAll('span').forEach((entry)=>{
-          const heading=entry.querySelector('strong');
-          const match=String(entry.textContent||'').match(/(\d+)PK:\s*(\S+)/i);
-          if(!heading||!match||Number(match[1])<=1||entry.querySelector('[data-etsy-build-recipe]'))return;
-          const sku=match[2];
-          const childSku=sku.replace(/-\d{1,3}PK$/i,'-1PK');
-          const link=document.createElement('a');link.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(sku);link.target='_blank';link.rel='noopener';link.dataset.etsyBuildRecipe='';link.dataset.parentSku=sku;link.dataset.childSku=childSku;link.textContent='Build recipe';entry.append(' ',link);
-        });
-      }
-      block.querySelectorAll('.admin-etsy-recipe-summary>strong').forEach((heading)=>{heading.textContent='Recipes to build';});
-      block.querySelectorAll('.admin-etsy-recipe-summary li span').forEach((label)=>{if(/manual recipe required/i.test(label.textContent||''))label.textContent='Not created — build manually';});
-      if(productLink&&!block.querySelector('[data-etsy-secondary-page]')){
-        const create=document.createElement('a');create.href='admin.html?new=item';create.target='_blank';create.rel='noopener';create.dataset.etsySecondaryPage='';create.textContent='Create secondary product page';block.append(create);
-      }
-      block.querySelectorAll('button[data-etsy-build-recipe]').forEach((button)=>button.onclick=()=>openEtsyRecipeBuilder(button.dataset.parentSku,button.dataset.childSku));
-    });
-  };
   const drawBatches=async()=>{
     const target=root.querySelector('[data-etsy-batches]');
     if(!target||!client)return;
-    const syncEtsyConversionStates=async()=>{
-      const buttons=[...target.querySelectorAll('[data-etsy-convert-child]')];
-      const skus=[...new Set(buttons.map((button)=>String(button.dataset.etsyConvertChild||'').trim()).filter(Boolean))];
-      if(!skus.length)return;
-      const inventoryResult=await client.from('inventory_skus').select('id,sku,item_type,source_metadata').in('sku',skus);
-      if(inventoryResult.error)return;
-      const records=inventoryResult.data||[];
-      const recordBySku=new Map(records.map((record)=>[String(record.sku||'').trim().toLowerCase(),record]));
-      const ids=records.map((record)=>record.id).filter(Boolean);
-      const recipeResult=ids.length?await client.from('inventory_bundle_components').select('bundle_sku_id').in('bundle_sku_id',ids):{data:[],error:null};
-      if(recipeResult.error)return;
-      const recipeIds=new Set((recipeResult.data||[]).map((row)=>String(row.bundle_sku_id)));
-      buttons.forEach((button)=>{
-        const sku=String(button.dataset.etsyConvertChild||'').trim();
-        const record=recordBySku.get(sku.toLowerCase());
-        const converted=record&&String(record.item_type||'').toLowerCase()==='inventory'&&String(record.source_metadata?.disposition||'').toLowerCase()==='inventory'&&!recipeIds.has(String(record.id));
-        if(!converted)return;
-        const item=button.closest('li');
-        if(!item||item.dataset.etsyConversionState==='converted')return;
-        item.dataset.etsyConversionState='converted';
-        item.querySelectorAll('a[href*="recipe"]').forEach((link)=>link.remove());
-        button.remove();
-        const detail=item.querySelector(':scope > span');
-        if(detail)detail.textContent='Converted child SKU — premade stock is tracked directly.';
-        const status=item.querySelector('.admin-etsy-recipe-status');
-        if(status)status.textContent='Converted to child SKU';
-        const summary=item.closest('.admin-etsy-recipe-summary');
-        if(summary&&summary.querySelectorAll('li').length&&[...summary.querySelectorAll('li')].every((row)=>row.dataset.etsyConversionState==='converted'))summary.querySelector(':scope > strong').textContent='SKU status';
-      });
-    };
-    if(!target.dataset.compactListingLabels){
-      const compactListingLabels=()=>target.querySelectorAll('.admin-etsy-created-links').forEach((block)=>{
-        const heading=block.querySelector('strong');
-        if(!heading)return;
-        const links=[...block.querySelectorAll('a')];
-        const productLink=links.find((link)=>/Edit product page/i.test(link.textContent));
-        const oneLink=links.find((link)=>/^(?:Open|Edit) 1PK SKU$/i.test(link.textContent));
-        const packLink=links.find((link)=>/^(?:Open|Edit) pack SKU$/i.test(link.textContent));
-        const recipeLink=links.find((link)=>/recipe/i.test(link.textContent));
-        let productId='',oneSku='',packSku='';
-        try{productId=productLink?new URL(productLink.href,location.href).searchParams.get('edit')||'':'';oneSku=oneLink?new URL(oneLink.href,location.href).searchParams.get('sku')||'':'';packSku=packLink?new URL(packLink.href,location.href).searchParams.get('sku')||'':'';}catch(error){}
-        if(productId&&oneSku&&oneLink){oneLink.href='admin.html?edit='+encodeURIComponent(productId)+'&sku='+encodeURIComponent(oneSku);if(oneLink.textContent!=='Edit 1PK SKU')oneLink.textContent='Edit 1PK SKU';}
-        if(packSku&&packLink){packLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(packSku);if(packLink.textContent!=='Edit pack recipe')packLink.textContent='Edit pack recipe';}
-        if(packSku&&recipeLink){recipeLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(packSku);const recipeLabel=recipeLink.textContent.trim().toLowerCase().includes('create')?'Set up pack recipe':'Edit recipe';if(recipeLink.textContent!==recipeLabel)recipeLink.textContent=recipeLabel;}
-        if(!block.querySelector('.admin-etsy-sku-family')&&(oneSku||packSku)){const family=document.createElement('div');family.className='admin-etsy-sku-family';family.innerHTML='<strong>SKU family</strong> '+(oneSku?'<span><b>1PK:</b> '+adminSafe(oneSku)+'</span>':'')+(packSku?' <span><b>Pack:</b> '+adminSafe(packSku)+'</span>':'');heading.insertAdjacentElement('afterend',family);}
-        const current=heading.textContent.trim();
-        const next=current.length>54?current.slice(0,51).replace(/\s+\S*$/,'')+'…':current;
-        if(next!==current)heading.textContent=next;
-      });
-      new MutationObserver(compactListingLabels).observe(target,{childList:true,subtree:true});
-      target.dataset.compactListingLabels='true';
-    }
     if(!etsyBatchRowsPromise)etsyBatchRowsPromise=client.from('etsy_import_batches').select('id,kind,import_type,status,row_count,matched_count,applied_count,metadata,created_at').order('created_at',{ascending:false}).limit(100).then((result)=>{if(result.error)etsyBatchRowsPromise=null;return result;}).catch((error)=>{etsyBatchRowsPromise=null;throw error;});
     const result=await etsyBatchRowsPromise;
     if(result.error){target.innerHTML='<p class="admin-empty">Import history is unavailable until the staged-import migration is applied.</p>';return;}
@@ -2337,7 +2217,53 @@ async function renderEtsyConnection(){
     groupedRows.forEach((batch)=>{if(actionLabel(batch)==='Etsy listings'&&Array.isArray(batch.metadata?.created_pages)){batch.applied_count=batch.metadata.created_pages.length;batch.matched_count=listingReviewPages(batch).length;}});
     const displayCount=(value)=>Number(value||0).toLocaleString();
     const feeSyncSummary=(batch)=>{const metadata=batch.metadata||{};return {receipts:Number(batch.row_count||0),lines:Number(batch.applied_count||metadata.fee_lines||0),window:String(metadata.window||'last 45 days')};};
-    const followUp=(batch)=>{const metadata=batch.metadata||{};if(batch.status==='failed')return '<span class="admin-field-note">Run again</span>';if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return '<span class="admin-field-note">Checked '+displayCount(summary.receipts)+' Etsy orders and updated fees on '+displayCount(summary.lines)+' order lines ('+adminSafe(summary.window)+'). Compare that order count with Etsy before marking reviewed.</span>';}if(actionLabel(batch)==='Etsy listings'){const pages=Array.isArray(metadata.created_pages)?metadata.created_pages:[];const failed=Array.isArray(metadata.failed_pages)?metadata.failed_pages:[];const warning=metadata.warning?'<span class="admin-field-note">'+adminSafe(metadata.warning)+'</span>':'';const failedMarkup=failed.length?'<div class="admin-etsy-failed-links"><strong>Needs retry</strong><ul>'+failed.map(page=>'<li>'+adminSafe(page.title||page.listing_id||'Listing')+': '+adminSafe(page.error||'Import failed.')+'</li>').join('')+'</ul></div>':'';if(pages.length){const pageLinks=(page)=>{const links=page.links||{};const productId=String(page.product_id||'').trim();const oneSku=String(page.one_pk_sku||'').trim();const packSku=String(page.etsy_sku||'').trim()&&String(page.etsy_sku||'').trim()!==oneSku?String(page.etsy_sku||'').trim():'';const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):links.product||'';const childHref=oneSku?'admin.html?inventory=sku&sku='+encodeURIComponent(oneSku)+'&direct=inventory':links.one_pk_sku||'';const familyRows=Array.isArray(page.family_skus)&&page.family_skus.length?page.family_skus:[...((oneSku?[{one_pk_sku:oneSku,pack_size:1}]:[])),...((packSku?[{etsy_sku:packSku,one_pk_sku:oneSku,pack_size:Math.max(1,Number(String(packSku).match(/-(\d+)PK$/i)?.[1])||1)}]:[]))];const manualFamily=familyRows.some((row)=>row.manual_recipe_required===true);const family=familyRows.map((row)=>{const sku=String(row.etsy_sku||row.one_pk_sku||'').trim();const one=String(row.one_pk_sku||'').trim();const size=Math.max(1,Number(row.pack_size)||1);return '<span><strong>'+adminSafe(size>1?size+'PK':'1PK')+':</strong> '+adminSafe(sku||one)+'</span>';}).join(' · ');const recipes=familyRows.filter((row)=>Number(row.pack_size)>1).map((row)=>{const parent=String(row.etsy_sku||'').trim();const components=Array.isArray(row.recipe_components)?row.recipe_components:[];if(row.manual_recipe_required)return '<li><strong>'+adminSafe(parent)+'</strong><span>Manual recipe required</span></li>';const parts=components.length?components.map((component)=>Number(component.quantity||1)+' × '+adminSafe(component.sku||'child SKU')).join(' · '):Number(row.pack_size)+' × '+adminSafe(row.one_pk_sku||oneSku);return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span></li>';}).join('');const recipeMarkup=recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'';const childLink=childHref?'<a data-etsy-child-sku href="'+adminSafe(childHref)+'" target="_blank" rel="noopener">Edit child SKU record</a>':'';return (family?'<div class="admin-etsy-sku-family"><strong>SKU family</strong> '+family+'</div>':'')+recipeMarkup+childLink+'<a href="'+adminSafe(productHref)+'" target="_blank" rel="noopener">Edit product page</a>' +(manualFamily?'<small class="admin-field-note">Mixed/bundle listing: choose the child SKUs and quantities before saving.</small>':'');};return pages.map(page=>'<div class="admin-etsy-created-links"><strong>'+adminSafe(page.product_name||page.one_pk_sku||'Imported listing')+'</strong><br>'+pageLinks(page)+'</div>').join('<hr>')+failedMarkup+(warning?'<br>'+warning:'');}if(failed.length)return failedMarkup+(warning?'<br>'+warning:'');if(Number(batch.matched_count||0)>0)return warning+(warning?'<br>':'')+'<span class="admin-field-note">Review new listings</span>';if(Number(batch.row_count||0)>0)return warning+(warning?'<br>':'')+'<span class="admin-field-note">No new listings found</span>';}if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0)return '<button type="button" data-etsy-reapply-sales="'+adminSafe(batch.id)+'">Reapply stored Etsy sales</button><br><span class="admin-field-note">Matches newly-created SKUs without contacting Etsy again.</span>';if(actionLabel(batch)==='Reviews')return '<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':'');return '<span class="admin-field-note">No action needed</span>';};
+    const followUp=(batch)=>{
+      const metadata=batch.metadata||{};
+      if(batch.status==='failed')return '<span class="admin-field-note">Run again</span>';
+      if(actionLabel(batch)==='Fee resync'){
+        const summary=feeSyncSummary(batch);
+        return '<span class="admin-field-note">Checked '+displayCount(summary.receipts)+' Etsy orders and updated fees on '+displayCount(summary.lines)+' order lines ('+adminSafe(summary.window)+'). Compare that order count with Etsy before marking reviewed.</span>';
+      }
+      if(actionLabel(batch)==='Etsy listings'){
+        const pages=Array.isArray(metadata.created_pages)?metadata.created_pages:[];
+        const failed=Array.isArray(metadata.failed_pages)?metadata.failed_pages:[];
+        const warning=metadata.warning?'<span class="admin-field-note">'+adminSafe(metadata.warning)+'</span>':'';
+        const failedMarkup=failed.length?'<div class="admin-etsy-failed-links"><strong>Needs retry</strong><ul>'+failed.map(page=>'<li>'+adminSafe(page.title||page.listing_id||'Listing')+': '+adminSafe(page.error||'Import failed.')+'</li>').join('')+'</ul></div>':'';
+        const createdDetails=(page)=>{
+          const familyRows=Array.isArray(page.family_skus)?page.family_skus:[];
+          const createdSkus=[];
+          const seenSkus=new Set();
+          familyRows.forEach((row)=>{
+            const oneSku=String(row.one_pk_sku||'').trim();
+            const etsySku=String(row.etsy_sku||'').trim();
+            const size=Math.max(1,Number(row.pack_size)||1);
+            if(row.one_pk_sku_existed_before_run===false&&oneSku&&!seenSkus.has(oneSku.toUpperCase())){
+              seenSkus.add(oneSku.toUpperCase());
+              createdSkus.push('<li><strong>1PK:</strong> '+adminSafe(oneSku)+'</li>');
+            }
+            if(row.pack_sku_existed_before_run===false&&etsySku&&etsySku!==oneSku&&!seenSkus.has(etsySku.toUpperCase())){
+              seenSkus.add(etsySku.toUpperCase());
+              createdSkus.push('<li><strong>'+adminSafe(size+'PK')+':</strong> '+adminSafe(etsySku)+'</li>');
+            }
+          });
+          const seenRecipes=new Set();
+          const recipes=familyRows.filter((row)=>row.recipe_created===true).map((row)=>{
+            const parent=String(row.etsy_sku||'').trim();
+            if(!parent||seenRecipes.has(parent.toUpperCase()))return '';
+            seenRecipes.add(parent.toUpperCase());
+            const components=Array.isArray(row.recipe_components)?row.recipe_components:[];
+            const parts=components.map((component)=>Number(component.quantity||1)+' × '+adminSafe(component.sku||'child SKU')).join(' · ');
+            return '<li><strong>'+adminSafe(parent)+'</strong><span>'+parts+'</span></li>';
+          }).filter(Boolean).join('');
+          return (createdSkus.length?'<ul class="admin-etsy-created-skus">'+createdSkus.join('')+'</ul>':'')+(recipes?'<div class="admin-etsy-recipe-summary"><strong>Recipes created</strong><ul>'+recipes+'</ul></div>':'');
+        };
+        const createdMarkup=pages.map((page)=>'<div class="admin-etsy-created-links"><strong>'+adminSafe(page.product_name||page.one_pk_sku||'Imported listing')+'</strong>'+createdDetails(page)+'</div>').join('<hr>');
+        return createdMarkup+failedMarkup+(warning?'<br>'+warning:'');
+      }
+      if(actionLabel(batch)==='Order import'&&Number(metadata.unmatched||0)>0)return '<button type="button" data-etsy-reapply-sales="'+adminSafe(batch.id)+'">Reapply stored Etsy sales</button><br><span class="admin-field-note">Matches newly-created SKUs without contacting Etsy again.</span>';
+      if(actionLabel(batch)==='Reviews')return '<button type="button" data-etsy-rematch-reviews="'+adminSafe(batch.id)+'">Rematch staged reviews</button>'+(batch.status==='staged'&&Number(batch.matched_count||0)?'<button type="button" data-etsy-apply-reviews="'+adminSafe(batch.id)+'">Apply matched reviews</button>':'');
+      return '<span class="admin-field-note">No action needed</span>';
+    };
     const listingCounts=(batch)=>({created:Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages.length:0,existing:Array.isArray(batch.metadata?.existing_pages)?batch.metadata.existing_pages.length:0,failed:Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0,checked:listingReviewPages(batch).length});
     const resultCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const counts=listingCounts(batch);return displayCount(counts.checked)+' listings processed · '+displayCount(counts.created)+' new pages · '+displayCount(counts.existing)+' existing matches';}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.receipts)+' Etsy orders checked';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return displayCount(metadata.receipts||batch.row_count)+' Etsy orders · '+displayCount(metadata.sale_lines||batch.applied_count)+' sale lines';}return displayCount(batch.row_count)+' rows';};
     const attentionCell=(batch)=>{if(actionLabel(batch)==='Etsy listings'){const pending=pendingListingPages(batch).length;const failed=Array.isArray(batch.metadata?.failed_pages)?batch.metadata.failed_pages.length:0;return (pending?displayCount(pending)+' matched listings to review':'None')+(failed?' · '+displayCount(failed)+' need retry':'');}if(actionLabel(batch)==='Fee resync'){const summary=feeSyncSummary(batch);return displayCount(summary.lines)+' fee lines updated';}if(actionLabel(batch)==='Order import'){const metadata=batch.metadata||{};return Number(metadata.unmatched||0)?displayCount(metadata.unmatched)+' unmatched sale line'+(Number(metadata.unmatched)===1?'':'s'):Number(metadata.inventory_updated||0)+' inventory updates';}return Number(batch.matched_count||0)?displayCount(batch.matched_count)+' matched':'None';};
@@ -2350,7 +2276,6 @@ async function renderEtsyConnection(){
       if(!existingPages.length)return;
       const cell=historyTableRows[index]?.lastElementChild;
       if(!cell)return;
-      if(!(Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages.length:0)){const note=cell.querySelector('.admin-field-note');if(note)note.textContent='No new pages were created. Inspect the existing product matches below.';}
       const details=document.createElement('details');
       details.className='admin-etsy-existing-page-review';
       const summary=document.createElement('summary');
@@ -2365,114 +2290,11 @@ async function renderEtsyConnection(){
         const productId=String(page.product_id||'').trim();
         const productHref=productId?'admin.html?edit='+encodeURIComponent(productId):String(page.links?.product||page.url||'');
         if(productHref){const link=document.createElement('a');link.href=productHref;link.target='_blank';link.rel='noopener';link.textContent='Open matched product page';item.append(document.createTextNode(' · '),link);}
-        const variants=Array.isArray(page.family_skus)?page.family_skus:[];
-        if(variants.length){
-          const skuList=document.createElement('ul');
-          variants.forEach((variant)=>{
-            const oneSku=String(variant.one_pk_sku||'').trim();
-            const etsySku=String(variant.etsy_sku||'').trim();
-            const status=(value)=>typeof value==='boolean'?(value?'was in inventory before this scan':'was added during this scan'):'not tracked on this earlier import';
-            const skuItems=[];
-            if(oneSku)skuItems.push('1PK '+oneSku+' — '+status(variant.one_pk_sku_existed_before_run));
-            if(etsySku&&etsySku!==oneSku)skuItems.push((Number(variant.pack_size)||1)+'PK '+etsySku+' — '+status(variant.pack_sku_existed_before_run));
-            skuItems.forEach((label)=>{const skuItem=document.createElement('li');skuItem.textContent=label;skuList.append(skuItem);});
-          });
-          if(skuList.childElementCount)item.append(skuList);
-        }
         list.append(item);
       });
       details.append(list);
       cell.append(details);
     });
-    target.querySelectorAll('.admin-etsy-recipe-summary li').forEach((item)=>{
-      if(item.querySelector('[data-etsy-convert-child]'))return;
-      const parentSku=String(item.querySelector('strong')?.textContent||'').trim();
-      if(!parentSku)return;
-      const recipeLink=document.createElement('a');
-      recipeLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(parentSku);
-      recipeLink.target='_blank';
-      recipeLink.rel='noopener';
-      recipeLink.dataset.etsyRecipeEdit='';
-      recipeLink.textContent='Edit recipe';
-      item.append(recipeLink);
-      const status=document.createElement('small');
-      status.className='admin-etsy-recipe-status';
-      status.textContent='Recipe ready — edit or convert to child SKU';
-      item.append(status);
-      const convert=document.createElement('button');
-      convert.type='button';
-      convert.dataset.etsyConvertChild=parentSku;
-      convert.textContent='Convert to child SKU';
-      item.append(convert);
-    });
-    const listingPagesForReview=visible.filter((batch)=>actionLabel(batch)==='Etsy listings').flatMap((batch)=>Array.isArray(batch.metadata?.created_pages)?batch.metadata.created_pages:[]);
-    target.querySelectorAll('.admin-etsy-created-links').forEach((block,index)=>{
-      const page=listingPagesForReview[index];
-      if(!page)return;
-      const pageNote=document.createElement('small');
-      pageNote.className='admin-field-note admin-etsy-page-status';
-      pageNote.textContent=page.product_page_existed||page.created===false?'Matched an existing product page; no new page was created.':'A new product page was created during this Etsy scan.';
-      block.append(pageNote);
-      const familyRows=Array.isArray(page.family_skus)&&page.family_skus.length?page.family_skus:[...((page.one_pk_sku?[{one_pk_sku:page.one_pk_sku,pack_size:1}]:[])),...((page.etsy_sku&&page.etsy_sku!==page.one_pk_sku?[{etsy_sku:page.etsy_sku,one_pk_sku:page.one_pk_sku,pack_size:Math.max(1,Number(String(page.etsy_sku).match(/-(\d+)PK$/i)?.[1])||1)}]:[]))];
-      block.querySelector('.admin-etsy-sku-family')?.querySelectorAll('span').forEach((entry)=>{
-        const row=familyRows.find((candidate)=>String(entry.textContent||'').includes(String(candidate.etsy_sku||candidate.one_pk_sku||'')));
-        if(!row||entry.querySelector('.admin-etsy-sku-status'))return;
-        const status=document.createElement('small');
-        status.className='admin-etsy-sku-status';
-        if(typeof row.sku_existed_before_run!=='boolean')status.textContent='Inventory status was not recorded for this earlier scan';
-        else{const statuses=[];if(typeof row.one_pk_sku_existed_before_run==='boolean')statuses.push('1PK '+(row.one_pk_sku_existed_before_run?'already in inventory before this scan':'added during this scan'));if(typeof row.pack_sku_existed_before_run==='boolean'&&String(row.etsy_sku||'').trim()!==String(row.one_pk_sku||'').trim())statuses.push((Number(row.pack_size)||1)+'PK '+(row.pack_sku_existed_before_run?'already in inventory before this scan':'added during this scan'));status.textContent=statuses.join(' · ')||'No separate SKU status';}
-        entry.append(' · ',status);
-      });
-      block.querySelectorAll('.admin-etsy-recipe-summary li').forEach((item)=>{
-        const parentSku=String(item.querySelector('strong')?.textContent||'').trim();
-        const row=familyRows.find((candidate)=>String(candidate.etsy_sku||'').trim()===parentSku);
-        if(!row)return;
-        if(item.querySelector('[data-etsy-convert-child]'))return;
-        const recipeLink=document.createElement('a');
-        recipeLink.href='admin.html?inventory=adjust&recipe='+encodeURIComponent(parentSku);
-        recipeLink.target='_blank';
-        recipeLink.rel='noopener';
-        recipeLink.textContent='Edit recipe';
-        item.append(recipeLink);
-        const status=document.createElement('small');
-        status.className='admin-etsy-recipe-status';
-        status.textContent=row.recipe_created?'Created during import':'Existing recipe preserved';
-        item.append(status);
-        const convert=document.createElement('button');
-        convert.type='button';
-        convert.dataset.etsyConvertChild=parentSku;
-        convert.textContent='Convert to child SKU';
-        item.append(convert);
-      });
-    });
-    bindEtsyReviewControls(target);
-    target.querySelectorAll('[data-etsy-convert-child]').forEach((button)=>button.onclick=async()=>{
-      const sku=String(button.dataset.etsyConvertChild||'').trim();
-      if(!sku||!window.confirm('Convert '+sku+' to a physical child SKU? This removes its recipe and keeps the SKU/page.'))return;
-      button.disabled=true;
-      const item=button.closest('li');
-      const status=item?.querySelector('.admin-etsy-recipe-status');
-      if(status)status.textContent='Converting to child SKU…';
-      try{
-        const lookup=await cloudAdmin().from('inventory_skus').select('id').eq('sku',sku).maybeSingle();
-        if(lookup.error)throw lookup.error;
-        if(!lookup.data?.id)throw new Error('The canonical inventory SKU was not found.');
-        const result=await cloudAdmin().rpc('convert_inventory_sku_to_child',{inventory_sku_id_value:lookup.data.id});
-        if(result.error)throw result.error;
-        const saved=await cloudAdmin().from('inventory_skus').select('item_type').eq('id',lookup.data.id).maybeSingle();
-        if(saved.error)throw saved.error;
-        const remaining=await cloudAdmin().from('inventory_bundle_components').select('bundle_sku_id').eq('bundle_sku_id',lookup.data.id).limit(1);
-        if(remaining.error)throw remaining.error;
-        if(String(saved.data?.item_type||'').toLowerCase()!=='inventory'||(remaining.data||[]).length)throw new Error('The conversion did not persist. The recipe is still attached to this SKU.');
-        if(status)status.textContent='Converted to child SKU. Refreshing saved state…';
-        invalidateEtsyHistory();
-        await drawBatches();
-      }catch(error){
-        button.disabled=false;
-        if(status)status.textContent='Conversion failed: '+(error.message||'Unknown database error.');
-      }
-    });
-    await syncEtsyConversionStates();
     target.querySelectorAll('[data-etsy-batch-page]').forEach((button)=>button.onclick=()=>{batchPage=Math.max(1,Math.min(pageCount,batchPage+(button.dataset.etsyBatchPage==='next'?1:-1)));drawBatches();});
     target.querySelectorAll('[data-etsy-history-view]').forEach((button)=>button.onclick=()=>{historyView=button.dataset.etsyHistoryView;batchPage=1;void drawBatches();});
     const updateReviewState=async(batch,reviewed)=>{if(!batch)throw new Error('That Etsy action is no longer available. Refresh the page and try again.');const sources=Array.isArray(batch.source_batches)&&batch.source_batches.length?batch.source_batches:[{id:batch.id,metadata:batch.metadata||{}}];for(const source of sources){const metadata={...(source.metadata||{})};metadata.reviewed=reviewed;metadata.reviewed_at=reviewed?new Date().toISOString():null;metadata.reviewed_listing_ids=reviewed?[...new Set([...(Array.isArray(metadata.created_pages)?metadata.created_pages:[]),...(Array.isArray(metadata.existing_pages)?metadata.existing_pages:[])].map((page)=>String(page.listing_id||'')).filter(Boolean))]:[];const update=await client.from('etsy_import_batches').update({status:reviewed?'completed':'staged',metadata}).eq('id',source.id);if(update.error)throw update.error;}};
