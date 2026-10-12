@@ -922,17 +922,91 @@ async function renderSimple(tab,title,description,empty){
     let activityCounts=new Map((activityResult.data||[]).map((row)=>[String(row.member_id),row]));
     const activityUnavailable=Boolean(activityResult.error);
     const memberRows=members.map((member)=>{const counts=activityCounts.get(String(member.id))||{};const reviewCount=Number(counts.reviews_count)||0;const orderCount=Number(counts.orders_count)||0;const noteCount=Number(counts.notes_count)||0;const countLabel=(count)=>activityUnavailable?'':' ('+count+')';const isAdmin=member.role==='admin';const isCurrentAdmin=String(member.id)===String(currentAdmin?.id);const roleButton=isCurrentAdmin&&isAdmin?'<button type="button" disabled title="You cannot revoke your own admin access.">Current admin</button>':`<button type="button" data-member-role="${member.id}" data-role="${isAdmin?'customer':'admin'}">${isAdmin?'Revoke admin':'Make admin'}</button>`;return`<article class="member-row"><div><strong>${adminSafe(member.full_name||member.email)}</strong><span>${adminSafe(member.email)}</span>${isAdmin?'<span class="member-role-badge">Admin</span>':''}</div><div class="admin-actions"><button type="button" data-admin-email data-email-to="${adminSafe(member.email)}" data-email-name="${adminSafe(member.full_name||'customer')}" data-email-subject="Message from Bead Different Co.">Send email</button><button type="button" data-member-notes="${member.id}">Notes${countLabel(noteCount)}</button><button type="button" data-member-reviews="${member.id}">Reviews${countLabel(reviewCount)}</button><button type="button" data-member-orders="${member.id}">Orders${countLabel(orderCount)}</button><button type="button" data-member-status="${member.id}" data-status="${member.status==='blocked'?'active':'blocked'}">${member.status==='blocked'?'Unblock':'Block'}</button>${roleButton}</div></article>`}).join('')||`<div class="admin-empty">${empty}</div>`;
-    panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">CUSTOMER OPERATIONS</p><h2>${memberView==='new'?'New members (30 days) · ':''}${title}</h2><p>Contact customers, review their history, manage notes, and control account access.</p></div></div>${activityUnavailable?'<p class="admin-field-note" role="status">Member activity counts are unavailable. The list is shown without downloading full order or review histories.</p>':''}<div class="admin-tabs"><button type="button" data-member-view="all" class="${memberView==='all'?'active':''}">All</button><button type="button" data-member-view="new" class="${memberView==='new'?'active':''}">New (30 days)</button></div><div class="admin-list" id="member-list">${memberRows}</div><div class="admin-pagination"><button type="button" data-member-page="prev" ${memberPage<=1?'disabled':''}>Previous</button><span>Page ${memberPage} of ${memberPageCount} · ${memberResult.count||0} members</span><button type="button" data-member-page="next" ${memberPage>=memberPageCount?'disabled':''}>Next</button></div><section class="admin-card" id="member-detail"><p>Select Notes, Reviews, or Orders for a member.</p></section>`;
+    panel.innerHTML=`<div class="admin-heading"><div><p class="kicker">CUSTOMER OPERATIONS</p><h2>${memberView==='new'?'New members (30 days) · ':''}${title}</h2><p>Contact customers, review their history, manage notes, and control account access.</p></div></div>${activityUnavailable?'<p class="admin-field-note" role="status">Member activity counts are unavailable. The list is shown without downloading full order or review histories.</p>':''}<div class="admin-tabs"><button type="button" data-member-view="all" class="${memberView==='all'?'active':''}">All</button><button type="button" data-member-view="new" class="${memberView==='new'?'active':''}">New (30 days)</button></div><div class="admin-list" id="member-list">${memberRows}</div><div class="admin-pagination"><button type="button" data-member-page="prev" ${memberPage<=1?'disabled':''}>Previous</button><span>Page ${memberPage} of ${memberPageCount} · ${memberResult.count||0} members</span><button type="button" data-member-page="next" ${memberPage>=memberPageCount?'disabled':''}>Next</button></div>`;
     panel.querySelectorAll('[data-member-view]').forEach((button)=>button.addEventListener('click',()=>{memberView=button.dataset.memberView;memberCreatedAfter=memberView==='new'?new Date(Date.now()-30*86400000).toISOString():null;memberPage=1;renderSimple(tab,title,description,empty);}));
     panel.querySelectorAll('[data-member-page]').forEach((button)=>button.addEventListener('click',()=>{memberPage+=button.dataset.memberPage==='next'?1:-1;renderSimple(tab,title,description,empty);}));
-    const detail=panel.querySelector('#member-detail');
     const memberFor=(memberId)=>members.find((member)=>member.id===memberId);
-    const showNotes=async(memberId)=>{const member=memberFor(memberId);detail.innerHTML='<h3>Notes for '+adminSafe(member?.full_name||member?.email||'member')+'</h3><p>Loading notes…</p>';const result=await window.beadSupabase.from('member_notes').select('id,member_id,author_id,note,created_at').eq('member_id',memberId).order('created_at',{ascending:false}).range(0,99);if(result.error){detail.innerHTML='<p>Unable to load notes.</p>';return;}const memberNotes=result.data||[];detail.innerHTML='<h3>Notes for '+adminSafe(member?.full_name||member?.email||'member')+'</h3>'+(memberNotes.map((note)=>'<p><strong>'+new Date(note.created_at).toLocaleString()+'</strong><br>'+adminSafe(note.note)+'</p>').join('')||'<p>No notes yet.</p>')+'<form class="admin-inline-form" data-add-member-note="'+memberId+'"><input name="note" required placeholder="Add private note"><button type="submit">Save note</button><p class="admin-note-status" role="status"></p></form>';const form=detail.querySelector('form');const submit=form.querySelector('button[type="submit"]');const status=form.querySelector('.admin-note-status');form.addEventListener('submit',async(event)=>{event.preventDefault();const note=String(new FormData(form).get('note')||'').trim();if(!note){status.textContent='Enter a note first.';return;}submit.disabled=true;status.textContent='Saving…';try{const {data:{user},error:authError}=await window.beadSupabase.auth.getUser();if(authError||!user)throw authError||new Error('Your admin session has expired. Sign in again.');const saveResult=await window.beadSupabase.from('member_notes').insert({member_id:memberId,author_id:user.id,note}).select('id,member_id,author_id,note,created_at').single();if(saveResult.error)throw saveResult.error;showNotes(memberId);}catch(error){status.textContent='Save failed: '+(error?.message||'Unable to save note.');submit.disabled=false;}});};
-    const showReviews=async(memberId)=>{const member=memberFor(memberId);detail.innerHTML='<h3>Reviews by '+adminSafe(member?.full_name||member?.email||'member')+'</h3><p>Loading reviews…</p>';const result=await window.beadSupabase.from('reviews').select('id,user_id,review_type,rating,body,photos,status,created_at,products(name)').eq('user_id',memberId).order('created_at',{ascending:false}).range(0,99);if(result.error){detail.innerHTML='<p>Unable to load reviews.</p>';return;}const memberReviews=result.data||[];detail.innerHTML='<h3>Reviews by '+adminSafe(member?.full_name||member?.email||'member')+'</h3>'+(memberReviews.map((review)=>'<p><strong>'+adminSafe(review.products?.name||'Website review')+' · '+review.rating+'/5 · '+adminSafe(review.status)+'</strong><br>'+adminSafe(review.body)+(review.photos||[]).map((photo)=>{const safeUrl=safeAdminThemeImageUrl(photo);return safeUrl?'<a href="'+adminSafe(safeUrl)+'" target="_blank" rel="noreferrer"><img class="member-review-photo" src="'+adminSafe(safeUrl)+'" alt="Customer review photo" loading="lazy"></a>':'';}).join('')+'</p>').join('')||'<p>No reviews yet.</p>');};
-    const showOrders=async(memberId)=>{const member=memberFor(memberId);detail.innerHTML='<h3>Orders for '+adminSafe(member?.full_name||member?.email||'member')+'</h3><p>Loading orders…</p>';const result=await window.beadSupabase.from('orders').select('id,user_id,status,total,tracking_number,created_at').eq('user_id',memberId).order('created_at',{ascending:false}).range(0,99);if(result.error){detail.innerHTML='<p>Unable to load orders.</p>';return;}const memberOrders=result.data||[];detail.innerHTML='<h3>Orders for '+adminSafe(member?.full_name||member?.email||'member')+'</h3>'+(memberOrders.map((order)=>'<p><strong>Order '+adminSafe(order.id.slice(0,8))+' · $'+Number(order.total||0).toFixed(2)+'</strong><br>'+adminSafe(order.status)+' · '+new Date(order.created_at).toLocaleDateString()+' · '+adminSafe(order.tracking_number||'No tracking')+'</p>').join('')||'<p>No orders yet.</p>');};
-    panel.querySelectorAll('[data-member-notes]').forEach((button)=>button.addEventListener('click',()=>showNotes(button.dataset.memberNotes)));
-    panel.querySelectorAll('[data-member-reviews]').forEach((button)=>button.addEventListener('click',()=>showReviews(button.dataset.memberReviews)));
-    panel.querySelectorAll('[data-member-orders]').forEach((button)=>button.addEventListener('click',()=>showOrders(button.dataset.memberOrders)));
+    const openMemberDetail=(memberId,section)=>{
+      const member=memberFor(memberId);
+      const memberName=member?.full_name||member?.email||'member';
+      const sectionTitles={notes:'Notes for ',reviews:'Reviews by ',orders:'Orders for '};
+      const sectionTitle=sectionTitles[section]+memberName;
+      const titleId='member-detail-'+section+'-'+memberId;
+      const dialog=document.createElement('dialog');
+      dialog.className='profile-dialog admin-member-action-dialog';
+      dialog.setAttribute('aria-labelledby',titleId);
+      dialog.innerHTML='<button type="button" class="profile-dialog-close" data-close-member-detail aria-label="Close '+adminSafe(section)+'">×</button><p class="kicker">MEMBER '+adminSafe(section.toUpperCase())+'</p><h3 id="'+adminSafe(titleId)+'">'+adminSafe(sectionTitle)+'</h3><p class="admin-member-modal-status" role="status" aria-live="polite">Loading '+adminSafe(section)+'…</p><div class="admin-member-record-list" data-member-modal-list></div><div class="admin-member-pagination" data-member-modal-pagination></div>'+(section==='notes'?'<form class="admin-inline-form admin-member-note-form" data-add-member-note><input name="note" required placeholder="Add private note"><button type="submit">Save note</button><p class="admin-note-status" role="status"></p></form>':'');
+      document.body.append(dialog);
+      let page=1;
+      let requestVersion=0;
+      const pageSize=10;
+      const list=dialog.querySelector('[data-member-modal-list]');
+      const status=dialog.querySelector('.admin-member-modal-status');
+      const pagination=dialog.querySelector('[data-member-modal-pagination]');
+      const loadPage=async()=>{
+        const version=++requestVersion;
+        const offset=(page-1)*pageSize;
+        status.textContent='Loading '+section+'…';
+        list.innerHTML='';
+        pagination.innerHTML='';
+        let query;
+        if(section==='notes')query=window.beadSupabase.from('member_notes').select('id,member_id,author_id,note,created_at',{count:'exact'}).eq('member_id',memberId).order('created_at',{ascending:false});
+        else if(section==='reviews')query=window.beadSupabase.from('reviews').select('id,user_id,review_type,rating,body,photos,status,created_at,products(name)',{count:'exact'}).eq('user_id',memberId).order('created_at',{ascending:false});
+        else query=window.beadSupabase.from('orders').select('id,user_id,status,total,tracking_number,created_at',{count:'exact'}).eq('user_id',memberId).order('created_at',{ascending:false});
+        try{
+          const result=await withAdminTimeout(query.range(offset,offset+pageSize-1),'Member '+section);
+          if(version!==requestVersion||!dialog.open)return;
+          if(result.error)throw result.error;
+          const rows=result.data||[];
+          const total=Number(result.count)||0;
+          const pageCount=Math.max(1,Math.ceil(total/pageSize));
+          page=Math.min(page,pageCount);
+          if(page!==(Math.floor(offset/pageSize)+1))return void loadPage();
+          const markup=section==='notes'?rows.map((note)=>'<article class="admin-member-record-item"><div class="admin-member-record-heading"><strong>Private note</strong><span>'+adminSafe(note.created_at?new Date(note.created_at).toLocaleString():'Unknown date')+'</span></div><p>'+adminSafe(note.note||'')+'</p></article>').join(''):section==='reviews'?rows.map((review)=>'<article class="admin-member-record-item"><div class="admin-member-record-heading"><strong>'+adminSafe(review.products?.name||'Website review')+'</strong><span>'+Number(review.rating||0)+'/5 · '+adminSafe(review.status||'')+' · '+adminSafe(review.created_at?new Date(review.created_at).toLocaleDateString():'Unknown date')+'</span></div><p>'+adminSafe(review.body||'')+'</p>'+((review.photos||[]).map((photo)=>{const safeUrl=safeAdminThemeImageUrl(photo);return safeUrl?'<img class="member-review-photo" src="'+adminSafe(safeUrl)+'" alt="Customer review photo" loading="lazy">':'';}).join(''))+'</article>').join(''):rows.map((order)=>'<article class="admin-member-record-item"><div class="admin-member-record-heading"><strong>Order '+adminSafe(String(order.id||'').slice(0,8))+' · $'+Number(order.total||0).toFixed(2)+'</strong><span>'+adminSafe(order.created_at?new Date(order.created_at).toLocaleDateString():'Unknown date')+'</span></div><p>'+adminSafe(order.status||'Unknown status')+' · '+adminSafe(order.tracking_number||'No tracking')+'</p></article>').join('');
+          list.innerHTML=markup||'<p class="admin-member-empty">No '+adminSafe(section)+' yet.</p>';
+          status.textContent=total?'Showing '+(offset+1)+'–'+Math.min(offset+rows.length,total)+' of '+total+'.':'';
+          pagination.innerHTML='<button type="button" data-modal-page="prev" '+(page<=1?'disabled':'')+'>Previous</button><span>Page '+page+' of '+pageCount+' · '+total+' '+adminSafe(section)+'</span><button type="button" data-modal-page="next" '+(page>=pageCount?'disabled':'')+'>Next</button>';
+        }catch(error){
+          if(version!==requestVersion||!dialog.open)return;
+          status.textContent='Unable to load '+section+': '+(error?.message||'Try again.');
+        }
+      };
+      dialog.querySelector('[data-close-member-detail]').addEventListener('click',()=>dialog.close());
+      dialog.addEventListener('click',(event)=>{
+        if(event.target===dialog){dialog.close();return;}
+        const button=event.target.closest('[data-modal-page]');
+        if(!button||button.disabled)return;
+        page+=button.dataset.modalPage==='next'?1:-1;
+        void loadPage();
+      });
+      dialog.addEventListener('close',()=>dialog.remove(),{once:true});
+      const noteForm=dialog.querySelector('[data-add-member-note]');
+      if(noteForm)noteForm.addEventListener('submit',async(event)=>{
+        event.preventDefault();
+        const submit=noteForm.querySelector('button[type="submit"]');
+        const noteStatus=noteForm.querySelector('.admin-note-status');
+        const note=String(new FormData(noteForm).get('note')||'').trim();
+        if(!note){noteStatus.textContent='Enter a note first.';return;}
+        submit.disabled=true;
+        noteStatus.textContent='Saving…';
+        try{
+          const {data:{user},error:authError}=await window.beadSupabase.auth.getUser();
+          if(authError||!user)throw authError||new Error('Your admin session has expired. Sign in again.');
+          const saveResult=await window.beadSupabase.from('member_notes').insert({member_id:memberId,author_id:user.id,note});
+          if(saveResult.error)throw saveResult.error;
+          noteForm.reset();
+          page=1;
+          await loadPage();
+          noteStatus.textContent='Note saved.';
+        }catch(error){noteStatus.textContent='Save failed: '+(error?.message||'Unable to save note.');}
+        finally{submit.disabled=false;}
+      });
+      dialog.showModal();
+      void loadPage();
+    };
+    panel.querySelectorAll('[data-member-notes]').forEach((button)=>button.addEventListener('click',()=>openMemberDetail(button.dataset.memberNotes,'notes')));
+    panel.querySelectorAll('[data-member-reviews]').forEach((button)=>button.addEventListener('click',()=>openMemberDetail(button.dataset.memberReviews,'reviews')));
+    panel.querySelectorAll('[data-member-orders]').forEach((button)=>button.addEventListener('click',()=>openMemberDetail(button.dataset.memberOrders,'orders')));
     panel.querySelectorAll('[data-member-status]').forEach((button)=>button.addEventListener('click',async()=>{const result=await window.beadSupabase.from('profiles').update({status:button.dataset.status}).eq('id',button.dataset.memberStatus);if(result.error)return renderCloudError(result.error);renderSimple(tab,title,description,empty);}));
     panel.querySelectorAll('[data-member-role]').forEach((button)=>button.addEventListener('click',async()=>{button.disabled=true;const result=await window.beadSupabase.from('profiles').update({role:button.dataset.role}).eq('id',button.dataset.memberRole);if(result.error){button.disabled=false;return renderCloudError(result.error);}renderSimple(tab,title,description,empty);}));
     return;
