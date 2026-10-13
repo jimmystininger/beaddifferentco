@@ -136,7 +136,7 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
     return json({ error: "A positive package weight and dimensions are required for USPS postage." }, 400);
   }
 
-  const quoteKey = JSON.stringify({ originPostalCode, destinationPostalCode, weight, length, width, height, acceptedDate });
+  const quoteKey = JSON.stringify({ originPostalCode, destinationPostalCode, weight, length, width, height, acceptedDate, priceType: "COMMERCIAL" });
   const cachedQuote = readCache<Record<string, unknown>>(quoteCache, `usps:${quoteKey}`);
   if (cachedQuote) return json(cachedQuote);
 
@@ -166,7 +166,7 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
         processingCategory: "MACHINABLE",
         destinationEntryFacilityType: "NONE",
         rateIndicator: "SP",
-        priceType: "RETAIL",
+        priceType: "COMMERCIAL",
         mailingDate: acceptedDate,
       }),
     });
@@ -180,7 +180,7 @@ const uspsEstimate = async (from: Record<string, unknown>, to: Record<string, un
     const rates = Array.isArray(result.rates) ? result.rates as Record<string, unknown>[] : [];
     const rate = rates.find((entry) => Number.isFinite(Number(entry.price))) || null;
     if (!rate) throw new Error(`${serviceName} postage failed: USPS returned no eligible rate.`);
-    return { serviceCode: mailClass, serviceName, amount: numberValue(rate.price), priceType: textValue(rate.priceType, 40) || "RETAIL" };
+    return { serviceCode: mailClass, serviceName, amount: numberValue(rate.price), priceType: textValue(rate.priceType, 40) || "COMMERCIAL" };
   };
   const requestDelivery = async (mailClass: string) => {
     const params = new URLSearchParams({ originZIPCode: originPostalCode, destinationZIPCode: destinationPostalCode, acceptanceDate: acceptedDate, mailClass });
@@ -335,3 +335,4 @@ Deno.serve(async (request) => {
     return json({ error: "Shipping rate request could not be completed." }, 400);
   }
 });
+
