@@ -1,6 +1,7 @@
 if(document.body.dataset.page!=='Admin'){window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments);};if(!document.querySelector('script[data-vercel-analytics]')){const analyticsScript=document.createElement('script');analyticsScript.defer=true;analyticsScript.src='/_vercel/insights/script.js';analyticsScript.dataset.vercelAnalytics='true';document.head.appendChild(analyticsScript);}}
 if(!document.querySelector('link[rel="icon"]')){const icon=document.createElement('link');icon.rel='icon';icon.href='logo-user-transparent.png?v=1';document.head.append(icon);}
 const storefrontSeoOrigin='https://www.beaddifferentco.com';
+window.decodeReviewText=(value)=>{const decoder=document.createElement('textarea');decoder.innerHTML=String(value??'');return decoder.value;};
 window.setStorefrontSeo=({title,description,canonicalPath,robots}={})=>{
   if(title)document.title=title;
   if(description){let meta=document.querySelector('meta[name="description"]');if(!meta){meta=document.createElement('meta');meta.name='description';document.head.append(meta);}meta.content=description;}

@@ -222,7 +222,6 @@ catalogReady.then(()=>{
   const heroImage=main.querySelector('.product-page-main-image');
   if(heroImage)heroImage.alt=item.imageAlt||item.name;
   enhanceProductShippingCard();
-  fillProductDescriptionFallback();
   restoreProductPageMediaOrder(item);
   optimizeProductPageGallery(main,fullImageByPreview);
   installCanonicalProductPageFilters(item);
@@ -273,7 +272,7 @@ async function hydrateProductReviews(item){
   const ratingFor=(review)=>Math.max(0,Math.min(5,Math.round(Number(review.rating)||0)));
   const starsFor=(review)=>'★'.repeat(ratingFor(review))+'☆'.repeat(5-ratingFor(review));
   const dateFor=(review)=>{const date=new Date(review.created_at||review.createdAt||'');return Number.isNaN(date.getTime())?'Date unavailable':date.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});};
-  const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(review.body||'')}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
+  const reviewMarkup=(review)=>`<article class="product-review"><strong class="product-review-stars" aria-label="${ratingFor(review)} out of 5 stars">${starsFor(review)}</strong><p>${productPageEscape(window.decodeReviewText(review.body||''))}</p><small>${review.verified_purchase?'Verified purchase · ':''}${dateFor(review)}</small></article>`;
   const average=summaryAverage|| (reviews.length?reviews.reduce((total,review)=>total+Number(review.rating||0),0)/reviews.length:0);
   if(!reviews.length){setReviewMessage('No Product Reviews have been submitted for this item yet.');return;}
   const reviewCount=`${totalReviewCount} review${totalReviewCount===1?'':'s'}`;
