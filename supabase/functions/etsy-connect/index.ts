@@ -268,18 +268,43 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
   if (!connection) throw new Error('Connect Etsy before syncing refunds and cancellations.');
   connection = await refreshConnection(connection);
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const state = (await database('etsy_import_state?id=eq.1&select=last_successful_cursor'))[0] || {};
-  const priorCheckpoint = Number(state.last_successful_cursor);
-  const maxModified = Number.isFinite(maxModifiedValue) && Number(maxModifiedValue) > 0 ? Math.min(nowSeconds, Math.floor(Number(maxModifiedValue))) : nowSeconds;
-  const minModified = Number.isFinite(minModifiedValue) && Number(minModifiedValue) > 0
-    ? Math.floor(Number(minModifiedValue))
-    : Math.max(nowSeconds - 45 * 24 * 60 * 60, Number.isFinite(priorCheckpoint) && priorCheckpoint > 0 ? priorCheckpoint - 300 : nowSeconds - 45 * 24 * 60 * 60);
-  const offset = Math.max(0, Math.floor(Number(offsetValue) || 0));
+  let syncState = (await database('etsy_refund_status_sync_state?id=eq.true&select=*'))[0];
+  if (!syncState) {
+    syncState = (await database('etsy_refund_status_sync_state?on_conflict=id', 'POST', { id: true }, 'resolution=ignore-duplicates,return=representation'))[0];
+    if (!syncState) syncState = (await database('etsy_refund_status_sync_state?id=eq.true&select=*'))[0];
+  }
+  if (!syncState) throw new Error('Historical refund sync could not initialize its saved checkpoint.');
+  if (syncState.backfill_status === 'pending') {
+    const earliestRows = (await Promise.all([
+      database('etsy_sale_lines?select=sale_date&order=sale_date.asc&limit=1'),
+      database('etsy_import_sales?select=sale_date&order=sale_date.asc&limit=1')
+    ])).flat().filter((row: Record<string, any>) => row?.sale_date);
+    const earliestSale = earliestRows.map((row: Record<string, any>) => Date.parse(String(row.sale_date))).filter(Number.isFinite).sort((a: number, b: number) => a - b)[0];
+    const minCreated = Math.max(946684800, earliestSale ? Math.floor(earliestSale / 1000) : nowSeconds - 45 * 24 * 60 * 60);
+    const windowEnd = Math.min(nowSeconds, minCreated + 30 * 24 * 60 * 60 - 1);
+    syncState = (await database('etsy_refund_status_sync_state?id=eq.true', 'PATCH', {
+      backfill_status: 'running', min_created: minCreated, max_created: windowEnd, backfill_start: minCreated, backfill_end: nowSeconds,
+      receipt_offset: 0, ledger_offset: 0, receipts_done: false, ledger_done: false,
+      scanned_receipts: 0, updated_lines: 0, cancelled_receipts: 0,
+      refunded_receipts: 0, partial_refund_receipts: 0,
+      started_at: new Date().toISOString(), completed_at: null, updated_at: new Date().toISOString()
+    }))[0] || { ...syncState, backfill_status: 'running', min_created: minCreated, max_created: nowSeconds };
+  }
+  const historicalBackfill = syncState.backfill_status === 'running';
+  const maxModified = historicalBackfill
+    ? Math.min(nowSeconds, Number(syncState.max_created) || nowSeconds)
+    : Number.isFinite(maxModifiedValue) && Number(maxModifiedValue) > 0 ? Math.min(nowSeconds, Math.floor(Number(maxModifiedValue))) : nowSeconds;
+  const minModified = historicalBackfill
+    ? Math.max(946684800, Number(syncState.min_created) || nowSeconds - 45 * 24 * 60 * 60)
+    : Number.isFinite(minModifiedValue) && Number(minModifiedValue) > 0 ? Math.floor(Number(minModifiedValue)) : nowSeconds - 45 * 24 * 60 * 60;
+  const offset = historicalBackfill ? Math.max(0, Number(syncState.receipt_offset) || 0) : Math.max(0, Math.floor(Number(offsetValue) || 0));
   const pageSize = 20;
-  const ledgerOffset = Math.max(0, Math.floor(Number(priorSummary.ledger_offset) || 0));
+  const ledgerOffset = historicalBackfill ? Math.max(0, Number(syncState.ledger_offset) || 0) : Math.max(0, Math.floor(Number(priorSummary.ledger_offset) || 0));
+  const receiptsAlreadyDone = historicalBackfill && syncState.receipts_done === true;
+  const ledgerAlreadyDone = historicalBackfill && syncState.ledger_done === true;
   const [cancelledPage, ledgerPage] = await Promise.all([
-    etsy(`shops/${connection.shop_id}/receipts?limit=${pageSize}&offset=${offset}&sort_on=updated&sort_order=asc&was_canceled=true&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token),
-    etsy(`shops/${connection.shop_id}/payment-account/ledger-entries?min_created=${minModified}&max_created=${maxModified}&limit=100&offset=${ledgerOffset}`, connection.access_token),
+    receiptsAlreadyDone ? Promise.resolve({ results: [] }) : etsy(`shops/${connection.shop_id}/receipts?limit=${pageSize}&offset=${offset}&sort_on=updated&sort_order=asc&was_canceled=true&min_last_modified=${minModified}&max_last_modified=${maxModified}`, connection.access_token),
+    ledgerAlreadyDone ? Promise.resolve({ results: [] }) : etsy(`shops/${connection.shop_id}/payment-account/ledger-entries?min_created=${minModified}&max_created=${maxModified}&limit=100&offset=${ledgerOffset}`, connection.access_token),
   ]);
   const cancelledReceipts = list(cancelledPage?.results);
   const ledgerEntries = list(ledgerPage?.results);
@@ -302,14 +327,17 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
   });
   const cancelledById = new Map(cancelledReceipts.map((receipt) => [String(receipt.receipt_id || '').trim(), receipt]));
   const receiptIds = [...new Set([...cancelledById.keys(), ...refundPaymentsByReceipt.keys()].filter(Boolean))];
-  const existingLines: Record<string, any>[] = [];
+  const existingLines: (Record<string, any> & { source_table: string })[] = [];
   for (let index = 0; index < receiptIds.length; index += 50) {
     const chunk = receiptIds.slice(index, index + 50);
     const values = chunk.map((id) => encodeURIComponent(id)).join(',');
-    for (let lineOffset = 0; ; lineOffset += 1000) {
-      const lines = await database(`etsy_sale_lines?external_order_id=in.(${values})&select=id,external_order_id,external_line_id,status,quantity,refunded_quantity,gross_revenue,discount_amount,refund_amount&limit=1000&offset=${lineOffset}`);
-      existingLines.push(...lines);
-      if (lines.length < 1000) break;
+    for (const table of ['etsy_sale_lines', 'etsy_import_sales']) {
+      for (let lineOffset = 0; ; lineOffset += 1000) {
+        const fields = table === 'etsy_sale_lines' ? 'id,external_order_id,external_line_id,status,quantity,refunded_quantity,gross_revenue,discount_amount,refund_amount' : 'id,batch_id,external_order_id,external_line_id,quantity,gross_revenue,discount_amount,refund_amount';
+        const rows = await database(`${table}?external_order_id=in.(${values})&select=${fields}&limit=1000&offset=${lineOffset}`);
+        existingLines.push(...rows.map((line: Record<string, any>) => ({ ...line, source_table: table })));
+        if (rows.length < 1000) break;
+      }
     }
   }
   const linesByReceipt = new Map<string, Record<string, any>[]>();
@@ -319,13 +347,21 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     rows.push(line);
     linesByReceipt.set(key, rows);
   });
-  const updates: { id: string; status: string; refunded_quantity: number; refund_amount: number }[] = [];
+  const updates: { id: string; table: string; status?: string; refunded_quantity?: number; refund_amount: number }[] = [];
   let cancelledReceiptCount = 0;
   let refundedReceiptCount = 0;
   let partialRefundReceipts = 0;
   for (const receiptId of receiptIds) {
-    const lines = linesByReceipt.get(receiptId) || [];
-    if (!lines.length) continue;
+    const storedLines = linesByReceipt.get(receiptId) || [];
+    if (!storedLines.length) continue;
+    const logicalLines = new Map<string, Record<string, any>[]>();
+    storedLines.forEach((line) => {
+      const key = String(line.external_line_id || line.id);
+      const group = logicalLines.get(key) || [];
+      group.push(line);
+      logicalLines.set(key, group);
+    });
+    const lines = [...logicalLines.values()].map((group) => group.find((line) => line.source_table === 'etsy_sale_lines') || group[0]);
     const receipt = cancelledById.get(receiptId);
     const cancelled = Boolean(receipt);
     const paymentRefundTotals: number[] = [];
@@ -351,9 +387,16 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
       allocated += refundAmount;
       const refundedQuantity = fullReversal ? Math.max(0, Number(line.quantity) || 0) : Math.max(0, Number(line.refunded_quantity) || 0);
       const nextStatus = fullReversal ? status : String(line.status || 'paid');
-      const nextRefund = Math.max(Number(line.refund_amount) || 0, refundAmount);
-      if (nextStatus === String(line.status || '') && refundedQuantity === Number(line.refunded_quantity || 0) && Math.abs(nextRefund - Number(line.refund_amount || 0)) < 0.005) return;
-      updates.push({ id: String(line.id), status: nextStatus, refunded_quantity: refundedQuantity, refund_amount: nextRefund });
+      const siblingLines = logicalLines.get(String(line.external_line_id || line.id)) || [line];
+      siblingLines.forEach((storedLine) => {
+        const nextRefund = Math.max(Number(storedLine.refund_amount) || 0, refundAmount);
+        if (storedLine.source_table === 'etsy_sale_lines') {
+          if (nextStatus === String(storedLine.status || '') && refundedQuantity === Number(storedLine.refunded_quantity || 0) && Math.abs(nextRefund - Number(storedLine.refund_amount || 0)) < 0.005) return;
+          updates.push({ id: String(storedLine.id), table: storedLine.source_table, status: nextStatus, refunded_quantity: refundedQuantity, refund_amount: nextRefund });
+        } else if (Math.abs(nextRefund - Number(storedLine.refund_amount || 0)) >= 0.005) {
+          updates.push({ id: String(storedLine.id), table: storedLine.source_table, refund_amount: nextRefund });
+        }
+      });
     });
     if (updates.length > updateCountBeforeReceipt) {
       if (status === 'cancelled') cancelledReceiptCount += 1;
@@ -362,27 +405,55 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     }
   }
   const updatedAt = new Date().toISOString();
-  await concurrent(updates, 4, (update) => database(`etsy_sale_lines?id=eq.${encodeURIComponent(update.id)}`, 'PATCH', { status: update.status, refunded_quantity: update.refunded_quantity, refund_amount: update.refund_amount, updated_at: updatedAt }, 'return=minimal'));
+  await concurrent(updates, 4, (update) => database(`${update.table}?id=eq.${encodeURIComponent(update.id)}`, 'PATCH', update.table === 'etsy_sale_lines' ? { status: update.status, refunded_quantity: update.refunded_quantity, refund_amount: update.refund_amount, updated_at: updatedAt } : { refund_amount: update.refund_amount }, 'return=minimal'));
   const nextOffset = offset + pageSize;
   const nextLedgerOffset = ledgerOffset + ledgerEntries.length;
-  const hasMore = cancelledReceipts.length === pageSize || ledgerEntries.length === 100;
+  const receiptsDone = receiptsAlreadyDone || cancelledReceipts.length < pageSize;
+  const ledgerDone = ledgerAlreadyDone || ledgerEntries.length < 100;
+  const windowDone = receiptsDone && ledgerDone;
+  const hasMoreWindows = historicalBackfill && windowDone && maxModified < Number(syncState.backfill_end);
+  const hasMore = historicalBackfill ? !windowDone || hasMoreWindows : cancelledReceipts.length === pageSize || ledgerEntries.length === 100;
   const summary = {
-    scanned_receipts: Math.max(0, Number(priorSummary.scanned_receipts) || 0) + receiptIds.length,
-    updated_lines: Math.max(0, Number(priorSummary.updated_lines) || 0) + updates.length,
-    cancelled_receipts: Math.max(0, Number(priorSummary.cancelled_receipts) || 0) + cancelledReceiptCount,
-    refunded_receipts: Math.max(0, Number(priorSummary.refunded_receipts) || 0) + refundedReceiptCount,
-    partial_refund_receipts: Math.max(0, Number(priorSummary.partial_refund_receipts) || 0) + partialRefundReceipts,
+    scanned_receipts: (historicalBackfill ? Number(syncState.scanned_receipts) : Number(priorSummary.scanned_receipts)) + receiptIds.length,
+    updated_lines: (historicalBackfill ? Number(syncState.updated_lines) : Number(priorSummary.updated_lines)) + updates.length,
+    cancelled_receipts: (historicalBackfill ? Number(syncState.cancelled_receipts) : Number(priorSummary.cancelled_receipts)) + cancelledReceiptCount,
+    refunded_receipts: (historicalBackfill ? Number(syncState.refunded_receipts) : Number(priorSummary.refunded_receipts)) + refundedReceiptCount,
+    partial_refund_receipts: (historicalBackfill ? Number(syncState.partial_refund_receipts) : Number(priorSummary.partial_refund_receipts)) + partialRefundReceipts,
     ledger_offset: nextLedgerOffset,
   };
   let batchId: string | undefined;
-  if (!hasMore) {
+  if (historicalBackfill) {
+    const nextWindowStart = hasMoreWindows ? maxModified + 1 : minModified;
+    const nextWindowEnd = hasMoreWindows ? Math.min(Number(syncState.backfill_end), nextWindowStart + 30 * 24 * 60 * 60 - 1) : maxModified;
+    await database('etsy_refund_status_sync_state?id=eq.true', 'PATCH', {
+      min_created: nextWindowStart,
+      max_created: nextWindowEnd,
+      receipt_offset: hasMoreWindows ? 0 : receiptsDone ? offset : offset + cancelledReceipts.length,
+      ledger_offset: hasMoreWindows ? 0 : nextLedgerOffset,
+      receipts_done: hasMoreWindows ? false : receiptsDone,
+      ledger_done: hasMoreWindows ? false : ledgerDone,
+      scanned_receipts: summary.scanned_receipts,
+      updated_lines: summary.updated_lines,
+      cancelled_receipts: summary.cancelled_receipts,
+      refunded_receipts: summary.refunded_receipts,
+      partial_refund_receipts: summary.partial_refund_receipts,
+      backfill_status: hasMore ? 'running' : 'complete',
+      completed_at: hasMore ? null : updatedAt,
+      updated_at: updatedAt
+    }, 'return=minimal');
+  }
+  if (!hasMore && !historicalBackfill) {
     await database('etsy_import_state?id=eq.1', 'PATCH', { last_successful_cursor: String(maxModified), last_successful_import_at: updatedAt, updated_at: updatedAt }, 'return=minimal');
     if (summary.updated_lines > 0) {
       batchId = await createImportBatch(adminId, 'orders', {}, { action: 'order_status_sync', scope: 'existing_receipt_refunds_and_cancellations', min_last_modified: minModified, max_last_modified: maxModified, cancelled_receipts: summary.cancelled_receipts, refunded_receipts: summary.refunded_receipts, partial_refund_receipts: summary.partial_refund_receipts, updated_lines: summary.updated_lines, scanned_receipts: summary.scanned_receipts, inventory_updated: 0 });
       await updateImportBatch(batchId, { status: 'applied', row_count: summary.cancelled_receipts + summary.refunded_receipts + summary.partial_refund_receipts, matched_count: 0, applied_count: summary.updated_lines, payload: {}, result: { status: 'applied', ...summary, inventory_updated: 0 } });
     }
   }
-  return { done: !hasMore, next_offset: hasMore ? nextOffset : 0, min_last_modified: minModified, max_last_modified: maxModified, ...summary, inventory_updated: 0, batch_id: batchId };
+  if (!hasMore && historicalBackfill && summary.updated_lines > 0) {
+    batchId = await createImportBatch(adminId, 'orders', {}, { action: 'order_status_sync', scope: 'historical_refunds_and_cancellations', min_last_modified: syncState.backfill_start, max_last_modified: syncState.backfill_end, cancelled_receipts: summary.cancelled_receipts, refunded_receipts: summary.refunded_receipts, partial_refund_receipts: summary.partial_refund_receipts, updated_lines: summary.updated_lines, scanned_receipts: summary.scanned_receipts, inventory_updated: 0 });
+    await updateImportBatch(batchId, { status: 'applied', row_count: summary.cancelled_receipts + summary.refunded_receipts + summary.partial_refund_receipts, matched_count: 0, applied_count: summary.updated_lines, payload: {}, result: { status: 'applied', ...summary, inventory_updated: 0 } });
+  }
+  return { done: !hasMore, backfill: historicalBackfill, next_offset: historicalBackfill ? (hasMore ? Number(syncState.receipt_offset) + cancelledReceipts.length : 0) : hasMore ? nextOffset : 0, min_last_modified: minModified, max_last_modified: maxModified, ...summary, inventory_updated: 0, batch_id: batchId };
 }
 async function paymentsFromLedger(connection: Record<string, any>, windowStart: number, windowEnd: number) {
   const ledgerIds = new Set<string>();
