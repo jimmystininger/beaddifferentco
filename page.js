@@ -366,7 +366,6 @@ const setupShoppingBag=async()=>{
   const quoteCache=new Map();
   const quoteRequests=new Map();
   const taxCache=new Map();
-  const taxRequests=new Map();
   let taxRequestToken=0;
   const setAddressExpanded=(expanded)=>{addressFields.hidden=!expanded;editAddress.hidden=expanded||!addressSelect.value;addressSummary.hidden=expanded||!addressSelect.value;};
   const addressValue=()=>({recipient_name:String(form.elements.shipping_name.value||'').trim(),address_line1:String(form.elements.address_line1.value||'').trim(),address_line2:String(form.elements.address_line2.value||'').trim(),city:String(form.elements.city.value||'').trim(),state:String(form.elements.state.value||'').trim().toUpperCase(),postal_code:String(form.elements.postal_code.value||'').trim(),country:'US'});
@@ -388,7 +387,7 @@ const setupShoppingBag=async()=>{
     const shippingAmount=selectedRate?(freeShipping?0:Number(selectedRate.amount)||0):0;
     const taxAmount=Number(taxQuote?.amount)||0;
     const summaryAddress=addressValue();
-    const taxBlocked=summaryAddress.state==='OH'&&addressValid(summaryAddress)&&(!taxQuote||taxQuote.error||!(Number(taxQuote.rate)>0));
+    const taxBlocked=totals.subtotal>0&&summaryAddress.state==='OH'&&addressValid(summaryAddress)&&(!taxQuote||taxQuote.error||!(Number(taxQuote.rate)>0));
     const shippingBlocked=addressValid(summaryAddress)&&(!shippingQuote||shippingQuote.error||!standard||!priority);
     const total=Math.max(0,totals.subtotal-discount+shippingAmount+taxAmount);
     const eta=selectedRate?.scheduledDeliveryDate;
@@ -396,7 +395,8 @@ const setupShoppingBag=async()=>{
     const shippingStatus=selectedRate?(freeShipping?'Free':'$'+shippingAmount.toFixed(2)):shippingQuote?.error?'Unavailable':'Quote pending';
     const shippingErrorMarkup=shippingQuote?.error?`<p class="checkout-quote-error" role="alert">${escapeProductText(shippingQuote.error)}</p>`:'';
     const promoMarkup=activePromo?`<div class="checkout-promo-applied"><span>Promo code · ${escapeProductText(activePromo.code||'Automatic promotion')} · ${escapeProductText(promoLabel(activePromo))}</span><strong>-$${discount.toFixed(2)}</strong><button type="button" data-remove-checkout-promo>Remove</button></div>`:'';
-    orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${shippingStatus}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div>${shippingErrorMarkup}</div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?.error?'Unavailable':taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div></section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
+    const taxErrorMarkup=taxQuote?.error?`<p class="checkout-quote-error" role="alert">${escapeProductText(taxQuote.error)}</p>`:'';
+    orderSummary.innerHTML=`${invalid.length?`<p class="cart-checkout-warning" role="alert">Remove or reselect ${invalid.length===1?'the highlighted item':'the highlighted items'} before checkout.</p>`:''}<section class="checkout-summary-section checkout-summary-subtotal"><h4>Items</h4><div class="checkout-summary-line"><span>Subtotal</span><strong>$${totals.subtotal.toFixed(2)}</strong></div></section>${promoMarkup?`<section class="checkout-summary-section checkout-summary-promotion"><h4>Promotion</h4>${promoMarkup}</section>`:''}<section class="checkout-summary-section checkout-summary-shipping"><h4>Shipping</h4><div class="checkout-summary-shipping-method"><label>Shipping method<select data-checkout-shipping-method ${standard&&priority?'':'disabled'}><option value="standard" ${shippingMethod==='standard'?'selected':''}>${escapeProductText(standard?(shippingQuote.free?'USPS Ground Advantage — Free':'USPS Ground Advantage — $'+Number(standard.amount).toFixed(2)):'USPS Ground Advantage — unavailable')}</option><option value="priority" ${shippingMethod==='priority'?'selected':''}>${escapeProductText(priority?'USPS Priority Mail — $'+Number(priority.amount).toFixed(2):'USPS Priority Mail — unavailable')}</option></select></label><div class="checkout-summary-line"><span>Shipping</span><strong>${shippingStatus}</strong></div><div class="checkout-summary-line checkout-estimated-arrival"><span>Estimated arrival</span><strong>${escapeProductText(dateLabel)}</strong></div>${shippingErrorMarkup}</div></section><section class="checkout-summary-section checkout-summary-tax"><h4>Taxes</h4><div class="checkout-summary-line"><span>Sales tax</span><strong>${taxQuote?.error?'Unavailable':taxQuote?'$'+taxAmount.toFixed(2):'Pending'}</strong></div>${taxErrorMarkup}</section><section class="checkout-summary-section checkout-summary-total"><div class="checkout-summary-line bag-total"><span>Total</span><strong>$${total.toFixed(2)}</strong></div></section>`;
     const promoSavings=orderSummary.querySelector('.checkout-promo-applied strong');
     if(promoSavings&&promoFreeShipping(activePromo))promoSavings.textContent='Free standard shipping';
     const standardOption=orderSummary.querySelector('[data-checkout-shipping-method] option[value="standard"]');
@@ -409,32 +409,37 @@ const setupShoppingBag=async()=>{
   const refreshTax=async(quoteRequest=quoteToken)=>{
     const requestToken=++taxRequestToken;
     const setTaxQuote=(quote)=>{if(quoteRequest===quoteToken&&requestToken===taxRequestToken)taxQuote=quote;};
-    const address=addressValue();
-    if(address.state!=='OH'||!addressValid(address)){setTaxQuote(address.state==='OH'?null:{amount:0,rate:0,state:''});return;}
-    const totals=currentTotals();
-    const discount=promoDiscount(totals);
-    const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
-    const shippingAmount=rate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(rate.amount)||0):0;
-    const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
-    const taxKey=JSON.stringify({line1:address.address_line1,line2:address.address_line2,city:address.city,state:address.state,postalCode:address.postal_code,taxableAmount,shippingAmount});
-    const cached=taxCache.get(taxKey);
-    if(cached){setTaxQuote(cached);return;}
-    if(!window.beadSupabase?.functions?.invoke){setTaxQuote({amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'});return;}
-    let request=taxRequests.get(taxKey);
-    if(!request){
-      request=Promise.race([
-        window.beadSupabase.functions.invoke('stripe-payments',{body:{action:'calculate_tax',tax_payload:{shipping_address:address,taxable_amount:Math.max(0,totals.subtotal-discount),shipping_amount}}}),
-        new Promise((resolve)=>window.setTimeout(()=>resolve({error:{message:'Stripe Tax request timed out.'}}),10000))
-      ]).catch(()=>({error:true})).finally(()=>taxRequests.delete(taxKey));
-      taxRequests.set(taxKey,request);
+    try{
+      const address=addressValue();
+      const totals=currentTotals();
+      if(address.state!=='OH'||!addressValid(address)||totals.subtotal<=0){setTaxQuote({amount:0,rate:0,state:address.state});return;}
+      const discount=promoDiscount(totals);
+      const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
+      const shippingAmount=rate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(rate.amount)||0):0;
+      const taxableAmount=Math.max(0,totals.subtotal-discount);
+      const taxKey=JSON.stringify({line1:address.address_line1,line2:address.address_line2,city:address.city,state:address.state,postalCode:address.postal_code,taxableAmount,shippingAmount});
+      const cached=taxCache.get(taxKey);
+      if(cached){setTaxQuote(cached);return;}
+      const client=window.beadSupabase||await Promise.race([window.beadSupabaseReady||Promise.resolve(null),new Promise((resolve)=>window.setTimeout(()=>resolve(null),5000))]);
+      if(!client?.functions?.invoke)throw new Error('Supabase checkout connection is not ready. Refresh the page and try again.');
+      const result=await Promise.race([
+        client.functions.invoke('stripe-payments',{body:{action:'calculate_tax',tax_payload:{shipping_address:address,taxable_amount:taxableAmount,shipping_amount}}}),
+        new Promise((resolve)=>window.setTimeout(()=>resolve({error:{message:'Stripe Tax request timed out after 10 seconds.'}}),10000))
+      ]);
+      if(quoteRequest!==quoteToken||requestToken!==taxRequestToken)return;
+      const failure=result?.error?.message||result?.data?.error;
+      if(failure)throw new Error(String(failure));
+      if(result?.data?.amount===undefined)throw new Error('Stripe Tax returned no calculation result.');
+      const resultQuote={amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Stripe Tax'};
+      if(!resultQuote.rate)throw new Error('Stripe Tax returned a zero tax rate. Check the Ohio registration and Stripe Tax calculation details.');
+      setTaxQuote(resultQuote);
+      taxCache.set(taxKey,resultQuote);
+      if(taxCache.size>20)taxCache.delete(taxCache.keys().next().value);
+    }catch(error){
+      setTaxQuote({amount:0,rate:0,state:'OH',error:error?.message||'Tax could not be calculated. Please try again.'});
+    }finally{
+      if(quoteRequest===quoteToken&&requestToken===taxRequestToken)drawSummary();
     }
-    const result=await request;
-    if(quoteRequest!==quoteToken||requestToken!==taxRequestToken)return;
-    const resultQuote=result.error||result.data?.error||result.data?.amount===undefined?{amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'}:{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Stripe Tax'};
-    if(!resultQuote.error&&!resultQuote.rate)resultQuote.error='Stripe Tax returned no tax for this address and cart. Review the calculation details in Stripe.';
-    setTaxQuote(resultQuote);
-    taxCache.set(taxKey,resultQuote);
-    if(taxCache.size>20)taxCache.delete(taxCache.keys().next().value);
   };
   const refreshQuote=async()=>{
     const token=++quoteToken;
@@ -447,7 +452,6 @@ const setupShoppingBag=async()=>{
     shippingQuote=null;
     taxQuote=null;
     drawSummary();
-    const initialTaxRequest=refreshTax(token);
     let request=quoteRequests.get(cacheKey);
     if(!request){
       request=Promise.race([
@@ -461,8 +465,7 @@ const setupShoppingBag=async()=>{
     shippingQuote=result;
     quoteCache.set(cacheKey,result);
     drawSummary();
-    const shippingAwareTaxRequest=refreshTax(token);
-    await Promise.all([initialTaxRequest,shippingAwareTaxRequest]);
+    await refreshTax(token);
     if(token===quoteToken)drawSummary();
   };
   const restoreSavedPromo=async()=>{
