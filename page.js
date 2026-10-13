@@ -638,4 +638,3 @@ form.addEventListener('submit',async(event)=>{event.preventDefault();const field
   }
 };
 window.siteSettingsReady?.then(()=>renderManagedPages());
-
