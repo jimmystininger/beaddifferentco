@@ -367,6 +367,7 @@ const setupShoppingBag=async()=>{
   const quoteRequests=new Map();
   const taxCache=new Map();
   const taxRequests=new Map();
+  let taxRequestToken=0;
   const setAddressExpanded=(expanded)=>{addressFields.hidden=!expanded;editAddress.hidden=expanded||!addressSelect.value;addressSummary.hidden=expanded||!addressSelect.value;};
   const addressValue=()=>({recipient_name:String(form.elements.shipping_name.value||'').trim(),address_line1:String(form.elements.address_line1.value||'').trim(),address_line2:String(form.elements.address_line2.value||'').trim(),city:String(form.elements.city.value||'').trim(),state:String(form.elements.state.value||'').trim().toUpperCase(),postal_code:String(form.elements.postal_code.value||'').trim(),country:'US'});
   const addressValid=(address)=>Boolean(address.recipient_name&&address.address_line1&&address.city&&/^[A-Z]{2}$/.test(address.state)&&/^\d{5}(?:-\d{4})?$/.test(address.postal_code));
@@ -405,18 +406,20 @@ const setupShoppingBag=async()=>{
     orderSummary.querySelector('[data-checkout-shipping-method]')?.addEventListener('change',(event)=>{shippingMethod=event.target.value==='priority'?'priority':'standard';void refreshQuote();});
     orderSummary.querySelector('[data-remove-checkout-promo]')?.addEventListener('click',()=>{activePromo=window.storePromos.auto(currentTotals().subtotal);savedPromoCode='';window.storeCart?.clearPromo?.();form.elements.promo_code.value='';promoStatus.textContent=activePromo?'Automatic promotion reapplied.':'Promotion removed.';drawSummary();});
   };
-  const refreshTax=async()=>{
+  const refreshTax=async(quoteRequest=quoteToken)=>{
+    const requestToken=++taxRequestToken;
+    const setTaxQuote=(quote)=>{if(quoteRequest===quoteToken&&requestToken===taxRequestToken)taxQuote=quote;};
     const address=addressValue();
-    if(address.state!=='OH'||!addressValid(address)){taxQuote=address.state==='OH'?null:{amount:0,rate:0,state:''};return;}
+    if(address.state!=='OH'||!addressValid(address)){setTaxQuote(address.state==='OH'?null:{amount:0,rate:0,state:''});return;}
     const totals=currentTotals();
     const discount=promoDiscount(totals);
     const rate=shippingMethod==='priority'?shippingQuote?.priority:shippingQuote?.standard;
     const shippingAmount=rate?(shippingMethod==='standard'&&(shippingQuote.free||promoFreeShipping(activePromo))?0:Number(rate.amount)||0):0;
     const taxableAmount=Math.max(0,totals.subtotal-discount+shippingAmount);
-    const taxKey=JSON.stringify({line1:address.address_line1,city:address.city,postalCode:address.postal_code,taxableAmount});
+    const taxKey=JSON.stringify({line1:address.address_line1,line2:address.address_line2,city:address.city,state:address.state,postalCode:address.postal_code,taxableAmount,shippingAmount});
     const cached=taxCache.get(taxKey);
-    if(cached){taxQuote=cached;return;}
-    if(!window.beadSupabase?.functions?.invoke){taxQuote={amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'};return;}
+    if(cached){setTaxQuote(cached);return;}
+    if(!window.beadSupabase?.functions?.invoke){setTaxQuote({amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'});return;}
     let request=taxRequests.get(taxKey);
     if(!request){
       request=Promise.race([
@@ -426,19 +429,25 @@ const setupShoppingBag=async()=>{
       taxRequests.set(taxKey,request);
     }
     const result=await request;
-    taxQuote=result.error||result.data?.error||result.data?.amount===undefined?{amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'}:{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Stripe Tax'};
-    if(!taxQuote.error&&!taxQuote.rate)taxQuote.error='Stripe Tax needs an active Ohio registration before tax can be collected.';
-    taxCache.set(taxKey,taxQuote);
+    if(quoteRequest!==quoteToken||requestToken!==taxRequestToken)return;
+    const resultQuote=result.error||result.data?.error||result.data?.amount===undefined?{amount:0,rate:0,state:'OH',error:'Stripe Tax is temporarily unavailable. Please try again.'}:{amount:Number(result.data.amount)||0,rate:Number(result.data.rate)||0,state:'OH',jurisdiction:result.data.jurisdiction||'Stripe Tax'};
+    if(!resultQuote.error&&!resultQuote.rate)resultQuote.error='Stripe Tax returned no tax for this address and cart. Review the calculation details in Stripe.';
+    setTaxQuote(resultQuote);
+    taxCache.set(taxKey,resultQuote);
     if(taxCache.size>20)taxCache.delete(taxCache.keys().next().value);
   };
   const refreshQuote=async()=>{
     const token=++quoteToken;
     const address=addressValue();
-    if(!addressValid(address)){shippingQuote=null;taxQuote=null;drawSummary();return;}
+    if(!addressValid(address)){shippingQuote=null;taxRequestToken+=1;taxQuote=null;drawSummary();return;}
     const totals=currentTotals();
     const cacheKey=JSON.stringify({postalCode:address.postal_code,weightOz:totals.weightOz,subtotal:totals.subtotal});
     const cached=quoteCache.get(cacheKey);
-    if(cached){shippingQuote=cached;drawSummary();await refreshTax();if(token===quoteToken)drawSummary();return;}
+    if(cached){shippingQuote=cached;drawSummary();await refreshTax(token);if(token===quoteToken)drawSummary();return;}
+    shippingQuote=null;
+    taxQuote=null;
+    drawSummary();
+    const initialTaxRequest=refreshTax(token);
     let request=quoteRequests.get(cacheKey);
     if(!request){
       request=Promise.race([
@@ -452,7 +461,8 @@ const setupShoppingBag=async()=>{
     shippingQuote=result;
     quoteCache.set(cacheKey,result);
     drawSummary();
-    await refreshTax();
+    const shippingAwareTaxRequest=refreshTax(token);
+    await Promise.all([initialTaxRequest,shippingAwareTaxRequest]);
     if(token===quoteToken)drawSummary();
   };
   const restoreSavedPromo=async()=>{

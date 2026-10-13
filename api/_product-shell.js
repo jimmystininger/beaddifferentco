@@ -18,7 +18,7 @@ module.exports=`<!doctype html>
   <script defer src="product-config.js?v=20261007-canonical-audit1"></script>
   <script defer src="account.js?v=20261007-canonical-audit1"></script>
 <script defer src="waitlist.js?v=20261007-canonical-audit1"></script>
-  <script defer src="page.js?v=20261007-canonical-audit1"></script>
+  <script defer src="page.js?v=20261012-tax-concurrent"></script>
 <script defer src="product-page.js?v=20261012-review-entity-fix"></script>
 </body>
 </html>`;
