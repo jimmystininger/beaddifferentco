@@ -12,13 +12,13 @@ module.exports=`<!doctype html>
   <main class="blank-page"></main>
   <script defer src="/vendor/supabase.min.js"></script>
   <script defer src="supabase-client.js?v=20261007-canonical-audit1"></script>
-  <script defer src="header.js?v=20261010-theme-initial"></script>
+  <script defer src="header.js?v=20261012-review-entity-fix"></script>
   <script defer src="storefront-seo.js?v=20261009-storefront-seo"></script>
   <script defer src="store.js?v=20261007-canonical-audit1"></script>
   <script defer src="product-config.js?v=20261007-canonical-audit1"></script>
   <script defer src="account.js?v=20261007-canonical-audit1"></script>
 <script defer src="waitlist.js?v=20261007-canonical-audit1"></script>
   <script defer src="page.js?v=20261007-canonical-audit1"></script>
-<script defer src="product-page.js?v=20261012-review-load-state"></script>
+<script defer src="product-page.js?v=20261012-review-entity-fix"></script>
 </body>
 </html>`;
