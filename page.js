@@ -423,7 +423,7 @@ const setupShoppingBag=async()=>{
       const client=window.beadSupabase||await Promise.race([window.beadSupabaseReady||Promise.resolve(null),new Promise((resolve)=>window.setTimeout(()=>resolve(null),5000))]);
       if(!client?.functions?.invoke)throw new Error('Supabase checkout connection is not ready. Refresh the page and try again.');
       const result=await Promise.race([
-        client.functions.invoke('stripe-payments',{body:{action:'calculate_tax',tax_payload:{shipping_address:address,taxable_amount:taxableAmount,shipping_amount}}}),
+        client.functions.invoke('stripe-payments',{body:{action:'calculate_tax',tax_payload:{shipping_address:address,taxable_amount:taxableAmount,shipping_amount:shippingAmount}}}),
         new Promise((resolve)=>window.setTimeout(()=>resolve({error:{message:'Stripe Tax request timed out after 10 seconds.'}}),10000))
       ]);
       if(quoteRequest!==quoteToken||requestToken!==taxRequestToken)return;
