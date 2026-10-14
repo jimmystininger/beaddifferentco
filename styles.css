@@ -444,6 +444,7 @@ body[data-theme-ready][data-page="Admin"] .admin-tab:hover{background:var(--site
 .shopping-bag-page .checkout-calculator>[data-order-summary]{order:1;display:grid;gap:0}
 .shopping-bag-page .checkout-promo-entry+ [data-checkout-promo-status]{order:0;margin:0 0 14px;color:#666}
 .shopping-bag-page .checkout-calculator>.cta{order:3;margin-top:22px}
+.shopping-bag-page .checkout-calculator>[data-checkout-status]{order:4;margin:12px 0 0;color:#8b3154;font-weight:600;line-height:1.45}
 .shopping-bag-page .checkout-total-row{display:flex;justify-content:space-between;align-items:baseline;gap:20px;padding:13px 0;border-bottom:1px solid #eee}
 .shopping-bag-page .checkout-total-row strong{margin-left:auto;text-align:right;white-space:nowrap}
 .shopping-bag-page .checkout-shipping-method,.shopping-bag-page .checkout-taxes{display:grid;gap:0;padding:14px 0;border-bottom:1px solid #eee}
@@ -714,9 +715,11 @@ body[data-page="Admin"] .admin-recipe-component-summary small{display:block;marg
 .admin-product-lead-link{display:inline-block;line-height:0}.admin-product-lead-link:focus-visible{outline:2px solid var(--site-banner-color,#e482a4);outline-offset:3px}
 .homepage-promo-banner-details-button{border:1px solid currentColor;border-radius:999px;padding:7px 14px;background:transparent;color:inherit;font:700 12px Arial,sans-serif;cursor:pointer}.homepage-promo-banner-details-button:hover{background:color-mix(in srgb,currentColor 12%,transparent)}.homepage-promo-details-dialog{width:min(560px,calc(100% - 32px));max-height:calc(100dvh - 32px);margin:auto;padding:0;border:0;border-radius:16px;background:var(--site-page-background-color,#fffdfb);color:var(--site-header-text-color,#111);box-shadow:0 24px 80px rgba(0,0,0,.28)}.homepage-promo-details-dialog::backdrop{background:rgba(17,17,17,.58)}.homepage-promo-details-content{padding:30px}.homepage-promo-details-content .kicker{margin:0 0 8px;color:var(--site-banner-color,#e482a4);font-size:11px}.homepage-promo-details-content h2{margin:0 0 18px;font:700 28px/1.15 Georgia,'Times New Roman',serif}.homepage-promo-details-copy{white-space:pre-wrap;line-height:1.65}.homepage-promo-details-close{position:absolute;top:12px;right:14px;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:var(--site-header-text-color,#111);font-size:26px;line-height:1;cursor:pointer}.homepage-promo-details-close:hover{background:var(--site-accent-background-color,#fff1f5)}
 body[data-page="Sale Collection"] .sale-collection-intro{max-width:720px;color:#555;font-size:16px;line-height:1.5;margin:-16px 0 30px}
-body[data-page="Sale Collection"] .sale-collection-grid{max-width:1100px}
+body[data-page="Sale Collection"] .sale-collection-page{padding-bottom:80px}
+body[data-page="Sale Collection"] .sale-collection-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:28px 22px;max-width:1100px}
+body[data-page="Sale Collection"] .sale-collection-card{display:flex;min-width:0;flex-direction:column}
 body[data-page="Sale Collection"] .sale-collection-card .product-card-image-wrap{margin-bottom:10px}
-body[data-page="Sale Collection"] .sale-collection-card .product-card-link{height:100%}
+body[data-page="Sale Collection"] .sale-collection-card .product-card-link{height:auto}
 body[data-page="Sale Collection"] .sale-collection-card .sale-collection-variant{min-height:34px;margin:0;color:#555;font-size:13px;line-height:1.35}
 body[data-page="Sale Collection"] .sale-collection-card strong{display:flex;gap:8px;align-items:baseline}
 body[data-page="Sale Collection"] .sale-collection-card .product-card-promo-price{color:#bd2945}
@@ -1046,6 +1049,13 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-etsy-correction-variant legend{padding:0 5px;font-weight:700}
 .admin-etsy-correction-variant fieldset>small{color:#71666e;line-height:1.4}
 .admin-etsy-correction-line{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;gap:9px;align-items:end}
+.admin-etsy-correction-sku-picker{position:relative}
+.admin-etsy-correction-suggestions{position:absolute;z-index:10;top:calc(100% + 4px);left:0;right:0;display:grid;gap:2px;max-height:min(280px,45vh);overflow:auto;padding:5px;border:1px solid #bdb5b8;border-radius:8px;background:#fff;box-shadow:0 8px 22px rgba(30,20,28,.2)}
+.admin-etsy-correction-suggestions[hidden]{display:none}
+.admin-etsy-correction-suggestion{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:10px;width:100%;padding:9px 10px;border:0;border-radius:5px;background:transparent;color:#241e24;text-align:left;font:inherit;cursor:pointer}
+.admin-etsy-correction-suggestion:hover,.admin-etsy-correction-suggestion:focus-visible{background:#f8e9ee}
+.admin-etsy-correction-suggestion span{overflow:hidden;color:#625b60;text-overflow:ellipsis;white-space:nowrap}
+.admin-etsy-correction-suggestion-status{padding:9px 10px;color:#625b60;font-size:13px}
 .admin-etsy-correction-line button,.admin-etsy-correction-form [data-add-recipe-line]{min-height:40px;padding:8px 12px;border:1px solid #d8cbd3;border-radius:999px;background:white;color:#6d315f;font:inherit;cursor:pointer}
 .admin-etsy-correction-line button:hover,.admin-etsy-correction-form [data-add-recipe-line]:hover{background:#6d315f;color:white}
 .admin-etsy-correction-form .admin-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}

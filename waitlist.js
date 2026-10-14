@@ -60,10 +60,12 @@ async function joinRestockWaitlist(entry){
     if(inventorySku){const inventoryResult=await window.beadSupabase.from('inventory_skus').select('id').eq('sku',inventorySku).maybeSingle();if(inventoryResult.error||!inventoryResult.data)throw inventoryResult.error||new Error('The selected SKU is unavailable.');inventorySkuId=inventoryResult.data.id;}
     let existingQuery=window.beadSupabase.from('waitlist_entries').select('id').eq('user_id',user.id).eq('product_id',product.id).eq('status','waiting');
     existingQuery=inventorySkuId?existingQuery.eq('inventory_sku_id',inventorySkuId):existingQuery.is('inventory_sku_id',null);
-    const {data:existing}=await existingQuery.maybeSingle();
-    if(existing)return false;
+    const existingResult=await existingQuery.maybeSingle();
+    if(existingResult.error)throw existingResult.error;
+    if(existingResult.data)return false;
     const requestedQuantity=Math.max(1,Number(entry.requestedQuantity)||1);
     const {error}=await window.beadSupabase.from('waitlist_entries').insert({user_id:user.id,product_id:product.id,inventory_sku_id:inventorySkuId,selected_options:Array.isArray(entry.selectedOptions)?entry.selectedOptions:[],requested_quantity:requestedQuantity,requested_total_quantity:Math.max(requestedQuantity,Number(entry.requestedTotalQuantity)||0),available_quantity_at_request:Math.max(0,Number(entry.availableQuantityAtRequest)||0),request_mode:entry.requestMode==='full'?'full':'partial'});
+    if(error?.code==='23505')return false;
     if(error)throw error;
     return true;
   }

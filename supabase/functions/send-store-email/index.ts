@@ -107,16 +107,18 @@ async function sendResendEmail(to: string, subject: string, body: string, idempo
 
 async function sendToMany(emails: string[], subject: string, body: string, keyPrefix: string, html?: string) {
   let sent = 0;
+  const sentRecipients: string[] = [];
   const failures: string[] = [];
   for (const email of emails) {
     try {
       await sendResendEmail(email, subject, body, `${keyPrefix}/${encodeURIComponent(email)}`, html);
       sent += 1;
+      sentRecipients.push(email);
     } catch (error) {
       failures.push(`${email}: ${textValue(error instanceof Error ? error.message : error, 300)}`);
     }
   }
-  return { sent, failures };
+  return { sent, sentRecipients, failures };
 }
 
 async function pagedRows(path: string, label: string, pageSize = 1000) {
@@ -167,6 +169,21 @@ async function saveSentEmail(email: { orderId?: string; requestId?: string; cont
     }),
   });
   if (!response.ok) console.error("Email sent but copy could not be saved", await response.text());
+  return response.ok;
+}
+
+async function campaignSentRecipients(campaignId: string, recipients: string[]) {
+  const sent = new Set<string>();
+  const emailType = encodeURIComponent(`campaign:${campaignId}`);
+  for (let offset = 0; offset < recipients.length; offset += 250) {
+    const chunk = recipients.slice(offset, offset + 250).map((email) => encodeURIComponent(email)).join(",");
+    const response = await supabaseRequest(`admin_email_log?email_type=eq.${emailType}&recipient=in.(${chunk})&select=recipient&limit=1000`);
+    for (const row of await requireJsonArray(response, "Campaign delivery log")) {
+      const email = String(row.recipient || "").trim().toLowerCase();
+      if (email) sent.add(email);
+    }
+  }
+  return sent;
 }
 
 async function campaignRecipients(audience: string) {
@@ -206,18 +223,38 @@ async function sendCampaign(campaignId: string) {
   if (!subject || !body) throw new Error("Campaign subject and message are required.");
   const recipients = await campaignRecipients(campaign.audience);
   if (!recipients.length) throw new Error("This campaign has no eligible recipients.");
-  await supabaseRequest(`email_campaigns?id=eq.${encodeURIComponent(campaignId)}`, {
+  const previouslySent = await campaignSentRecipients(campaignId, recipients);
+  const remainingRecipients = recipients.filter((email) => !previouslySent.has(email));
+  const queueResponse = await supabaseRequest(`email_campaigns?id=eq.${encodeURIComponent(campaignId)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ status: "queued", updated_at: new Date().toISOString() }),
   });
-  const result = await sendToMany(recipients, subject, body, `campaign/${campaignId}`, campaignHtml(subject, body));
-  await supabaseRequest(`email_campaigns?id=eq.${encodeURIComponent(campaignId)}`, {
+  if (!queueResponse.ok) throw new Error("Campaign could not be marked queued; no emails were sent.");
+  let sent = 0;
+  const failures: string[] = [];
+  for (const email of remainingRecipients) {
+    try {
+      await sendResendEmail(email, subject, body, `campaign/${campaignId}/${encodeURIComponent(email)}`, campaignHtml(subject, body));
+      const logResponse = await supabaseRequest("admin_email_log", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ email_type: `campaign:${campaignId}`, recipient: email, subject, body }),
+      });
+      if (!logResponse.ok) throw new Error("Email was accepted, but its sent status could not be saved. Check the campaign log before retrying.");
+      sent += 1;
+    } catch (error) {
+      failures.push(`${email}: ${textValue(error instanceof Error ? error.message : error, 300)}`);
+    }
+  }
+  const result = { sent, failures };
+  const statusResponse = await supabaseRequest(`email_campaigns?id=eq.${encodeURIComponent(campaignId)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ status: result.failures.length ? "queued" : "sent", updated_at: new Date().toISOString() }),
   });
-  return { ...result, recipients: recipients.length };
+  if (!statusResponse.ok) throw new Error("Campaign emails were attempted, but the final status could not be saved. Check the campaign before retrying.");
+  return { ...result, recipients: recipients.length, alreadySent: previouslySent.size };
 }
 
 async function sendOrderUpdate(orderId: string) {
@@ -313,16 +350,34 @@ async function sendContactResponse(contactId: string, responseBody: string) {
   const greeting = message.name ? `Hello ${textValue(message.name, 160)},` : "Hello,";
   const fullBody = `${greeting}\n\n${body}\n\nThank you,\nBead Different Co.`;
   const html = brandedHtml(subject, `<p>${escapeHtml(greeting)}</p><div style="padding:18px 20px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:12px;font-size:16px;line-height:1.7">${textToHtml(body)}</div>`);
-  const result = await sendToMany([email], subject, fullBody, `contact-response/${message.id}/${crypto.randomUUID()}`, html);
-  if (result.failures.length) throw new Error(result.failures[0]);
+  const existingResponse = await supabaseRequest(`admin_email_log?contact_id=eq.${encodeURIComponent(message.id)}&email_type=eq.contact_response&select=body&order=created_at.asc&limit=1`);
+  const existingRows = await requireJsonArray(existingResponse, "Contact reply log");
+  const priorReply = existingRows[0]?.body;
+  let sentBody = body;
+  let alreadySent = false;
+  if (typeof priorReply === "string") {
+    const prefix = `${greeting}\n\n`;
+    const suffix = "\n\nThank you,\nBead Different Co.";
+    if (priorReply.startsWith(prefix) && priorReply.endsWith(suffix)) {
+      sentBody = priorReply.slice(prefix.length, -suffix.length);
+    }
+    alreadySent = true;
+  } else {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+    const bodyKey = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const result = await sendToMany([email], subject, fullBody, `contact-response/${message.id}/${bodyKey}`, html);
+    if (result.failures.length) throw new Error(result.failures[0]);
+    if (!await saveSentEmail({ contactId: message.id, emailType: "contact_response", recipient: email, subject, body: fullBody })) {
+      throw new Error("The reply was sent, but its sent status could not be recorded. Check the Sent emails log before trying again.");
+    }
+  }
   const update = await supabaseRequest(`contact_messages?id=eq.${encodeURIComponent(message.id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ admin_response: body, status: "responded", responded_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ admin_response: sentBody, status: "responded", responded_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
   });
-  if (!update.ok) throw new Error("The reply was sent, but the contact message could not be updated.");
-  await saveSentEmail({ contactId: message.id, emailType: "contact_response", recipient: email, subject, body: fullBody });
-  return { sent: 1, contactId: message.id };
+  if (!update.ok) throw new Error("The reply was sent and logged, but the contact message could not be updated. Retry safely to finish saving it.");
+  return { sent: alreadySent ? 0 : 1, alreadySent, contactId: message.id };
 }
 
 Deno.serve(async (request) => {
@@ -345,7 +400,7 @@ Deno.serve(async (request) => {
       const body = textValue(payload.body, 10000);
       if (!recipients.length || recipients.length > 20 || !subject || !body) return json({ error: "A valid recipient, subject, and message are required." }, 400);
        const result = await sendToMany(recipients, subject, body, `direct/${crypto.randomUUID()}`);
-       for (const recipient of recipients) if (result.sent) await saveSentEmail({ orderId: textValue(payload.orderId, 80) || undefined, requestId: textValue(payload.requestId, 80) || undefined, emailType: "direct", recipient, subject, body });
+       for (const recipient of result.sentRecipients) await saveSentEmail({ orderId: textValue(payload.orderId, 80) || undefined, requestId: textValue(payload.requestId, 80) || undefined, emailType: "direct", recipient, subject, body });
        return json(result);
     }
     if (action === "campaign") {

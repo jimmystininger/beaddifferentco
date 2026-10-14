@@ -11,6 +11,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { ...corsHeaders, "Content-Type": "application/json" },
 });
 
+const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const textValue = (value: unknown, maxLength = 180) => String(value ?? "").trim().slice(0, maxLength);
 const numberValue = (value: unknown, fallback = 0) => {
   const number = Number(value);
@@ -51,6 +53,19 @@ const xmlTag = (xml: string, tag: string) => {
   return match ? decodeXml(match[1]) : "";
 };
 const validPostalCode = (value: unknown) => /^\d{5}(?:-\d{4})?$/.test(textValue(value, 10));
+
+const withinTaxLimit = async (request: Request) => {
+  const address = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${serviceRoleKey}:${address}`));
+  const clientHash = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/check_storefront_request_limit`, {
+    method: "POST",
+    headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ action_value: "tax", client_hash_value: clientHash, request_limit: 60, window_seconds: 900 }),
+  });
+  if (!response.ok) throw new Error("Tax request protection is unavailable.");
+  return await response.json() === true;
+};
 
 const ohioTax = async (payload: Record<string, unknown>) => {
   const address = (payload.address || {}) as Record<string, unknown>;
@@ -105,6 +120,13 @@ const ohioTax = async (payload: Record<string, unknown>) => {
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "POST required." }, 405);
+  let allowed: boolean;
+  try {
+    allowed = await withinTaxLimit(request);
+  } catch {
+    return json({ error: "Tax request protection is unavailable." }, 503);
+  }
+  if (!allowed) return json({ error: "Too many tax estimates. Please try again shortly." }, 429);
   try {
     return await ohioTax(await request.json());
   } catch (error) {
