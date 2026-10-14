@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { ensureStripeTaxRecords } from "../_shared/stripe-tax.ts";
 
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -140,7 +141,10 @@ async function finalizeRefund(refund: Record<string, any>, status: string, fallb
     status_value: status,
     reason_value: status === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${status}.`, 240),
   });
-  if (status === "succeeded") await sendRefundReceipt(orderId, refund);
+  if (status === "succeeded") {
+    await ensureStripeTaxRecords({ projectUrl, serviceKey, stripeSecret }, orderId);
+    await sendRefundReceipt(orderId, refund);
+  }
 }
 
 async function handleWebhook(request: Request) {
@@ -156,7 +160,10 @@ async function handleWebhook(request: Request) {
   if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     if (object.payment_status === "paid" && object.metadata?.order_id) {
       const order = await rpc("complete_stripe_order", { order_id_value: object.metadata.order_id, session_id_value: object.id, payment_intent_value: typeof object.payment_intent === "string" ? object.payment_intent : object.payment_intent?.id || null });
-      if (order?.payment_status === "paid") await invokeInternalEmail("send-order-email", { action: "confirmation", orderId: object.metadata.order_id });
+      if (order?.payment_status === "paid") {
+        await ensureStripeTaxRecords({ projectUrl, serviceKey, stripeSecret }, object.metadata.order_id);
+        await invokeInternalEmail("send-order-email", { action: "confirmation", orderId: object.metadata.order_id });
+      }
     }
   } else if (event.type === "checkout.session.expired") {
     const orderId = object.metadata?.order_id;

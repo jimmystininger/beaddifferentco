@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { ensureStripeTaxRecords, storeStripeTaxCalculation } from "../_shared/stripe-tax.ts";
 
 const projectUrl = Deno.env.get("SUPABASE_URL") || "";
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -321,9 +322,43 @@ async function validateCheckoutShipping(order: Record<string, any>, address: Rec
   if (!rate || cents(rate.amount) !== amount) throw new Error("USPS shipping changed. Refresh your checkout and try again.");
 }
 
+async function canonicalCheckoutLines(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 50) {
+    throw new Error("Your cart must contain between 1 and 50 item lines.");
+  }
+  return await Promise.all(value.map(async (candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error("A cart item is invalid. Refresh your cart and try again.");
+    }
+    const line = candidate as Record<string, any>;
+    const productId = text(line.product_id, 36);
+    const sku = text(line.sku, 255);
+    const quantity = Number(line.quantity);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(productId) ||
+        !sku || !Number.isInteger(quantity) || quantity < 1) {
+      throw new Error("A cart item is missing a valid product, SKU, or quantity.");
+    }
+    const rows = await database(
+      `product_option_values?select=inventory_units,inventory_skus!inner(sku),product_options!inner(product_id)&product_options.product_id=eq.${encodeURIComponent(productId)}&inventory_skus.sku=eq.${encodeURIComponent(sku)}`,
+    );
+    if (rows.length !== 1 || text(rows[0]?.inventory_skus?.sku, 255) !== sku) {
+      throw new Error(`SKU ${sku} is not an active option for this product. Refresh your cart and try again.`);
+    }
+    const inventoryUnits = Number(rows[0].inventory_units);
+    if (!Number.isInteger(inventoryUnits) || inventoryUnits < 1) {
+      throw new Error(`The inventory mapping for SKU ${sku} is invalid. Please contact the store.`);
+    }
+    return { ...line, product_id: productId, sku, quantity, inventory_units: inventoryUnits };
+  }));
+}
+
 async function createCheckout(request: Request, body: Record<string, any>) {
   const user = await userFrom(request);
-  const payload = { ...(body.order_payload || {}), user_id: user?.id || null };
+  const orderPayload = body.order_payload && typeof body.order_payload === "object" && !Array.isArray(body.order_payload)
+    ? body.order_payload
+    : {};
+  const lines = await canonicalCheckoutLines(orderPayload.lines);
+  const payload = { ...orderPayload, lines, user_id: user?.id || null };
   try { await rpc("expire_pending_stripe_orders", {}); } catch (error) { console.warn("Pending Stripe order cleanup unavailable.", error); }
   const order = await rpc("create_stripe_pending_order", { order_payload: payload, owner_user_id: user?.id || null });
   let createdSessionId = "";
@@ -331,6 +366,7 @@ async function createCheckout(request: Request, body: Record<string, any>) {
     await validateCheckoutShipping(order, payload.shipping_address || {});
     const stripeTax = await calculateStripeTax({ ...order, shipping_address: payload.shipping_address || {} });
     if (cents(stripeTax.amount) !== cents(order.tax_amount)) throw new Error("Stripe Tax changed. Refresh your checkout and try again.");
+    if (stripeTax.state === "OH") await storeStripeTaxCalculation({ projectUrl, serviceKey, stripeSecret }, order.id, stripeTax.calculation_id);
     const expiresAt = Math.floor(Date.parse(order.payment_expires_at || "") / 1000) - 900;
     if (!Number.isFinite(expiresAt) || expiresAt < Math.floor(Date.now() / 1000) + 1800) {
       throw new Error("Checkout reservation expired before payment could start. Please try again.");
@@ -382,6 +418,7 @@ async function checkoutStatus(body: Record<string, any>) {
   try {
     const order = await rpc("complete_stripe_order", { order_id_value: orderId, session_id_value: sessionId, payment_intent_value: paymentIntentId });
     if (order?.payment_status !== "paid") return json({ status: "processing", order_id: orderId });
+    await ensureStripeTaxRecords({ projectUrl, serviceKey, stripeSecret }, orderId);
     const receipt = await sendOrderConfirmation(orderId);
     return json({ status: "paid", order_id: orderId, receipt_email_status: receipt.status });
   } catch (error) {
@@ -458,6 +495,7 @@ async function reconcileStripeRefund(order: Record<string, any>, refund: Record<
     status_value: stripeStatus,
     reason_value: stripeStatus === "succeeded" ? "Refund processed in Stripe." : text(refund.failure_reason || `Stripe refund ${stripeStatus}.`, 240),
   });
+  if (stripeStatus === "succeeded") await ensureStripeTaxRecords({ projectUrl, serviceKey, stripeSecret }, order.id);
   const receipt = stripeStatus === "succeeded" ? await sendRefundReceipt(order.id, refund) : null;
   if (throwOnFailure && ["failed", "canceled"].includes(stripeStatus)) {
     throw new Error(text(finalized?.error || `Stripe refund ${stripeStatus}.`, 240));

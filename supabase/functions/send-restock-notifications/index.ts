@@ -3,7 +3,12 @@ const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const resendApiKey = Deno.env.get('RESEND_API_KEY') || '';
 const restockEmailFrom = Deno.env.get('EMAIL_FROM') || Deno.env.get('RESTOCK_EMAIL_FROM') || '';
 
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character] || character));
 const brandedHtml = (title: string, content: string) => `<!doctype html><html><body style="margin:0;background:#f7f3f1;color:#241e1d;font-family:Arial,sans-serif"><div style="max-width:600px;margin:0 auto;padding:32px 20px"><div style="background:#ffffff;border:1px solid #e4deda;border-radius:14px;padding:32px"><p style="margin:0 0 18px;color:#8b4261;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase">BEAD DIFFERENT CO.</p><h1 style="margin:0 0 22px;font-family:Georgia,serif;font-size:28px;line-height:1.15;color:#241e1d">${escapeHtml(title)}</h1>${content}<p style="margin:28px 0 0;color:#756d6a;font-size:13px">Bead Different Co.</p></div></div></body></html>`;
 
@@ -32,11 +37,26 @@ async function isAdmin(request: Request) {
 }
 
 Deno.serve(async (request) => {
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json({ error: 'POST required.' }, 405);
   if (!(await isAdmin(request))) return json({ error: 'Admin access required.' }, 403);
   if (!resendApiKey || !restockEmailFrom) return json({ error: 'Restock email delivery is not configured.' }, 503);
 
-  const pendingResponse = await supabaseRequest('waitlist_restock_notifications?status=eq.pending&select=id,waitlist_entry_id,attempt_count&order=created_at.asc&limit=100');
+  const staleLeaseBefore = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const legacyLeaseBefore = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const leaseRecovery = await supabaseRequest(`waitlist_restock_notifications?status=eq.sending&sent_at=lt.${encodeURIComponent(staleLeaseBefore)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'pending', sent_at: null, last_error: 'Recovered an interrupted notification attempt.' })
+  });
+  if (!leaseRecovery.ok) return json({ error: 'Unable to recover interrupted restock notifications.' }, 500);
+  const legacyRecovery = await supabaseRequest(`waitlist_restock_notifications?status=eq.sending&sent_at=is.null&created_at=lt.${encodeURIComponent(legacyLeaseBefore)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'pending', last_error: 'Recovered an interrupted notification attempt.' })
+  });
+  if (!legacyRecovery.ok) return json({ error: 'Unable to recover older interrupted restock notifications.' }, 500);
+
+  const retryDueBefore = encodeURIComponent(new Date().toISOString());
+  const pendingResponse = await supabaseRequest(`waitlist_restock_notifications?status=eq.pending&or=(sent_at.is.null,sent_at.lte.${retryDueBefore})&select=id,waitlist_entry_id,attempt_count&order=created_at.asc&limit=100`);
   if (!pendingResponse.ok) return json({ error: 'Unable to load pending restock notifications.' }, 500);
   const pending = await pendingResponse.json();
   const entryIds = [...new Set(pending.map((notification: { waitlist_entry_id?: string }) => String(notification.waitlist_entry_id || '').trim()).filter(Boolean))];
@@ -48,12 +68,14 @@ Deno.serve(async (request) => {
   const entryById = new Map(entries.map((entry: { id?: string }) => [String(entry.id || ''), entry]));
   let sent = 0;
   let failed = 0;
+  let retrying = 0;
 
   for (const notification of pending) {
-    const claimResponse = await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}&status=eq.pending`, {
+    const attemptCount = Number(notification.attempt_count || 0) + 1;
+    const claimResponse = await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}&status=eq.pending&or=(sent_at.is.null,sent_at.lte.${retryDueBefore})`, {
       method: 'PATCH',
       headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({ status: 'sending', attempt_count: Number(notification.attempt_count || 0) + 1, last_error: null })
+      body: JSON.stringify({ status: 'sending', attempt_count: attemptCount, sent_at: new Date().toISOString(), last_error: null })
     });
     if (!claimResponse.ok || !(await claimResponse.json()).length) continue;
 
@@ -61,31 +83,59 @@ Deno.serve(async (request) => {
     const email = entry?.profiles?.email;
     if (!email) {
       failed += 1;
-      await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed', last_error: 'Waitlist customer email is unavailable.' }) });
+      const update = await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed', sent_at: null, last_error: 'Waitlist customer email is unavailable.' }) });
+      if (!update.ok) return json({ error: 'Waitlist customer email is unavailable and its failure status could not be saved.' }, 500);
       continue;
     }
 
     const productName = entry.products?.name || 'an item';
     const skuName = entry.inventory_skus?.name || entry.inventory_skus?.sku || 'your selected option';
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `restock/${notification.id}` },
-      body: JSON.stringify({
-        from: restockEmailFrom,
-        to: [email],
-        subject: `${productName} is back in stock`,
-        html: brandedHtml(`${productName} is back in stock`, `<p>Hello${entry.profiles?.full_name ? ` ${escapeHtml(entry.profiles.full_name)}` : ''},</p><p>The selected option <strong>${escapeHtml(skuName)}</strong> for <strong>${escapeHtml(productName)}</strong> has new inventory available.</p><p>Your waitlist request is for ${Number(entry.requested_quantity) || 1} item${Number(entry.requested_quantity) === 1 ? '' : 's'}. Visit the product page to place your order.</p>`)
-      })
-    });
-    if (!response.ok) {
-      failed += 1;
-      const detail = await response.text();
-      await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed', last_error: detail.slice(0, 500) }) });
+    let response: Response | null = null;
+    let detail = '';
+    try {
+      response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `restock/${notification.id}` },
+        body: JSON.stringify({
+          from: restockEmailFrom,
+          to: [email],
+          subject: `${productName} is back in stock`,
+          html: brandedHtml(`${productName} is back in stock`, `<p>Hello${entry.profiles?.full_name ? ` ${escapeHtml(entry.profiles.full_name)}` : ''},</p><p>The selected option <strong>${escapeHtml(skuName)}</strong> for <strong>${escapeHtml(productName)}</strong> has new inventory available.</p><p>Your waitlist request is for ${Number(entry.requested_quantity) || 1} item${Number(entry.requested_quantity) === 1 ? '' : 's'}. Visit the product page to place your order.</p>`)
+        })
+      });
+      if (!response.ok) detail = (await response.text()).slice(0, 500);
+    } catch (error) {
+      detail = String(error instanceof Error ? error.message : error).slice(0, 500);
+    }
+    if (!response?.ok) {
+      const statusCode = response?.status || 0;
+      const canRetry = attemptCount < 5 && (!statusCode || statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500);
+      const retryDelayMinutes = Math.min(60, 5 * (2 ** Math.max(0, attemptCount - 1)));
+      const retryAfterHeader = response?.headers.get('retry-after') || '';
+      const retryAfterSeconds = Number(retryAfterHeader);
+      const retryAfterDate = Date.parse(retryAfterHeader);
+      const retryAt = Math.max(
+        Date.now() + retryDelayMinutes * 60 * 1000,
+        Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? Date.now() + retryAfterSeconds * 1000 : 0,
+        Number.isFinite(retryAfterDate) ? retryAfterDate : 0
+      );
+      const update = await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: canRetry ? 'pending' : 'failed',
+          sent_at: canRetry ? new Date(retryAt).toISOString() : null,
+          last_error: detail || `Email delivery failed${statusCode ? ` (${statusCode})` : ''}.`
+        })
+      });
+      if (!update.ok) return json({ error: 'Email delivery failed and its retry status could not be saved.' }, 500);
+      if (canRetry) retrying += 1;
+      else failed += 1;
       continue;
     }
     sent += 1;
-    await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'sent', sent_at: new Date().toISOString(), last_error: null }) });
+    const update = await supabaseRequest(`waitlist_restock_notifications?id=eq.${encodeURIComponent(notification.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'sent', sent_at: new Date().toISOString(), last_error: null }) });
+    if (!update.ok) return json({ error: 'Email was sent, but its delivery status could not be saved.' }, 500);
   }
 
-  return json({ processed: sent + failed, sent, failed });
+  return json({ processed: sent + failed + retrying, sent, failed, retrying });
 });
