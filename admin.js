@@ -1330,7 +1330,7 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
       if((result.data||[]).length<1000)break;
     }
     const byId=new Map(inventory.map((row)=>[String(row.id),row]));
-    const parentIds=[...new Set(variants.map((variant)=>inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase()&&(String(row.source_metadata?.etsy_sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase()||(row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId)) )?.id).filter(Boolean))];
+    const parentIds=[...new Set(variants.map((variant)=>inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===String(variant.etsy_sku||'').trim().toUpperCase())?.id).filter(Boolean))];
     const recipes=[];
     for(let start=0;start<parentIds.length;start+=100){
       const result=await cloudAdmin().from('inventory_bundle_components').select('bundle_sku_id,component_sku_id,quantity,sort_order').in('bundle_sku_id',parentIds.slice(start,start+100)).order('sort_order');
@@ -1342,7 +1342,7 @@ async function openImportedEtsySkuCorrection(page,onSaved=()=>{}){
     const recipePickerMarkup=(component)=>'<label>Inventory component SKU<div class="admin-etsy-correction-sku-picker"><input data-recipe-sku autocomplete="off" value="'+adminSafe(component.sku||'')+'" required><div class="admin-etsy-correction-suggestions" data-recipe-suggestions hidden></div></div></label><label>Quantity<input data-recipe-quantity type="number" min="1" step="1" value="'+Number(component.quantity||1)+'" required></label><button type="button" data-remove-recipe-line aria-label="Remove recipe component">Remove</button>';
     variantsHost.innerHTML=variants.map((variant,index)=>{
       const etsySku=String(variant.etsy_sku||'').trim();
-      const parent=inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===etsySku.toUpperCase()&&(String(row.source_metadata?.etsy_sku||'').trim().toUpperCase()===etsySku.toUpperCase()||(row.source_metadata?.source==='etsy_listing'&&String(row.source_metadata?.etsy_listing_id||'')===listingId)));
+      const parent=inventory.find((row)=>String(row.sku||'').trim().toUpperCase()===etsySku.toUpperCase());
       const components=parent?recipesByParent.get(String(parent.id))||[]:[];
       const recipeEditable=Number(variant.pack_size||0)>1||components.length>0;
       return '<section class="admin-etsy-correction-variant" data-correction-variant="'+index+'"><h3>Etsy SKU <code>'+adminSafe(etsySku)+'</code> <small>· '+Number(variant.pack_size||1)+' pack</small></h3>'+(recipeEditable?'<fieldset><legend>Recipe for this Etsy package</legend><p>Choose the canonical inventory SKUs and quantities used to make one package.</p><div data-recipe-lines>'+components.map((component)=>'<div class="admin-etsy-correction-line">'+recipePickerMarkup(component)+'</div>').join('')+'</div><button type="button" data-add-recipe-line>Add component</button></fieldset>':'')+'</section>';
