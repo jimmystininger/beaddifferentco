@@ -6,7 +6,7 @@ const readProfiles=()=>{try{return JSON.parse(localStorage.getItem(profileStoreK
 const saveProfiles=(profiles)=>localStorage.setItem(profileStoreKey,JSON.stringify(profiles));
 const localAccount=()=>{try{return JSON.parse(localStorage.getItem(sessionStoreKey)||'null');}catch(error){return null;}};
 const reviewResponsesViewedAt=()=>localStorage.getItem(reviewResponseViewedKey())||'';
-const markReviewResponsesViewed=(timestamp)=>{const requested=Date.parse(timestamp||'');const current=Date.now();localStorage.setItem(reviewResponseViewedKey(),new Date(Math.max(current,Number.isFinite(requested)?requested:0)).toISOString());};
+const markReviewResponsesViewed=async(timestamp)=>{const requested=Date.parse(timestamp||'');const viewedAt=new Date(Number.isFinite(requested)?requested:Date.now()).toISOString();localStorage.setItem(reviewResponseViewedKey(),viewedAt);const user=await cloudUser();if(user){const {data,error}=await cloudClient().from('profiles').update({review_responses_viewed_at:viewedAt}).eq('id',user.id).select('id').maybeSingle();if(error)throw error;if(!data)throw new Error('Your review notification status could not be saved.');}return viewedAt;};
 const hasUnreadReviewResponse=(review)=>{if(!String(review?.admin_response||'').trim())return false;const viewedAt=Date.parse(reviewResponsesViewedAt());const responseAt=Date.parse(review.admin_response_at||review.created_at||0);return !viewedAt||!responseAt||responseAt>viewedAt;};
 const cloudClient=()=>window.beadSupabase||null;
 const cloudReadyClient=async()=>{try{return window.beadSupabase||await window.beadSupabaseReady||null;}catch(error){return null;}};
@@ -55,7 +55,7 @@ async function loadAccountView(view='overview',page=1){
     const localReviews=await reviews();
     const localWaitlist=await waitlist();
     const localWaitlistRows=localWaitlist.map((entry)=>{const product=entry.products||{};return{...entry,products:{...product,...favoritePresentation(product,catalog)}};});
-    if(view==='reviews'){const latestResponse=localReviews.map((review)=>review.admin_response_at).filter(Boolean).sort().pop();if(latestResponse)markReviewResponsesViewed(latestResponse);}
+    if(view==='reviews'){const latestResponse=localReviews.map((review)=>review.admin_response_at).filter(Boolean).sort().pop();if(latestResponse)await markReviewResponsesViewed(latestResponse);}
     return{addresses:profile.addresses||[],marketingOptIn:Boolean(profile.marketingOptIn),favorites:view==='favorites'?localFavorites.slice((currentPage-1)*pageSize,currentPage*pageSize):localFavorites.slice(0,2),favoriteCount:localFavorites.length,orders:view==='orders'?localOrders.slice((currentPage-1)*pageSize,currentPage*pageSize):localOrders.slice(0,2),orderCount:localOrders.length,reviews:view==='reviews'?localReviews.slice((currentPage-1)*pageSize,currentPage*pageSize):localReviews.slice(0,2),reviewCount:localReviews.length,reviewResponseCount:localReviews.filter(hasUnreadReviewResponse).length,waitlist:view==='waitlist'?localWaitlistRows.slice((currentPage-1)*pageSize,currentPage*pageSize):localWaitlist.slice(0,2),waitlistCount:localWaitlist.length,rewardStatus:view==='overview'?await rewardStatus():null};
   }
   const offset=(currentPage-1)*pageSize;
@@ -65,6 +65,10 @@ async function loadAccountView(view='overview',page=1){
   const wantsReviews=wantsOverview||view==='reviews';
   const wantsWaitlist=wantsOverview||view==='waitlist';
   const emptyResult=()=>Promise.resolve({data:[],count:0,error:null});
+  const profileResult=wantsOverview?await cloudClient().from('profiles').select('review_responses_viewed_at').eq('id',user.id).maybeSingle():emptyResult();
+  if(profileResult.error)throw profileResult.error;
+  const viewedAt=profileResult.data?.review_responses_viewed_at||reviewResponsesViewedAt();
+  if(profileResult.data?.review_responses_viewed_at)localStorage.setItem(reviewResponseViewedKey(),profileResult.data.review_responses_viewed_at);
   const [addressResult,preferenceResult,favoriteResult,favoriteCountResult,orderResult,orderCountResult,reviewResult,reviewCountResult,reviewResponseCountResult,waitlistResult,waitlistCountResult,rewardResult]=await Promise.all([
     wantsOverview?cloudClient().from('customer_addresses').select('id,label,recipient_name,address_line1,address_line2,city,state,postal_code,country,is_default,updated_at').eq('user_id',user.id).order('is_default',{ascending:false}).order('updated_at',{ascending:false}).range(0,99):emptyResult(),
     wantsOverview?cloudClient().from('customer_preferences').select('marketing_opt_in').eq('user_id',user.id).maybeSingle():emptyResult(),
@@ -74,7 +78,7 @@ async function loadAccountView(view='overview',page=1){
     wantsOrders?cloudClient().from('orders').select('id',{count:'exact',head:true}).eq('user_id',user.id):emptyResult(),
     wantsReviews?cloudClient().from('reviews').select('id,review_type,rating,body,photos,status,verified_purchase,created_at,admin_response,admin_response_at,reviewer_member_since,products(name,external_id)').eq('user_id',user.id).order('created_at',{ascending:false}).range(view==='reviews'?offset:0,view==='reviews'?offset+pageSize-1:1):emptyResult(),
     wantsReviews?cloudClient().from('reviews').select('id',{count:'exact',head:true}).eq('user_id',user.id):emptyResult(),
-    wantsOverview?(()=>{const query=cloudClient().from('reviews').select('id',{count:'exact',head:true}).eq('user_id',user.id).not('admin_response','is',null);const viewedAt=reviewResponsesViewedAt();return viewedAt?query.gt('admin_response_at',viewedAt):query;})():emptyResult(),
+    wantsOverview?(()=>{const query=cloudClient().from('reviews').select('id',{count:'exact',head:true}).eq('user_id',user.id).not('admin_response','is',null);return viewedAt?query.gt('admin_response_at',viewedAt):query;})():emptyResult(),
     wantsWaitlist?cloudClient().from('waitlist_entries').select('id,status,requested_quantity,requested_total_quantity,selected_options,created_at,products(name,external_id,product_images(url,sort_order,media_type)),inventory_skus(sku,name)').eq('user_id',user.id).eq('status','waiting').order('created_at',{ascending:false}).range(view==='waitlist'?offset:0,view==='waitlist'?offset+pageSize-1:1):emptyResult(),
     wantsWaitlist?cloudClient().from('waitlist_entries').select('id',{count:'exact',head:true}).eq('user_id',user.id).eq('status','waiting'):emptyResult(),
     wantsOverview?cloudClient().rpc('get_my_reward_status'):Promise.resolve({data:null,error:null})
@@ -83,7 +87,7 @@ async function loadAccountView(view='overview',page=1){
   if(window.catalogReady)await window.catalogReady;  const catalog=window.storeCatalog?.()||[];
   const favoriteRows=(favoriteResult.data||[]).map((entry)=>{const product=entry.products||{};return{...entry,products:{...product,...favoritePresentation(product,catalog)}};}).filter((entry)=>entry.products?.visible!==false);
   const waitlistRows=(waitlistResult.data||[]).map((entry)=>{const product=entry.products||{};return{...entry,products:{...product,...favoritePresentation(product,catalog)}};});
-  const accountReviews=reviewResult.data||[];if(view==='reviews'){const latestResult=await cloudClient().from('reviews').select('admin_response_at').eq('user_id',user.id).not('admin_response_at','is',null).order('admin_response_at',{ascending:false}).limit(1).maybeSingle();if(!latestResult.error&&latestResult.data?.admin_response_at)markReviewResponsesViewed(latestResult.data.admin_response_at);}
+  const accountReviews=reviewResult.data||[];if(view==='reviews'){const latestResult=await cloudClient().from('reviews').select('admin_response_at').eq('user_id',user.id).not('admin_response_at','is',null).order('admin_response_at',{ascending:false}).limit(1).maybeSingle();if(latestResult.error)throw latestResult.error;if(latestResult.data?.admin_response_at)await markReviewResponsesViewed(latestResult.data.admin_response_at);}
   return{addresses:addressResult.data||[],marketingOptIn:Boolean(preferenceResult.data?.marketing_opt_in),favorites:favoriteRows,favoriteCount:favoriteCountResult.count||0,orders:await enrichOrderSkuNames(orderResult.data||[]),orderCount:orderCountResult.count||0,reviews:accountReviews,reviewCount:reviewCountResult.count||0,reviewResponseCount:reviewResponseCountResult.count||0,waitlist:waitlistRows,waitlistCount:waitlistCountResult.count||0,rewardStatus:rewardResult.data||null};
 }
 const signInForCurrentRoute=signInCustomer;

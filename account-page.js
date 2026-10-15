@@ -61,7 +61,6 @@ async function signedInAccount(account,view='overview'){
   if(newAddressButton&&addressForm)newAddressButton.addEventListener('click',()=>{newAddressButton.hidden=true;addressForm.hidden=false;addressForm.querySelector('input')?.focus();});
   accountPanel.querySelector('[data-open-name-dialog]').addEventListener('click',()=>accountPanel.querySelector('#profile-name-dialog').showModal());
   accountPanel.querySelector('[data-open-notifications]').addEventListener('click',()=>accountPanel.querySelector('#notification-dialog').showModal());
-  accountPanel.querySelector('[data-mark-review-responses-read]')?.addEventListener('click',(event)=>{event.preventDefault();window.customerAccounts.markReviewResponsesViewed();window.location.assign(event.currentTarget.href);});
   accountPanel.querySelector('[data-signout]').addEventListener('click',async()=>{await window.customerAccounts.signOut();renderAccount();});
   const nameForm=accountPanel.querySelector('[data-name-form]');
   nameForm.addEventListener('submit',async(event)=>{event.preventDefault();const fields=Object.fromEntries(new FormData(nameForm));const status=nameForm.querySelector('[role=status]');try{await window.customerAccounts.saveDetails({name:fields.name});nameForm.closest('dialog').close();await renderAccount();}catch(error){status.textContent=error.message;}});
