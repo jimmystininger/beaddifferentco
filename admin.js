@@ -2953,7 +2953,9 @@ const renderInventoryPurchaseReceipts=async()=>{
   });
 };
 const inventoryPurchasePanelObserver=new MutationObserver(()=>{
-  if(activeTab==='expenses')void renderInventoryPurchaseReceipts();
+  if(activeTab!=='expenses'||panel.querySelector('[data-inventory-purchase-history]'))return;
+  if(!panel.querySelector('[data-reconciliation-body]')||!panel.querySelector('[data-expense-body]'))return;
+  void renderInventoryPurchaseReceipts();
 });
 inventoryPurchasePanelObserver.observe(panel,{childList:true,subtree:true});
 void requireAdmin();
