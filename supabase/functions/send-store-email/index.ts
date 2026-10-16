@@ -172,6 +172,36 @@ async function saveSentEmail(email: { orderId?: string; requestId?: string; cont
   return response.ok;
 }
 
+async function claimRefundReceipt(refundId: string, orderId: string) {
+  const claimResponse = await supabaseRequest("refund_receipt_email_deliveries?on_conflict=stripe_refund_id&select=stripe_refund_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+    body: JSON.stringify({ stripe_refund_id: refundId, order_id: orderId, status: "sending" }),
+  });
+  if (!claimResponse.ok) {
+    const detail = textValue(await claimResponse.text(), 300);
+    throw new Error(`Unable to reserve the refund receipt${detail ? `: ${detail}` : "."}`);
+  }
+  const claimed = await claimResponse.json();
+  if (Array.isArray(claimed) && claimed.length > 0) return true;
+  const existingResponse = await supabaseRequest(`refund_receipt_email_deliveries?stripe_refund_id=eq.${encodeURIComponent(refundId)}&select=status`);
+  const existing = await requireJsonArray(existingResponse, "Refund receipt delivery");
+  if (!existing.length) throw new Error("Unable to confirm the refund receipt reservation.");
+  return false;
+}
+
+async function updateRefundReceipt(refundId: string, status: "sent" | "failed", error?: string) {
+  const response = await supabaseRequest(`refund_receipt_email_deliveries?stripe_refund_id=eq.${encodeURIComponent(refundId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ status, ...(status === "sent" ? { sent_at: new Date().toISOString(), last_error: null } : { last_error: textValue(error, 500) }) }),
+  });
+  if (!response.ok) {
+    const detail = textValue(await response.text(), 300);
+    throw new Error(`Unable to update the refund receipt record${detail ? `: ${detail}` : "."}`);
+  }
+}
+
 async function campaignSentRecipients(campaignId: string, recipients: string[]) {
   const sent = new Set<string>();
   const emailType = encodeURIComponent(`campaign:${campaignId}`);
@@ -330,8 +360,15 @@ async function sendRefundReceipt(payload: Record<string, unknown>) {
   const orderLinkHtml = `<p style="margin:22px 0 0"><a href="${escapeHtml(orderUrl)}" style="display:inline-block;background:#4b214f;color:#fff;text-decoration:none;border-radius:999px;padding:14px 22px;font-weight:700">Log in to view your order</a></p>`;
   const html = brandedHtml(`Refund for order ${orderShortId}`, `<p>${escapeHtml(greeting)}</p><p>We processed a refund for your order.</p><div style="margin:22px 0;padding:16px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:10px"><p style="margin:0 0 8px"><strong>Refund total:</strong> $${escapeHtml(refundAmount)}</p><p style="margin:0"><strong>Remaining order balance:</strong> $${escapeHtml(remaining)}</p></div>${lineHtml}${orderLinkHtml}<p style="color:#756d6a">Please allow up to 10 days for the refund to post to your original payment method.</p>`);
   const subject = `Refund processed for order ${orderShortId}`;
-  const idempotencyKey = refundId ? `refund-receipt/${refundId}` : `refund-receipt/${order.id}/${crypto.randomUUID()}`;
-  const result = await sendToMany([email], subject, body, idempotencyKey, html);
+  if (!refundId) throw new Error("Stripe refund id is required to prevent duplicate refund receipts.");
+  if (!await claimRefundReceipt(refundId, String(order.id))) return { sent: 0, skipped: true, reason: "A receipt for this refund was already sent or is being processed." };
+  const result = await sendToMany([email], subject, body, `refund-receipt/${refundId}`, html);
+  if (result.sent) await updateRefundReceipt(refundId, "sent");
+  else {
+    const failure = result.failures.join("; ") || "Email provider did not confirm delivery.";
+    await updateRefundReceipt(refundId, "failed", failure);
+    throw new Error(`Refund receipt delivery failed: ${failure}`);
+  }
   if (result.sent) await saveSentEmail({ orderId: order.id, emailType: "refund_receipt", recipient: email, subject, body });
   return result;
 }
