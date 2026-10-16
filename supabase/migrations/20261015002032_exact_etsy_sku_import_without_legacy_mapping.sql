@@ -104,4 +104,3 @@ $legacy_reapply_lookup$, '');
   end if;
 end;
 $$;
-

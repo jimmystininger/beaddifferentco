@@ -30,4 +30,3 @@ select refund.stripe_refund_id,
                 where email.order_id = refund.order_id
                   and email.email_type = 'refund_receipt')
 on conflict (stripe_refund_id) do nothing;
-
