@@ -1536,7 +1536,7 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
     saveButton.disabled=true;
   }
 }
-async function renderInventoryTools(tab='low',runReport=document.body.dataset.inventoryReportActive==='true',fresh=false){if(fresh){clearAdminRowsCachePrefix('inventory:');clearAdminRowsCachePrefix('catalog-part:inventory:');await clearAdminReportCache('report:inventory:');await clearAdminReportCache('report:catalog-part:inventory:');}if(tab==='adjust'&&!runReport&&!adminUrlParams.has('inventory')&&!adminUrlParams.has('recipe')&&!document.body.dataset.inventoryTab)tab='menu';document.body.dataset.inventoryTab=tab;document.body.dataset.inventoryReportActive=runReport?'true':'false';const requestId=++inventoryRenderToken;const isCurrent=()=>requestId===inventoryRenderToken&&activeTab==='inventory';
+async function renderInventoryTools(tab='low',runReport=document.body.dataset.inventoryReportActive==='true',fresh=false){if(tab==='audit')runReport=true;if(fresh){clearAdminRowsCachePrefix('inventory:');clearAdminRowsCachePrefix('catalog-part:inventory:');await clearAdminReportCache('report:inventory:');await clearAdminReportCache('report:catalog-part:inventory:');}if(tab==='adjust'&&!runReport&&!adminUrlParams.has('inventory')&&!adminUrlParams.has('recipe')&&!document.body.dataset.inventoryTab)tab='menu';document.body.dataset.inventoryTab=tab;document.body.dataset.inventoryReportActive=runReport?'true':'false';const requestId=++inventoryRenderToken;const isCurrent=()=>requestId===inventoryRenderToken&&activeTab==='inventory';
   const renderInitialShell=()=>{if(!isCurrent())return;panel.innerHTML='<div class="admin-heading"><div><p class="kicker">INVENTORY & REPORTING</p><h2>Inventory and reports</h2><p>Every row below represents one inventory SKU.</p></div></div><div class="admin-tabs inventory-tabs"><button type="button" data-inventory-tab="low">Low Stock</button><button type="button" data-inventory-tab="sales">Sales</button><button type="button" data-inventory-tab="packs">Multi-pack sales</button><button type="button" data-inventory-tab="free-shipping">Free shipping orders</button><button type="button" data-inventory-tab="sku">SKU Search</button><button type="button" data-inventory-tab="adjust">Inventory adjustments</button><button type="button" data-inventory-tab="manual">Manual allocations</button><button type="button" data-inventory-tab="audit">Year-end audit</button><button type="button" data-inventory-tab="orphans">Orphaned SKUs</button><button type="button" data-inventory-tab="uncategorized">Uncategorized</button></div><section id="inventory-view"><div class="admin-empty admin-loading" role="status">Loading inventory and reports…</div></section>';panel.querySelectorAll('[data-inventory-tab]').forEach((button)=>button.addEventListener('click',()=>renderInventoryTools(button.dataset.inventoryTab,false)));};
   renderInitialShell();
   const ensureBulkSkuCreatorTab=()=>{const tabs=panel.querySelector('.inventory-tabs');if(!tabs||tabs.querySelector('[data-inventory-tab="bulk-create"]'))return;const button=document.createElement('button');button.type='button';button.dataset.inventoryTab='bulk-create';button.textContent='Bulk SKU creator';button.onclick=()=>void renderInventoryTools('bulk-create',false);tabs.append(button);};
@@ -1554,30 +1554,48 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
      // Reports should load only the source tables they actually use. The
      // previous broad condition pulled the entire product catalog and all
      // option values even for low-stock, shipping, and sales reports.
-     const needsProducts=tab==='audit';
-    const needsOptions=tab==='audit';
-     const auditCatalog=tab==='audit';
+    const needsProducts=false;
+    const needsOptions=false;
     const needsOrders=tab==='free-shipping';
     // Free-shipping profitability is calculated from order rows only. Do not
     // download the entire canonical inventory table just to render that tab.
     // Operational screens use bounded lookups below. Only reports that need
     // every canonical row ask for the inventory snapshot; the explicit audit
     // is the only full-table workflow.
-    const needsInventory=tab==='audit'||tab==='bulk-create';
+    const needsInventory=tab==='bulk-create';
     const needsSalesReference=['sales','packs'].includes(tab);
     const needsWebsiteSalesMetrics=['sales','packs'].includes(tab);
-    const needsEtsySales=['sales','packs','audit'].includes(tab);
+    const needsEtsySales=['sales','packs'].includes(tab);
     const needsManual=tab==='manual';
     const needsMappings=false;
     const needsEvents=false;
-    const includeSnapshotProducts=needsProducts||auditCatalog;
-    const includeSnapshotOptions=needsOptions||auditCatalog;
+    const includeSnapshotProducts=needsProducts;
+    const includeSnapshotOptions=needsOptions;
     // Recipe-builder lookups are search-driven below. Do not download every
     // saved recipe just to render the adjustment tab; reports that actually
     // expand recipe sales/audits still request the bounded server snapshot.
     const includeSnapshotRecipes=false;
     const needsCatalogSnapshot=needsInventory||includeSnapshotProducts||includeSnapshotOptions||includeSnapshotRecipes;
-    const [catalogSnapshotResult,orderResult,websiteSalesResult,mappingResult,eventResult,etsySalesResult,manualResult,salesReferenceResult]=await Promise.all([
+    const loadAuditInventoryPages=async()=>{
+      const pageSize=100;
+      const loadPage=(page)=>cloudAdmin().rpc('admin_inventory_sku_lookup_page',{p_search:null,p_mode:'all',p_page:page,p_page_size:pageSize});
+      const first=await loadPage(1);
+      if(first.error)return first;
+      const rows=[...(first.data||[])];
+      const total=Number(rows[0]?.total_count)||0;
+      const pageCount=Math.ceil(total/pageSize);
+      for(let start=2;start<=pageCount;start+=6){
+        const pages=Array.from({length:Math.min(6,pageCount-start+1)},(_,index)=>start+index);
+        const results=await Promise.all(pages.map(loadPage));
+        const failed=results.find((result)=>result.error);
+        if(failed)return{data:null,error:failed.error};
+        results.forEach((result)=>rows.push(...(result.data||[])));
+      }
+      if(rows.length!==total)return{data:null,error:new Error('The inventory audit loaded '+rows.length+' of '+total+' SKU rows. Please retry the report.')};
+      return{data:rows,error:null};
+    };
+    const auditInventoryResult=tab==='audit'?adminCachedRows('inventory:audit-inventory-pages',loadAuditInventoryPages):emptyResult();
+    const [catalogSnapshotResult,orderResult,websiteSalesResult,mappingResult,eventResult,etsySalesResult,manualResult,salesReferenceResult,auditInventoryPageResult]=await Promise.all([
        needsCatalogSnapshot?adminCatalogSnapshot('inventory:catalog-snapshot',includeSnapshotProducts,includeSnapshotOptions,includeSnapshotRecipes,false,needsInventory,false,reportCacheable):emptyResult(),
        needsOrders?cachedRows('orders',()=>window.beadSupabase.from('orders').select('id,status,total,subtotal,discount,tax_amount,shipping_amount,shipping_cost,free_shipping_threshold,created_at,order_items(product_id,product_name,sku,quantity,unit_price,cost_at_purchase,selected_options)').in('status',['paid','processing','shipped','completed']).eq('shipping_amount',0).order('id')):emptyResult(),
        needsWebsiteSalesMetrics?reportRows('website-sales-metrics',()=>window.beadSupabase.rpc('admin_website_inventory_sales_metrics')):emptyResult(),
@@ -1585,13 +1603,14 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
        needsEvents?cachedRows('analytics-events',()=>window.beadSupabase.from('analytics_events').select('event_type,product_id').order('created_at')):emptyResult(),
        needsEtsySales?reportRows('etsy-sales-metrics',()=>window.beadSupabase.rpc('admin_etsy_inventory_sales_metrics')):emptyResult(),
        needsManual?cachedRows('manual-allocations',()=>window.beadSupabase.from('inventory_manual_pack_allocations').select('id,source_type,etsy_sale_line_id,order_item_id,parent_sku,units,status,allocations,note,created_at').eq('status','pending').order('created_at',{ascending:false})):emptyResult(),
-       needsSalesReference?reportRows('sales-reference',()=>window.beadSupabase.rpc('admin_inventory_sales_reference')):emptyResult()
+       needsSalesReference?reportRows('sales-reference',()=>window.beadSupabase.rpc('admin_inventory_sales_reference')):emptyResult(),
+       auditInventoryResult
      ]);
      const catalogSnapshot=adminCatalogSnapshotParts(catalogSnapshotResult);
      const productResult={data:catalogSnapshot.products,error:catalogSnapshot.error};
      const optionResult={data:catalogSnapshot.options,error:catalogSnapshot.error};
      const targetedInventoryResult=needsSalesReference?salesReferenceResult:null;
-     const inventoryResult=targetedInventoryResult||{data:catalogSnapshot.inventory,error:catalogSnapshot.error};
+     const inventoryResult=tab==='audit'?auditInventoryPageResult:(targetedInventoryResult||{data:catalogSnapshot.inventory,error:catalogSnapshot.error});
      const bundleResult={data:catalogSnapshot.recipes,error:catalogSnapshot.error};
      let etsySalesForReport=etsySalesResult.data||[];
     if(etsySalesResult.error&&needsEtsySales){if(!isCurrent())return;panel.innerHTML='<div class="admin-empty"><h3>Etsy sales metrics are unavailable</h3><p>The server aggregate failed, so the dashboard did not download the raw Etsy sales table. Repair the aggregate function and try again.</p></div>';return;}
@@ -1772,7 +1791,7 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
       (sheet.rows||[]).forEach((row,index)=>{const rowNumber=index+2;const sku=String(auditHeader(row,['sku','canonicalsku','inventorysku'])).trim();const key=normalizeSku(sku);if(!sku){errors.push('Row '+rowNumber+': SKU is required.');return;}if(seen.has(key)){errors.push('Row '+rowNumber+': duplicate SKU '+sku+'.');return;}seen.add(key);if(!inventoryBySku.has(key)){errors.push('Row '+rowNumber+': SKU is not in canonical inventory: '+sku+'.');return;}const name=String(auditHeader(row,['productname','name'])).trim();if(!name)errors.push('Row '+rowNumber+': Product name is required.');const price=auditNumber(auditHeader(row,['price','sellingprice']),'Price',rowNumber,{required:true});if(price.error)errors.push(price.error);const weight=auditNumber(auditHeader(row,['weightoz','weight','weightvalue']),'Weight (oz)',rowNumber);if(weight.error)errors.push(weight.error);const quantity=auditNumber(auditHeader(row,['qty','quantity','quantityonhand','onhand']),'Qty',rowNumber,{integer:true,required:true});if(quantity.error)errors.push(quantity.error);const reserve=auditNumber(auditHeader(row,['reservebuffer','reservequantity','reserved']),'Reserve buffer',rowNumber,{integer:true,required:true});if(reserve.error)errors.push(reserve.error);const lowStock=auditNumber(auditHeader(row,['lowstock','lowstockminimum','reorderpoint','lowstockthreshold','minimum']),'Low stock',rowNumber,{integer:true,required:true});if(lowStock.error)errors.push(lowStock.error);if(!price.error&&!quantity.error&&!reserve.error&&!lowStock.error&&!weight.error&&name)rows.push({sku,product_name:name,price:price.value,weight_value:weight.value,weight_unit:'oz',quantity:quantity.value,reserve_quantity:reserve.value,reorder_point:lowStock.value});});
       const expected=new Set(inventoryRecords.filter((record)=>record.sku).map((record)=>normalizeSku(record.sku)));seen.forEach((key)=>{if(!expected.has(key))errors.push('Inventory tab contains an unexpected SKU: '+key+'.');});expected.forEach((key)=>{if(!seen.has(key))errors.push('Inventory tab is missing canonical SKU: '+key+'.');});return{errors,rows};};
     fileInput.onchange=async()=>{pendingRows=[];validationErrors=[];applyButton.disabled=true;preview.hidden=true;const file=fileInput.files?.[0];if(!file){status.textContent='No audit workbook selected.';return;}try{const sheets=await auditWorkbookSheets(file);if(sheets.length!==1)throw new Error('Upload a workbook with exactly one inventory tab, or a single-tab CSV.');const result=validateSheet(sheets[0]);pendingRows=result.rows;validationErrors=result.errors;status.textContent=validationErrors.length?'Workbook rejected: '+validationErrors.length+' validation issue(s).':'Validated '+pendingRows.length+' canonical SKU rows. SKU will only be used to match rows; all other audit columns will overwrite their canonical fields.';preview.hidden=false;preview.textContent=(validationErrors.length?validationErrors.slice(0,16).join('\n')+'\n':'')+'Canonical SKU rows: '+pendingRows.length+'\n'+(validationErrors.length?'Correct the workbook and upload it again.':'Ready to apply.');applyButton.disabled=Boolean(validationErrors.length||!pendingRows.length||!cloud);}catch(error){validationErrors=[error.message];status.textContent='Workbook rejected: '+error.message;preview.hidden=false;preview.textContent=error.message;applyButton.disabled=true;}};
-    applyButton.onclick=async()=>{if(applyButton.disabled)return;applyButton.disabled=true;status.textContent='Applying canonical inventory audit…';const result=await cloudAdmin().rpc('apply_inventory_audit_complete',{audit_rows:pendingRows});if(result.error){status.textContent='Audit was not applied: '+result.error.message;applyButton.disabled=false;return;}status.textContent='Overwrote '+Number(result.data||0)+' canonical inventory rows. SKU values were not changed.';await renderInventoryTools('audit',true);};
+    applyButton.onclick=async()=>{if(applyButton.disabled)return;applyButton.disabled=true;status.textContent='Applying canonical inventory audit…';const result=await cloudAdmin().rpc('apply_inventory_audit_complete',{audit_rows:pendingRows});if(result.error){status.textContent='Audit was not applied: '+result.error.message;applyButton.disabled=false;return;}clearAdminRowsCachePrefix('inventory:');status.textContent='Overwrote '+Number(result.data||0)+' canonical inventory rows. SKU values were not changed.';await renderInventoryTools('audit',true);};
     return;
   }
   if(tab==='adjust'){
