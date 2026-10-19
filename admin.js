@@ -4304,4 +4304,3 @@ document.addEventListener('click',async(event)=>{const button=event.target.close
   const start=()=>{injectHeroLinkEditor();new MutationObserver(injectHeroLinkEditor).observe(document.body,{childList:true,subtree:true});};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
-                                                                                                      
