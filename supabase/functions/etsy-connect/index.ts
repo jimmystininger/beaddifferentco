@@ -291,12 +291,19 @@ async function syncOrderStatusUpdates(adminId: string, offsetValue: number, minM
     }))[0] || { ...syncState, backfill_status: 'running', min_created: minCreated, max_created: nowSeconds };
   }
   const historicalBackfill = syncState.backfill_status === 'running';
-  const maxModified = historicalBackfill
-    ? Math.min(nowSeconds, Number(syncState.max_created) || nowSeconds)
-    : Number.isFinite(maxModifiedValue) && Number(maxModifiedValue) > 0 ? Math.min(nowSeconds, Math.floor(Number(maxModifiedValue))) : nowSeconds;
-  const minModified = historicalBackfill
-    ? Math.max(946684800, Number(syncState.min_created) || nowSeconds - 45 * 24 * 60 * 60)
-    : Number.isFinite(minModifiedValue) && Number(minModifiedValue) > 0 ? Math.floor(Number(minModifiedValue)) : nowSeconds - 45 * 24 * 60 * 60;
+  const lastSuccessfulStatusSync = historicalBackfill ? null : (await database('etsy_import_state?id=eq.1&select=last_successful_cursor'))[0];
+  const checkpoint = Number(lastSuccessfulStatusSync?.last_successful_cursor);
+  const defaultMinModified = Number.isFinite(checkpoint) && checkpoint > 0
+    ? Math.max(946684800, Math.min(nowSeconds, Math.floor(checkpoint)) - 3 * 24 * 60 * 60)
+    : nowSeconds - 30 * 24 * 60 * 60;
+  const requestedMinModified = historicalBackfill
+    ? Number(syncState.min_created) || defaultMinModified
+    : Number.isFinite(minModifiedValue) && Number(minModifiedValue) > 0 ? Math.floor(Number(minModifiedValue)) : defaultMinModified;
+  const minModified = Math.max(946684800, Math.min(nowSeconds, requestedMinModified));
+  const requestedMaxModified = historicalBackfill
+    ? Number(syncState.max_created) || nowSeconds
+    : Number.isFinite(maxModifiedValue) && Number(maxModifiedValue) > 0 ? Math.floor(Number(maxModifiedValue)) : nowSeconds;
+  const maxModified = Math.max(minModified, Math.min(nowSeconds, requestedMaxModified, minModified + 30 * 24 * 60 * 60 - 1));
   const offset = historicalBackfill ? Math.max(0, Number(syncState.receipt_offset) || 0) : Math.max(0, Math.floor(Number(offsetValue) || 0));
   const pageSize = 20;
   const ledgerOffset = historicalBackfill ? Math.max(0, Number(syncState.ledger_offset) || 0) : Math.max(0, Math.floor(Number(priorSummary.ledger_offset) || 0));
