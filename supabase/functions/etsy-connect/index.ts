@@ -1012,7 +1012,7 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const correctedSkuOverrides = await correctedLocalSkuOverrides(listingId);
   const localOnePackSkuFor = (sku: string) => correctedSkuOverrides.get(normalizeSku(sku)) || onePackSkuFor(sku, listingId, title);
   const skuMatch = await findExistingProductByEtsySkus(variantSkus.length ? variantSkus : [canonicalEtsySku]);
-  if (skuMatch.allSkusRepresented) {
+  if (!existingOnly && skuMatch.allSkusRepresented) {
     return { listing_id: listingId, created: false, repaired: false, skipped: true, product_page_existed: true, family_skus: variantSkus.map((sku) => ({ etsy_sku: sku })), skip_reason: 'Every unique Etsy SKU in this family is already represented on existing product pages.' };
   }
   if (uniqueVariantSkus.size !== orderedVariantRows.length) throw new Error(`Etsy returned the same SKU more than once for listing ${listingId}; no family changes were made.`);
@@ -1231,6 +1231,48 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const recipeUrl = canonicalEtsySku !== oneSku ? `admin.html?inventory=adjust&recipe=${encodeURIComponent(canonicalEtsySku)}` : null;
   return { listing_id: listingId, product_id: product.id, product_name: productName, etsy_title: title, etsy_sku: etsySku, one_pk_sku: oneSku, pack_size: packSize, family_skus: familySkus, created, product_page_existed: !created, quantity, manual_recipe_required: false, sku_existed: oneSkuExisted || packSkuExisted, url: productUrl, links: { product: productUrl, one_pk_sku: onePkUrl, pack_sku: packSkuUrl, recipe: recipeUrl } };
 }
+async function processPendingEtsyInventoryEvents(batchId: string, connection: Record<string, any>, availableCategories: Set<string>, runStartedAt: string, existingPages: Record<string, any>[], failedPages: Record<string, any>[]) {
+  const queue = await database('etsy_import_batches?source=eq.etsy_webhook&import_type=eq.listings&status=in.(staged,failed)&select=id,metadata&order=updated_at.asc&limit=100');
+  const eventsByListing = new Map<string, Record<string, any>[]>();
+  queue.forEach((event: Record<string, any>) => {
+    const listingId = String(event.metadata?.listing_id || '').trim();
+    if (!/^\d+$/.test(listingId)) return;
+    const events = eventsByListing.get(listingId) || [];
+    events.push(event);
+    eventsByListing.set(listingId, events);
+  });
+  let updatedCount = 0;
+  let skippedUnlinked = 0;
+  for (const [listingId, events] of [...eventsByListing.entries()].slice(0, 5)) {
+    const products = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id&limit=2`);
+    if (!products.length) {
+      skippedUnlinked += 1;
+      await Promise.all(events.map((event) => updateImportBatch(String(event.id), { metadata: { ...event.metadata, attempts: (Number(event.metadata?.attempts) || 0) + 1, last_attempt_at: new Date().toISOString() } })));
+      continue;
+    }
+    if (products.length > 1) {
+      const message = `Etsy listing ${listingId} is linked to multiple product pages; the queued SKU update was not applied.`;
+      failedPages.push({ listing_id: listingId, error: message, retry: true, webhook_sku_update: true });
+      await Promise.all(events.map((event) => updateImportBatch(String(event.id), { status: 'failed', metadata: { ...event.metadata, attempts: (Number(event.metadata?.attempts) || 0) + 1, last_error: message } })));
+      continue;
+    }
+    try {
+      const listing = { listing_id: listingId };
+      const detail = await fetchEtsyListingDetail(connection, listing);
+      const result = await importEtsyListing(connection, batchId, listing, detail, availableCategories, runStartedAt, true);
+      await Promise.all(events.map((event) => updateImportBatch(String(event.id), { status: 'applied', applied_count: 1, metadata: { ...event.metadata, processed_at: new Date().toISOString(), last_error: null } })));
+      if (!result.skipped && result.repaired) {
+        existingPages.push({ ...result, webhook_sku_update: true });
+        updatedCount += 1;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Etsy listing SKU update failed.';
+      failedPages.push({ listing_id: listingId, error: message, retry: true, webhook_sku_update: true });
+      await Promise.all(events.map((event) => updateImportBatch(String(event.id), { status: 'failed', metadata: { ...event.metadata, attempts: (Number(event.metadata?.attempts) || 0) + 1, last_error: message } })));
+    }
+  }
+  return { updatedCount, skippedUnlinked };
+}
 async function importEtsyListings(adminId: string, requestedRunId = '', requestedOffset = 0) {
   const recentBatches = await database('etsy_import_batches?kind=eq.listings&select=id,created_at,updated_at,status,metadata&order=created_at.desc&limit=5');
   const activeBatch = recentBatches.find((batch: Record<string, any>) => Boolean(batch.metadata?.running) && Date.parse(String(batch.updated_at || batch.created_at || '')) > Date.now() - 180000);
@@ -1267,6 +1309,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   const priorFailedPages: Record<string, any>[] = list(priorMetadata.failed_pages);
   let failedPages: Record<string, any>[] = [...priorFailedPages];
   let unchangedCount = Math.max(0, Number(priorMetadata.unchanged_count) || 0);
+  let skuUpdateCount = Math.max(0, Number(priorMetadata.sku_update_count) || 0);
   let rows = Math.max(0, Number(priorMetadata.processed_count) || 0);
   let truncated = false;
   let warning = '';
@@ -1275,6 +1318,8 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   let scanInProgress = false;
   let scanComplete = false;
   try {
+    const webhookUpdates = await processPendingEtsyInventoryEvents(batchId, connection, availableCategories, runStartedAt, existingPages, failedPages);
+    skuUpdateCount += webhookUpdates.updatedCount;
     const offset = initialOffset;
     let page: Record<string, any>;
     const savedListings = Number(listingPageSnapshot?.offset) === offset && Array.isArray(listingPageSnapshot?.listings) ? listingPageSnapshot.listings : null;
@@ -1345,7 +1390,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
       else if (result.repaired || result.family_skus?.some((variant: Record<string, any>) => variant.recipe_created || variant.one_pk_sku_existed_before_run === false || variant.pack_sku_existed_before_run === false)) existingPages.push(result);
       else unchangedCount += 1;
     });
-    const rowsThisCall = imported.length;
+    const rowsThisCall = imported.length + webhookUpdates.updatedCount;
     rows += rowsThisCall;
     const processedForPage = new Set([...processedIds, ...attemptedIds]);
     const unprocessedOnPage = actionableListings.filter((listing) => {
@@ -1384,10 +1429,10 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
       warning = 'Etsy stopped pagination before the importer reached its saved creation-date cutoff. No older listings were scanned.';
     }
     const processedListingIds = [...processedForPage];
-    const importWarning = [warning, failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need attention. Use Repair imported SKU families to review those listings; the scan continues past them.` : ''].filter(Boolean).join(' ');
-    const metadata = { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: scanWatermark, new_listing_scan_complete: scanComplete, run_id: runId, offset, next_offset: nextOffset, listing_page_snapshot: scanInProgress && Number(nextOffset) === offset ? listingPageSnapshot : null, processed_listing_ids: processedListingIds, processed_count: rows, unchanged_count: unchangedCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: repairIssues, inactive: true, truncated, scan_warning: warning || null, warning: importWarning || null };
+    const importWarning = [warning, failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need attention. Use Repair imported SKU families to review those listings; the scan continues past them.` : '', webhookUpdates.skippedUnlinked ? `${webhookUpdates.skippedUnlinked} queued SKU update${webhookUpdates.skippedUnlinked === 1 ? '' : 's'} await a linked product page.` : ''].filter(Boolean).join(' ');
+    const metadata = { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: scanWatermark, new_listing_scan_complete: scanComplete, run_id: runId, offset, next_offset: nextOffset, listing_page_snapshot: scanInProgress && Number(nextOffset) === offset ? listingPageSnapshot : null, processed_listing_ids: processedListingIds, processed_count: rows, unchanged_count: unchangedCount, sku_update_count: skuUpdateCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: repairIssues, inactive: true, truncated, scan_warning: warning || null, warning: importWarning || null };
     await updateImportBatch(batchId, { import_type: 'listings', status: failedPages.length || repairIssues.length ? 'failed' : 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, repaired: existingPages.length, unchanged: unchangedCount, failed: failedPages.length } });
-    return { batch_id: batchId, run_id: runId, history_recorded: true, rows: rowsThisCall, processed_count: rows, scanned_count: newListings.length, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, unchanged_count: unchangedCount, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, continue_available: continueAvailable, next_offset: nextOffset, warning: importWarning || null, new_listing_scan_complete: scanComplete, done: !continueAvailable };
+    return { batch_id: batchId, run_id: runId, history_recorded: true, rows: rowsThisCall, processed_count: rows, scanned_count: newListings.length, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, sku_updates: skuUpdateCount, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, continue_available: continueAvailable, next_offset: nextOffset, warning: importWarning || null, new_listing_scan_complete: scanComplete, done: !continueAvailable };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Listing import failed.';
     await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: Number(priorMetadata.new_listing_watermark_timestamp) || cutoffTimestamp, new_listing_scan_complete: false, run_id: runId, offset: initialOffset, next_offset: initialOffset, listing_page_snapshot: listingPageSnapshot, processed_listing_ids: Array.isArray(priorMetadata.processed_listing_ids) ? priorMetadata.processed_listing_ids : [], processed_count: rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: list(priorMetadata.repair_issues), truncated, warning: warning || null, error: message } });
