@@ -625,6 +625,7 @@ body[data-page="Admin"][data-inventory-tab="adjust"] .inventory-tabs [data-inven
 body[data-page="Admin"][data-inventory-tab="etsy"] .inventory-tabs [data-inventory-tab="etsy"],
 body[data-page="Admin"][data-inventory-tab="audit"] .inventory-tabs [data-inventory-tab="audit"],
 body[data-page="Admin"][data-inventory-tab="orphans"] .inventory-tabs [data-inventory-tab="orphans"],
+body[data-page="Admin"][data-inventory-tab="missing-cost-price"] .inventory-tabs [data-inventory-tab="missing-cost-price"],
 body[data-page="Admin"][data-inventory-tab="uncategorized"] .inventory-tabs [data-inventory-tab="uncategorized"]{border-color:var(--site-button-color);background:var(--site-button-color);color:var(--site-button-text-color);font-weight:700;box-shadow:0 4px 12px color-mix(in srgb,var(--site-button-color) 18%,transparent 82%)}
 body[data-theme-ready][data-page="Admin"] .inventory-tabs [data-inventory-tab="adjust"]:hover{background:var(--site-banner-color);color:var(--site-header-text-color);border-color:var(--site-banner-color)}
 body[data-theme-ready][data-page="Admin"][data-inventory-tab="adjust"] .inventory-tabs [data-inventory-tab="adjust"]:hover{background:var(--site-button-color);color:var(--site-button-text-color);border-color:var(--site-button-color)}
