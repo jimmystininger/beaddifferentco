@@ -99,6 +99,7 @@ async function refreshConnection(connection: Record<string, any>) {
   }
 }
 const list = (value: unknown): Record<string, any>[] => Array.isArray(value) ? value.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object') : [];
+const stringList = (value: unknown): string[] => Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
 const money = (value: unknown) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -689,7 +690,6 @@ function listingVariantsFrom(listing: Record<string, any>, detail: Record<string
   }).filter(Boolean) as { sku: string; price: number; quantity: number; label: string }[];
   if (products.length && variants.length !== products.length) {
     detail.variant_data_incomplete = true;
-    return [];
   }
   if (variants.length) return variants;
   const sku = cleanText(detail.sku || detail.listing_sku || listing.sku || listing.listing_sku || '').trim();
@@ -895,16 +895,9 @@ async function ensurePhysicalInventorySku(row: Record<string, any>, listingId: s
   if (itemType !== 'inventory' || hierarchy !== 'single') {
     if (hierarchy === 'parent' || String(metadata.disposition || '').trim().toLowerCase() === 'recipe_parent') throw new Error(`SKU ${row.sku} is marked as a recipe parent; its inventory role must be reviewed before importing this listing.`);
     if (!ownedByListing) {
-      const legacySingle = String(metadata.hierarchy || '').trim().toLowerCase() === 'single';
-      const mappings = await database(`product_etsy_mappings?inventory_sku_id=eq.${encodeURIComponent(String(row.id))}&select=product_id,inventory_sku&limit=100`);
-      const productIds = [...new Set(mappings.map((mapping: Record<string, any>) => String(mapping.product_id || '')).filter(Boolean))];
-      const products = productIds.length ? await database(`products?id=in.(${productIds.map(encodeURIComponent).join(',')})&select=id,etsy_listing_id&limit=${productIds.length}`) : [];
-      const productsById = new Map(products.map((product: Record<string, any>) => [String(product.id), product]));
-      const verifiedMapping = legacySingle && (mappings.length === 0 && itemType === 'inventory' || mappings.length > 0 && mappings.length < 100 && products.length === productIds.length && mappings.every((mapping: Record<string, any>) =>
-        normalizeSku(mapping.inventory_sku) === normalizeSku(row.sku) && String(productsById.get(String(mapping.product_id))?.etsy_listing_id || '') === listingId
-      ));
-      const parentRecipe = verifiedMapping ? await database(`inventory_bundle_components?bundle_sku_id=eq.${encodeURIComponent(String(row.id))}&select=component_sku_id&limit=1`) : [];
-      if (!verifiedMapping || parentRecipe.length) throw new Error(`SKU ${row.sku} already exists but is not verified as this listing's physical inventory child; it was left unchanged.`);
+      if (itemType !== 'inventory' || hierarchy && hierarchy !== 'single') throw new Error(`SKU ${row.sku} already exists but is not a physical inventory SKU; it was left unchanged.`);
+      const parentRecipe = await database(`inventory_bundle_components?bundle_sku_id=eq.${encodeURIComponent(String(row.id))}&select=component_sku_id&limit=1`);
+      if (parentRecipe.length) throw new Error(`SKU ${row.sku} already has a recipe as a parent; it was left unchanged.`);
     }
     updates.item_type = 'inventory';
     updates.hierarchy = 'single';
@@ -1005,17 +998,17 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
   const canonicalEtsySku = normalizeSku(etsySku) || `ETSY-${listingId}`;
   const variantRows = listingVariantsFrom(listing, detail);
   const orderedVariantRows = orderEtsyVariantRows(variantRows);
-  if (detail.variant_data_incomplete) throw new Error(`Etsy returned incomplete SKU data for listing ${listingId}; no SKU family was changed.`);
+  if (detail.variant_data_incomplete && !existingOnly) throw new Error(`Etsy returned incomplete SKU data for listing ${listingId}; no SKU family was changed.`);
   if (!orderedVariantRows.length) throw new Error(`Etsy returned no explicit SKU variants for listing ${listingId}; no SKU or product page was created.`);
   const uniqueVariantSkus = new Set(orderedVariantRows.map((variant) => normalizeSku(variant.sku)));
   const variantSkus = [...new Set(orderedVariantRows.map((variant) => normalizeSku(variant.sku)).filter(Boolean))];
   const correctedSkuOverrides = await correctedLocalSkuOverrides(listingId);
   const localOnePackSkuFor = (sku: string) => correctedSkuOverrides.get(normalizeSku(sku)) || onePackSkuFor(sku, listingId, title);
-  const skuMatch = await findExistingProductByEtsySkus(variantSkus.length ? variantSkus : [canonicalEtsySku]);
+  const skuMatch = existingOnly ? { allSkusRepresented: false } : await findExistingProductByEtsySkus(variantSkus.length ? variantSkus : [canonicalEtsySku]);
   if (!existingOnly && skuMatch.allSkusRepresented) {
     return { listing_id: listingId, created: false, repaired: false, skipped: true, product_page_existed: true, family_skus: variantSkus.map((sku) => ({ etsy_sku: sku })), skip_reason: 'Every unique Etsy SKU in this family is already represented on existing product pages.' };
   }
-  if (uniqueVariantSkus.size !== orderedVariantRows.length) throw new Error(`Etsy returned the same SKU more than once for listing ${listingId}; no family changes were made.`);
+  if (!existingOnly && uniqueVariantSkus.size !== orderedVariantRows.length) throw new Error(`Etsy returned the same SKU more than once for listing ${listingId}; no family changes were made.`);
   const oneSku = localOnePackSkuFor(canonicalEtsySku);
   const inventoryCache = await preloadInventorySkus([...variantRows.flatMap((variant) => [variant.sku, localOnePackSkuFor(variant.sku)]), canonicalEtsySku, oneSku]);
   const packSize = packSizeForSku(canonicalEtsySku);
@@ -1066,14 +1059,12 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     const existingOption = await database(`product_options?product_id=eq.${encodeURIComponent(String(product.id))}&name=eq.SKU&select=id&limit=1`);
     const option = existingOption[0] || (await database('product_options', 'POST', { product_id: product.id, name: 'SKU', required: true, sort_order: 0 }))[0];
     const existingOptionValues = option?.id ? await database(`product_option_values?option_id=eq.${encodeURIComponent(String(option.id))}&select=id,inventory_sku_id,sku,inventory_sku,sort_order&limit=500`) : [];
-    const existingMappings = await database(`product_etsy_mappings?product_id=eq.${encodeURIComponent(String(product.id))}&select=id,etsy_sku&limit=500`);
-    const mappingsBySku = new Map(existingMappings.map((row: Record<string, any>) => [normalizeSku(row.etsy_sku), row]));
     let repaired = !existingOption[0];
     const family = orderedVariantRows.map((variant) => {
       const variantCanonical = normalizeSku(variant.sku) || `ETSY-${listingId}`;
-      const variantOneSku = localOnePackSkuFor(variantCanonical);
+      const variantOneSku = existingOnly ? variantCanonical : localOnePackSkuFor(variantCanonical);
       const variantPackSize = packSizeForSku(variantCanonical);
-      const onePkExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, variantOneSku, runStartedAt);
+      const onePkExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, existingOnly ? variantCanonical : variantOneSku, runStartedAt);
       const packExistedBeforeRun = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
       return { etsy_sku: variantCanonical, one_pk_sku: variantOneSku, pack_size: variantPackSize, label: variant.label, quantity: variant.quantity, manual_recipe_required: false, recipe_components: [], recipe_created: false, sku_existed: onePkExistedBeforeRun || packExistedBeforeRun, one_pk_sku_existed: onePkExistedBeforeRun, pack_sku_existed: packExistedBeforeRun, sku_existed_before_run: onePkExistedBeforeRun || packExistedBeforeRun, one_pk_sku_existed_before_run: onePkExistedBeforeRun, pack_sku_existed_before_run: packExistedBeforeRun };
     });
@@ -1083,15 +1074,16 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
     for (const variant of orderedVariantRows) {
       const variantCanonical = normalizeSku(variant.sku);
       if (!variantCanonical) continue;
-      const variantOneSku = localOnePackSkuFor(variantCanonical);
+      const variantOneSku = existingOnly ? variantCanonical : localOnePackSkuFor(variantCanonical);
       const variantPackSize = packSizeForSku(variantCanonical);
-      const variantRecipeText = [title, description, variantCanonical, detail.category_path, detail.taxonomy_path].filter(Boolean).join(' ');
-      const oneSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantOneSku, runStartedAt);
+      const exactInventorySku = existingOnly ? inventoryCache.get(variantCanonical) : null;
+      if (existingOnly && !exactInventorySku) continue;
+      const oneSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, existingOnly ? variantCanonical : variantOneSku, runStartedAt);
       const packSkuExisted = inventorySkuExistedBeforeRun(inventoryCache, variantCanonical, runStartedAt);
-      const variantChild = await findOrCreateInventorySku(variantOneSku, { sku: variantOneSku, name: productName, variant_name: '1PK', quantity_on_hand: 0, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: variantPackSize > 1 ? Math.round((variant.price / variantPackSize) * 100) / 100 : variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: 1, disposition: 'inventory', imported_at: new Date().toISOString() } }, inventoryCache);
-      const physicalChild = await ensurePhysicalInventorySku(variantChild, listingId);
-      const variantParent = await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: packVariantLabel(variantCanonical), quantity_on_hand: 0, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_at: new Date().toISOString() } }, inventoryCache);
-      const recipe = await ensureEtsyRecipe(variantParent, physicalChild, variantPackSize);
+      const variantChild = existingOnly ? exactInventorySku! : await findOrCreateInventorySku(variantOneSku, { sku: variantOneSku, name: productName, variant_name: '1PK', quantity_on_hand: 0, reorder_point: 0, item_type: 'inventory', hierarchy: 'single', category: categorySlug, price: variantPackSize > 1 ? Math.round((variant.price / variantPackSize) * 100) / 100 : variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: 1, disposition: 'inventory', imported_at: new Date().toISOString() } }, inventoryCache);
+      const physicalChild = existingOnly ? exactInventorySku! : await ensurePhysicalInventorySku(variantChild, listingId);
+      const variantParent = existingOnly ? exactInventorySku! : await findOrCreateInventorySku(variantCanonical, { sku: variantCanonical, name: productName, variant_name: packVariantLabel(variantCanonical), quantity_on_hand: 0, reorder_point: 0, item_type: 'non-inventory', hierarchy: 'parent', category: categorySlug, price: variant.price, unit_type: 'Each', source_system: 'etsy-import', source_metadata: { source: 'etsy_listing', etsy_listing_id: listingId, etsy_sku: variantCanonical, pack_size: variantPackSize, imported_at: new Date().toISOString() } }, inventoryCache);
+      const recipe = existingOnly ? { created: false, components: [] as { sku: string; quantity: number }[] } : await ensureEtsyRecipe(variantParent, physicalChild, variantPackSize);
       if (!oneSkuExisted || !packSkuExisted || recipe.created) repaired = true;
       const familyRow = family.find((entry) => entry.etsy_sku === variantCanonical);
       if (familyRow) {
@@ -1109,11 +1101,11 @@ async function importEtsyListing(connection: Record<string, any>, batchId: strin
         await upsertEtsyProductOptionValue(option.id, variant, variantParent, physicalChild, listingPrice, images[0] || '', optionOrder.get(variantCanonical) || 0, existingOptionValues, existingOnly);
         if (existingOptionValues.length > optionValueCount) repaired = true;
       }
-      const existingMapping = mappingsBySku.get(variantCanonical);
-      const variantMapping = existingMapping || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: Math.max(1, variantPackSize), active: true, sort_order: optionOrder.get(variantCanonical) || 0 }))[0];
-      if (!existingMapping && variantMapping?.id) repaired = true;
-      if (variantMapping?.id) mappingsBySku.set(variantCanonical, variantMapping);
-      if (variantMapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: variantMapping.id, inventory_sku_id: physicalChild.id, inventory_sku: variantOneSku, inventory_units: Math.max(1, variantPackSize), sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
+      if (!existingOnly) {
+        const existingMappingRows = await database(`product_etsy_mappings?product_id=eq.${encodeURIComponent(String(product.id))}&etsy_sku=eq.${encodeURIComponent(variantCanonical)}&select=id&limit=1`);
+        const variantMapping = existingMappingRows[0] || (await database('product_etsy_mappings', 'POST', { product_id: product.id, etsy_sku: variantCanonical, inventory_sku: variantOneSku, inventory_sku_id: physicalChild.id, inventory_units: Math.max(1, variantPackSize), active: true, sort_order: optionOrder.get(variantCanonical) || 0 }))[0];
+        if (variantMapping?.id) await database('product_etsy_mapping_components?on_conflict=mapping_id,inventory_sku_id', 'POST', [{ mapping_id: variantMapping.id, inventory_sku_id: physicalChild.id, inventory_sku: variantOneSku, inventory_units: Math.max(1, variantPackSize), sort_order: 0 }], 'resolution=merge-duplicates,return=minimal');
+      }
     }
     const existingListingRows = await database(`etsy_import_listings?external_listing_id=eq.${encodeURIComponent(listingId)}&select=id,raw_payload&limit=1`);
     if (existingListingRows[0]) {
@@ -1287,6 +1279,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   }
   if (!runId) runId = crypto.randomUUID();
   const priorMetadata = progressBatch?.metadata && typeof progressBatch.metadata === 'object' ? progressBatch.metadata : {};
+  const reconciliationWasCompleted = Boolean(priorMetadata.existing_listing_reconcile_complete) || (!progressBatch && (await database('etsy_import_batches?kind=eq.listings&metadata->>existing_listing_reconcile_complete=eq.true&select=id&order=created_at.desc&limit=1')).length > 0);
   let cutoffTimestamp = Number(priorMetadata.new_listing_cutoff_timestamp) || 0;
   if (!(cutoffTimestamp > 0)) {
     const latestIncrementalScan = await database('etsy_import_batches?kind=eq.listings&metadata->>incremental_listing_scan=eq.true&metadata->>new_listing_scan_complete=eq.true&select=metadata&order=created_at.desc&limit=1');
@@ -1300,14 +1293,27 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   const connection = await importConnection();
   const categoryRows = await database('categories?select=slug,name&active=eq.true&limit=100');
   const availableCategories = new Set(categoryRows.map((row: Record<string, any>) => String(row.slug || '').trim()).filter(Boolean));
-  const batchId = String(progressBatch?.id || await createImportBatch(adminId, 'listings', { listing_ids: [], run_id: runId, offset: initialOffset }, { action: 'listings', running: true, listing_scan_in_progress: true, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, run_id: runId, offset: initialOffset, next_offset: initialOffset }) || '');
-  if (progressBatch?.id) await updateImportBatch(batchId, { metadata: { ...priorMetadata, running: true } });
+  const batchId = String(progressBatch?.id || await createImportBatch(adminId, 'listings', { listing_ids: [], run_id: runId, offset: initialOffset }, { action: 'listings', running: true, listing_scan_in_progress: true, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_in_progress: !reconciliationWasCompleted, existing_listing_reconcile_complete: reconciliationWasCompleted, existing_listing_reconcile_offset: 0, existing_listing_reconcile_processed_ids: [], new_listing_cutoff_timestamp: cutoffTimestamp, run_id: runId, offset: initialOffset, next_offset: initialOffset }) || '');
+  if (progressBatch?.id) {
+    const claim = { metadata: { ...priorMetadata, running: true }, updated_at: new Date().toISOString() };
+    let claimed = await database(`etsy_import_batches?id=eq.${encodeURIComponent(batchId)}&metadata->>running=eq.false`, 'PATCH', claim);
+    if (!claimed.length) {
+      const staleBefore = encodeURIComponent(new Date(Date.now() - 180000).toISOString());
+      claimed = await database(`etsy_import_batches?id=eq.${encodeURIComponent(batchId)}&metadata->>running=eq.true&updated_at=lt.${staleBefore}`, 'PATCH', claim);
+    }
+    if (!claimed.length) return { batch_id: batchId, history_recorded: true, rows: 0, matched: 0, created_count: 0, existing_count: 0, failed_count: 0, created_pages: [], existing_pages: [], failed_pages: [], truncated: false, scan_waiting: true, continue_available: false, next_offset: Number(priorMetadata.next_offset ?? priorMetadata.offset) || 0, warning: 'An Etsy listing scan is already continuing. No duplicate scan was started; its checkpoint is preserved.', done: false };
+  }
   const runStartedAt = String(progressBatch?.created_at || new Date().toISOString());
   let listingPageSnapshot: Record<string, any> | null = priorMetadata.listing_page_snapshot && typeof priorMetadata.listing_page_snapshot === 'object' ? priorMetadata.listing_page_snapshot : null;
   const createdPages: Record<string, any>[] = list(priorMetadata.created_pages);
   const existingPages: Record<string, any>[] = list(priorMetadata.existing_pages);
   const priorFailedPages: Record<string, any>[] = list(priorMetadata.failed_pages);
-  let failedPages: Record<string, any>[] = [...priorFailedPages];
+  const uniqueFailures = new Map<string, Record<string, any>>();
+  priorFailedPages.forEach((failure) => {
+    const key = `${String(failure.listing_id || '')}\u0000${String(failure.error || '')}`;
+    if (!uniqueFailures.has(key)) uniqueFailures.set(key, failure);
+  });
+  let failedPages: Record<string, any>[] = [...uniqueFailures.values()];
   let unchangedCount = Math.max(0, Number(priorMetadata.unchanged_count) || 0);
   let skuUpdateCount = Math.max(0, Number(priorMetadata.sku_update_count) || 0);
   let rows = Math.max(0, Number(priorMetadata.processed_count) || 0);
@@ -1318,6 +1324,79 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   let scanInProgress = false;
   let scanComplete = false;
   try {
+    if (!reconciliationWasCompleted) {
+      const webhookUpdates = await processPendingEtsyInventoryEvents(batchId, connection, availableCategories, runStartedAt, existingPages, failedPages);
+      skuUpdateCount += webhookUpdates.updatedCount;
+      const reconcileOffset = Math.max(0, Math.floor(Number(priorMetadata.existing_listing_reconcile_offset) || 0));
+      const savedSnapshot = priorMetadata.existing_listing_reconcile_snapshot && typeof priorMetadata.existing_listing_reconcile_snapshot === 'object' && Number(priorMetadata.existing_listing_reconcile_snapshot.offset) === reconcileOffset ? priorMetadata.existing_listing_reconcile_snapshot : null;
+      let reconciliationPage: Record<string, any>;
+      if (savedSnapshot && Array.isArray(savedSnapshot.listings)) reconciliationPage = { results: savedSnapshot.listings, count: savedSnapshot.count };
+      else reconciliationPage = await etsy(`shops/${connection.shop_id}/listings?state=active&limit=100&offset=${reconcileOffset}&sort_on=created&sort_order=desc`, connection.access_token);
+      const reconciliationListings = list(reconciliationPage?.results);
+      const reconciliationSnapshot = { offset: reconcileOffset, count: Number(reconciliationPage?.count) || 0, listings: reconciliationListings.map((listing) => ({ listing_id: listing.listing_id || listing.id, title: listing.title, updated_timestamp: listing.updated_timestamp })) };
+      const listingIds = reconciliationListings.map((listing) => String(listing.listing_id || listing.id || '').trim()).filter((id) => /^\d+$/.test(id));
+      const [linkedProducts, importRows] = listingIds.length ? await Promise.all([
+        database(`products?select=id,etsy_listing_id&etsy_listing_id=in.(${listingIds.join(',')})&limit=${listingIds.length}`),
+        database(`etsy_import_listings?select=external_listing_id,raw_payload&external_listing_id=in.(${listingIds.join(',')})&limit=${listingIds.length}`)
+      ]) : [[], []];
+      const productsByListing = new Map<string, Record<string, any>[]>();
+      linkedProducts.forEach((product: Record<string, any>) => {
+        const id = String(product.etsy_listing_id || '').trim();
+        const rows = productsByListing.get(id) || [];
+        rows.push(product);
+        productsByListing.set(id, rows);
+      });
+      const baselineByListing = new Map<string, number>();
+      importRows.forEach((row: Record<string, any>) => {
+        const payload = row.raw_payload && typeof row.raw_payload === 'object' ? row.raw_payload : {};
+        const value = payload.updated_timestamp;
+        const numeric = Number(value);
+        const timestamp = Number.isFinite(numeric) && numeric > 0 ? numeric : Date.parse(String(value || '')) / 1000;
+        if (Number.isFinite(timestamp) && timestamp > 0) baselineByListing.set(String(row.external_listing_id || ''), Math.max(timestamp, baselineByListing.get(String(row.external_listing_id || '')) || 0));
+      });
+      const processedIds = new Set(Number(priorMetadata.existing_listing_reconcile_offset) === reconcileOffset ? stringList(priorMetadata.existing_listing_reconcile_processed_ids) : []);
+      const changedListings = reconciliationListings.filter((listing) => {
+        const listingId = String(listing.listing_id || listing.id || '').trim();
+        const products = productsByListing.get(listingId) || [];
+        if (!/^\d+$/.test(listingId) || processedIds.has(listingId) || products.length !== 1) return false;
+        const localTimestamp = baselineByListing.get(listingId) || 0;
+        const remoteNumber = Number(listing.updated_timestamp);
+        const remoteTimestamp = Number.isFinite(remoteNumber) && remoteNumber > 0 ? remoteNumber : Date.parse(String(listing.updated_timestamp || '')) / 1000;
+        return !localTimestamp || Number.isFinite(remoteTimestamp) && remoteTimestamp > localTimestamp;
+      });
+      const reconcileThisCall = changedListings.slice(0, 50);
+      const reconciled = await concurrentSettled(reconcileThisCall, 1, async (listing) => {
+        const detail = await fetchEtsyListingDetail(connection, listing);
+        return importEtsyListing(connection, batchId, listing, detail, availableCategories, runStartedAt, true);
+      });
+      const attemptedIds = new Set(reconciled.map((entry) => String(entry.item.listing_id || entry.item.id || '').trim()));
+      const repairedIds = new Set<string>();
+      reconciled.forEach((entry) => {
+        const listingId = String(entry.item.listing_id || entry.item.id || '').trim();
+        if (entry.error) failedPages.push({ listing_id: listingId, title: cleanText(entry.item.title || `Etsy listing ${listingId}`), error: entry.error, retry: true, existing_listing_reconcile: true });
+        else if (entry.value?.repaired) {
+          existingPages.push({ ...entry.value, existing_listing_reconcile: true });
+          repairedIds.add(listingId);
+        } else unchangedCount += 1;
+      });
+      skuUpdateCount += repairedIds.size;
+      const ambiguousListings = reconciliationListings.filter((listing) => (productsByListing.get(String(listing.listing_id || listing.id || '').trim()) || []).length > 1);
+      ambiguousListings.forEach((listing) => {
+        const listingId = String(listing.listing_id || listing.id || '').trim();
+        if (!failedPages.some((entry) => String(entry.listing_id || '') === listingId)) failedPages.push({ listing_id: listingId, title: cleanText(listing.title || `Etsy listing ${listingId}`), error: 'This Etsy listing is linked to multiple product pages; its existing SKU family was left unchanged.', retry: true, existing_listing_reconcile: true });
+      });
+      const processedOnPage = new Set([...processedIds, ...attemptedIds]);
+      const unprocessed = changedListings.some((listing) => !processedOnPage.has(String(listing.listing_id || listing.id || '').trim()));
+      const pageCount = Number(reconciliationPage?.count);
+      const pageNextOffset = reconcileOffset + reconciliationListings.length;
+      const endOfCatalog = !reconciliationListings.length || reconciliationListings.length < 100 || Number.isFinite(pageCount) && pageNextOffset >= pageCount;
+      const reconciliationComplete = !unprocessed && endOfCatalog;
+      const reconciliationNextOffset = unprocessed ? reconcileOffset : endOfCatalog ? 0 : pageNextOffset;
+      const metadata = { ...priorMetadata, action: 'listings', running: false, listing_scan_in_progress: true, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_in_progress: !reconciliationComplete, existing_listing_reconcile_complete: reconciliationComplete, existing_listing_reconcile_offset: reconciliationNextOffset, existing_listing_reconcile_processed_ids: unprocessed ? [...processedOnPage] : [], existing_listing_reconcile_snapshot: !unprocessed && !endOfCatalog ? null : reconciliationSnapshot, existing_listing_reconcile_count: (Number(priorMetadata.existing_listing_reconcile_count) || 0) + (!unprocessed ? reconciliationListings.length : 0), existing_listing_reconcile_updated: (Number(priorMetadata.existing_listing_reconcile_updated) || 0) + repairedIds.size, new_listing_cutoff_timestamp: cutoffTimestamp, run_id: runId, offset: 0, next_offset: 0, listing_page_snapshot: null, processed_listing_ids: [], sku_update_count: skuUpdateCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, processed_count: rows + reconciled.length + webhookUpdates.updatedCount, unchanged_count: unchangedCount, inactive: true };
+      delete metadata.existing_listing_reconcile_debug;
+      await updateImportBatch(batchId, { import_type: 'listings', status: failedPages.length ? 'failed' : 'staged', row_count: Number(metadata.processed_count), matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { reconciled: Number(metadata.existing_listing_reconcile_updated), failed: failedPages.length } });
+      return { batch_id: batchId, run_id: runId, history_recorded: true, rows: reconciled.length + webhookUpdates.updatedCount, scanned_count: reconciliationListings.length, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, sku_updates: skuUpdateCount, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, reconciliation_checked: Number(metadata.existing_listing_reconcile_count), reconciliation_updated: Number(metadata.existing_listing_reconcile_updated) + webhookUpdates.updatedCount, reconciliation_complete: reconciliationComplete, continue_available: true, next_offset: 0, warning: failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need attention. The catch-up continues; failed pages are listed for review.` : null, done: false };
+    }
     const webhookUpdates = await processPendingEtsyInventoryEvents(batchId, connection, availableCategories, runStartedAt, existingPages, failedPages);
     skuUpdateCount += webhookUpdates.updatedCount;
     const offset = initialOffset;
@@ -1430,12 +1509,12 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
     }
     const processedListingIds = [...processedForPage];
     const importWarning = [warning, failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need attention. Use Repair imported SKU families to review those listings; the scan continues past them.` : '', webhookUpdates.skippedUnlinked ? `${webhookUpdates.skippedUnlinked} queued SKU update${webhookUpdates.skippedUnlinked === 1 ? '' : 's'} await a linked product page.` : ''].filter(Boolean).join(' ');
-    const metadata = { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: scanWatermark, new_listing_scan_complete: scanComplete, run_id: runId, offset, next_offset: nextOffset, listing_page_snapshot: scanInProgress && Number(nextOffset) === offset ? listingPageSnapshot : null, processed_listing_ids: processedListingIds, processed_count: rows, unchanged_count: unchangedCount, sku_update_count: skuUpdateCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: repairIssues, inactive: true, truncated, scan_warning: warning || null, warning: importWarning || null };
+    const metadata = { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_complete: reconciliationWasCompleted, existing_listing_reconcile_count: Number(priorMetadata.existing_listing_reconcile_count) || 0, existing_listing_reconcile_updated: Number(priorMetadata.existing_listing_reconcile_updated) || 0, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: scanWatermark, new_listing_scan_complete: scanComplete, run_id: runId, offset, next_offset: nextOffset, listing_page_snapshot: scanInProgress && Number(nextOffset) === offset ? listingPageSnapshot : null, processed_listing_ids: processedListingIds, processed_count: rows, unchanged_count: unchangedCount, sku_update_count: skuUpdateCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: repairIssues, inactive: true, truncated, scan_warning: warning || null, warning: importWarning || null };
     await updateImportBatch(batchId, { import_type: 'listings', status: failedPages.length || repairIssues.length ? 'failed' : 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, repaired: existingPages.length, unchanged: unchangedCount, failed: failedPages.length } });
     return { batch_id: batchId, run_id: runId, history_recorded: true, rows: rowsThisCall, processed_count: rows, scanned_count: newListings.length, matched: createdPages.length + existingPages.length, created_count: createdPages.length, existing_count: existingPages.length, sku_updates: skuUpdateCount, failed_count: failedPages.length, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, truncated, continue_available: continueAvailable, next_offset: nextOffset, warning: importWarning || null, new_listing_scan_complete: scanComplete, done: !continueAvailable };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Listing import failed.';
-    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: Number(priorMetadata.new_listing_watermark_timestamp) || cutoffTimestamp, new_listing_scan_complete: false, run_id: runId, offset: initialOffset, next_offset: initialOffset, listing_page_snapshot: listingPageSnapshot, processed_listing_ids: Array.isArray(priorMetadata.processed_listing_ids) ? priorMetadata.processed_listing_ids : [], processed_count: rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: list(priorMetadata.repair_issues), truncated, warning: warning || null, error: message } });
+    await updateImportBatch(batchId, { import_type: 'listings', status: 'failed', row_count: rows, metadata: { action: 'listings', running: false, listing_scan_in_progress: scanInProgress || !reconciliationWasCompleted, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_complete: reconciliationWasCompleted, existing_listing_reconcile_in_progress: !reconciliationWasCompleted, existing_listing_reconcile_offset: Number(priorMetadata.existing_listing_reconcile_offset) || 0, existing_listing_reconcile_processed_ids: stringList(priorMetadata.existing_listing_reconcile_processed_ids), existing_listing_reconcile_snapshot: priorMetadata.existing_listing_reconcile_snapshot || null, existing_listing_reconcile_count: Number(priorMetadata.existing_listing_reconcile_count) || 0, existing_listing_reconcile_updated: Number(priorMetadata.existing_listing_reconcile_updated) || 0, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: Number(priorMetadata.new_listing_watermark_timestamp) || cutoffTimestamp, new_listing_scan_complete: false, run_id: runId, offset: initialOffset, next_offset: initialOffset, listing_page_snapshot: listingPageSnapshot, processed_listing_ids: Array.isArray(priorMetadata.processed_listing_ids) ? priorMetadata.processed_listing_ids : [], processed_count: rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: list(priorMetadata.repair_issues), truncated, warning: warning || null, error: message } });
     return { ok: false, error: message, batch_id: batchId, run_id: runId, history_recorded: true, rows, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, done: true };
   }
 }
@@ -1476,7 +1555,8 @@ async function repairExistingEtsyListings(rawBatchIds: unknown, startOffset = 0)
     expectedSkusByListing.set(listingId, expected);
     if (!pageTargets.has(listingId)) pageTargets.set(listingId, { sources: [{ batchId: String(batchRows[0].id), field: 'failed_pages', page: { listing_id: listingId, retry: true } }] });
   }
-  const targets = [...pageTargets.entries()].sort((left, right) => Number(expectedSkusByListing.has(right[0])) - Number(expectedSkusByListing.has(left[0])));
+  const excludedListingIds = new Set(stringList(excludedListingIdsRaw));
+  const targets = [...pageTargets.entries()].filter(([id]) => !excludedListingIds.has(id)).sort((left, right) => Number(expectedSkusByListing.has(right[0])) - Number(expectedSkusByListing.has(left[0])));
   const offset = Math.max(0, Math.floor(Number(startOffset) || 0));
   if (!targets.length || offset >= targets.length) return { processed: 0, repaired: 0, failed: 0, skipped: 0, items: [], next_offset: targets.length, done: true, total: targets.length };
   const categories = await database('categories?select=slug&active=eq.true&limit=100');
