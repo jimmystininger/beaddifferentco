@@ -621,6 +621,7 @@ body[data-page="Admin"] .inventory-tabs [data-inventory-tab="adjust"]{order:-1;b
 body[data-page="Admin"][data-inventory-tab="low"] .inventory-tabs [data-inventory-tab="low"],
 body[data-page="Admin"][data-inventory-tab="sales"] .inventory-tabs [data-inventory-tab="sales"],
 body[data-page="Admin"][data-inventory-tab="sku"] .inventory-tabs [data-inventory-tab="sku"],
+body[data-page="Admin"][data-inventory-tab="reassign-sales"] .inventory-tabs [data-inventory-tab="reassign-sales"],
 body[data-page="Admin"][data-inventory-tab="adjust"] .inventory-tabs [data-inventory-tab="adjust"],
 body[data-page="Admin"][data-inventory-tab="etsy"] .inventory-tabs [data-inventory-tab="etsy"],
 body[data-page="Admin"][data-inventory-tab="audit"] .inventory-tabs [data-inventory-tab="audit"],
