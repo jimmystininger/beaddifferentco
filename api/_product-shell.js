@@ -5,7 +5,7 @@ module.exports=`<!doctype html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="%%PRODUCT_DESCRIPTION%%">
   %%PRODUCT_HEAD%%
-  <link rel="stylesheet" href="styles.css?v=20261010-theme-initial">
+  <link rel="stylesheet" href="styles.css?v=20261024-not-for-beadable-pen">
 </head>
 <body data-page="Product">
   <div id="site-header"></div>
@@ -14,11 +14,11 @@ module.exports=`<!doctype html>
   <script defer src="supabase-client.js?v=20261007-canonical-audit1"></script>
   <script defer src="header.js?v=20261012-review-entity-fix"></script>
   <script defer src="storefront-seo.js?v=20261009-storefront-seo"></script>
-  <script defer src="store.js?v=20261014-stocked-sku-availability"></script>
+  <script defer src="store.js?v=20261024-not-for-beadable-pen"></script>
   <script defer src="product-config.js?v=20261007-canonical-audit1"></script>
   <script defer src="account.js?v=20261007-canonical-audit1"></script>
 <script defer src="waitlist.js?v=20261007-canonical-audit1"></script>
   <script defer src="page.js?v=20261012-tax-concurrent"></script>
-<script defer src="product-page.js?v=20261012-review-entity-fix"></script>
+<script defer src="product-page.js?v=20261024-not-for-beadable-pen"></script>
 </body>
 </html>`;
