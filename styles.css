@@ -1100,7 +1100,7 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-vendor-choice{display:block;min-width:0}
 .admin-vendor-choice select{box-sizing:border-box;display:block;width:100%;min-width:150px;max-width:220px;min-height:40px;padding:8px 32px 8px 12px;border:1px solid #bdb5b8;border-radius:999px;background-color:#fff;color:#241e24;font:inherit;font-size:14px;line-height:1.3;white-space:nowrap}
 .admin-vendor-order-group .admin-table th:first-child,.admin-vendor-order-group .admin-table td:first-child{width:190px;min-width:170px}
-.admin-vendor-order-group .admin-table{width:100%;min-width:0;table-layout:fixed}
+.admin-vendor-order-group .admin-table{width:max-content;min-width:0;table-layout:fixed}
 .admin-vendor-order-group .admin-table th,.admin-vendor-order-group .admin-table td{box-sizing:border-box;padding:9px 7px;font-size:13px}
 .admin-vendor-order-group .admin-table th:nth-child(1),.admin-vendor-order-group .admin-table td:nth-child(1){width:150px}
 .admin-vendor-order-group .admin-table th:nth-child(2),.admin-vendor-order-group .admin-table td:nth-child(2){width:205px}
