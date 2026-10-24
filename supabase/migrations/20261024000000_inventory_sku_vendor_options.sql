@@ -213,4 +213,3 @@ revoke all on function private.sync_inventory_sku_vendor_option() from public, a
 revoke all on function private.persist_inventory_sku_vendor_option() from public, anon, authenticated;
 revoke all on function public.admin_replace_inventory_sku_vendors(uuid, jsonb) from public, anon;
 grant execute on function public.admin_replace_inventory_sku_vendors(uuid, jsonb) to authenticated, service_role;
-
