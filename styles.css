@@ -1117,3 +1117,8 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 @media(max-width:900px){.admin-vendor-order-group .admin-table-wrap{overflow-x:auto}.admin-vendor-order-group .admin-table{min-width:1050px}}
 .admin-vendor-order-group .admin-vendor-report-image{width:100%;justify-items:stretch}
 .admin-vendor-order-group .admin-vendor-report-image button{box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:28px;padding:4px 5px;border-radius:6px;font-size:11px;line-height:1.15;text-align:center;white-space:nowrap;word-break:normal;overflow-wrap:normal}
+
+.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) th:first-child,.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) td:first-child{width:6%;min-width:72px}
+.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) th:first-child{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) th:nth-child(2),.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) td:nth-child(2){width:11%}
+.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) th:nth-child(3),.admin-vendor-order-group .admin-table:has(td input[data-vendor-print-group]) td:nth-child(3){width:15%}
