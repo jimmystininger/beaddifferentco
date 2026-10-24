@@ -1872,7 +1872,7 @@ const temporaryVendorGroupObserver=new MutationObserver(()=>{const sections=[...
       const moveVendorReportRow=async(record,row,previousVendor)=>{
         const oldName=String(previousVendor||'').trim()||'No preferred vendor';
         const nextName=String(record.preferred_vendor||'').trim()||'No preferred vendor';
-        const vendorHeaderIndex=[...(row.closest('table')?.tHead?.rows[0]?.cells||[])].findIndex((cell)=>cell.textContent.trim().toLowerCase()==='vendor');if(vendorHeaderIndex>=0&&row.cells[vendorHeaderIndex])row.cells[vendorHeaderIndex].innerHTML=await renderVendorChoiceCell(record);
+        const headers=[...(row.closest('table')?.tHead?.rows[0]?.cells||[])];const includeHeaderIndex=headers.findIndex((cell)=>cell.textContent.trim().toLowerCase()==='include');if(includeHeaderIndex>=0&&row.cells[includeHeaderIndex]&&!row.cells[includeHeaderIndex].querySelector('[data-vendor-print-group]')){const groupIndex=Number(row.closest('[data-vendor-group]')?.dataset.vendorGroupIndex||0);record.vendorOrderPrintKey=String(record.vendorOrderPrintKey||record.sku);row.cells[includeHeaderIndex].innerHTML='<input type="checkbox" data-vendor-print-group="'+groupIndex+'" data-vendor-print-key="'+adminSafe(record.vendorOrderPrintKey)+'" '+(record.vendorOrderPrintSelected===false?'':'checked')+' aria-label="Include '+adminSafe(record.name||record.sku)+' in vendor downloads">';}const vendorHeaderIndex=headers.findIndex((cell)=>cell.textContent.trim().toLowerCase()==='vendor');if(vendorHeaderIndex>=0&&row.cells[vendorHeaderIndex])row.cells[vendorHeaderIndex].innerHTML=await renderVendorChoiceCell(record);
         row.cells[row.cells.length-2].innerHTML=await renderVendorReorderCell(record);
         row.cells[row.cells.length-1].innerHTML=await renderVendorProductImageCell(record);
         if(oldName.toLowerCase()===nextName.toLowerCase())return;
@@ -3320,6 +3320,8 @@ void installProductEditorRestorations();
 document.addEventListener('click',async(event)=>{
   const link=event.target.closest?.('a[href^="admin?inventory=sku"],a[href^="admin.html?inventory=sku"]');
   if(!link)return;
+  if(link.closest('.admin-vendor-order-group')){const directUrl=new URL(link.href,window.location.href);directUrl.searchParams.set('direct','inventory');link.href=directUrl.toString();link.target='_blank';link.rel='noopener';return;}
+  if(link.target==='_blank')return;
   event.preventDefault();
   const url=new URL(link.href,window.location.href);const sku=url.searchParams.get('sku')||'';const directInventory=url.searchParams.get('direct')==='inventory';
   if(directInventory){history.replaceState({},'',`admin.html?inventory=sku&sku=${encodeURIComponent(sku)}`);activeTab='inventory';document.querySelectorAll('[data-admin-tab]').forEach((button)=>button.classList.toggle('active',button.dataset.adminTab===activeTab));await renderInventoryTools('sku');const input=panel.querySelector('[data-sku-search]');if(input){input.value=sku;input.dispatchEvent(new Event('input'));}return;}
