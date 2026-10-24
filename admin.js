@@ -1872,7 +1872,7 @@ const temporaryVendorGroupObserver=new MutationObserver(()=>{const sections=[...
       const moveVendorReportRow=async(record,row,previousVendor)=>{
         const oldName=String(previousVendor||'').trim()||'No preferred vendor';
         const nextName=String(record.preferred_vendor||'').trim()||'No preferred vendor';
-        row.cells[0].innerHTML=await renderVendorChoiceCell(record);
+        const vendorHeaderIndex=[...(row.closest('table')?.tHead?.rows[0]?.cells||[])].findIndex((cell)=>cell.textContent.trim().toLowerCase()==='vendor');if(vendorHeaderIndex>=0&&row.cells[vendorHeaderIndex])row.cells[vendorHeaderIndex].innerHTML=await renderVendorChoiceCell(record);
         row.cells[row.cells.length-2].innerHTML=await renderVendorReorderCell(record);
         row.cells[row.cells.length-1].innerHTML=await renderVendorProductImageCell(record);
         if(oldName.toLowerCase()===nextName.toLowerCase())return;
