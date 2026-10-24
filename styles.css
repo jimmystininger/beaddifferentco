@@ -1116,4 +1116,4 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-vendor-order-group .admin-vendor-report-image img{width:56px;height:56px}
 @media(max-width:900px){.admin-vendor-order-group .admin-table-wrap{overflow-x:auto}.admin-vendor-order-group .admin-table{min-width:1050px}}
 .admin-vendor-order-group .admin-vendor-report-image{width:100%;justify-items:stretch}
-.admin-vendor-order-group .admin-vendor-report-image button{box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:34px;padding:6px 4px;border-radius:18px;font-size:12px;line-height:1.2;text-align:center;white-space:nowrap;word-break:normal;overflow-wrap:normal}
+.admin-vendor-order-group .admin-vendor-report-image button{box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:28px;padding:4px 5px;border-radius:6px;font-size:11px;line-height:1.15;text-align:center;white-space:nowrap;word-break:normal;overflow-wrap:normal}
