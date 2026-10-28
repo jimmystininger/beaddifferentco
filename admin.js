@@ -1204,97 +1204,44 @@ function clearAdminRoute(){const url=new URL(window.location.href);url.search=''
 window.addEventListener('admin-product-saved',()=>{clearAdminRowsCache();clearAdminRoute();});
 function switchTab(tab){if(!adminAuthorized)return;adminTabRenderGeneration++;if(tab!=='inventory'){delete document.body.dataset.inventoryReportActive;delete document.body.dataset.inventoryTab;}if(tab!=='stats'){delete panel.dataset.metricsAccountingRun;delete panel.dataset.metricsResearchRun;delete panel.dataset.stateTaxMetricsRun;}activeTab=tab;clearAdminRoute();document.querySelectorAll('[data-admin-tab]').forEach((button)=>button.classList.toggle('active',button.dataset.adminTab===activeTab));if(panel)panel.innerHTML='<div class="admin-empty admin-loading" role="status">Loading Store Control…</div>';renderTab();}
 document.addEventListener('submit',async(event)=>{const form=event.target.closest('[data-order-form]');if(!form||!window.beadSupabase)return;const targetStatus=String(form.elements.status?.value||'');if(!['cancelled','refunded'].includes(targetStatus))return;event.preventDefault();event.stopImmediatePropagation();const reason=window.prompt('This will restore inventory and cannot be undone. Enter a reason, or cancel to leave the order unchanged.');if(reason===null)return;const submit=form.querySelector('[type="submit"]');if(submit)submit.disabled=true;const result=await window.beadSupabase.rpc('cancel_test_order',{order_id:form.dataset.orderForm,target_status:targetStatus,reason});if(result.error){if(submit)submit.disabled=false;renderCloudError(result.error);return;}if(window.sendAdminStoreEmail){try{await window.sendAdminStoreEmail({action:'order_update',orderId:form.dataset.orderForm});}catch(error){window.alert(`Order was updated, but the update email was not sent: ${error.message||'Unknown error.'}`);}}document.querySelector('[data-admin-tab="orders"]')?.click();},true);
-// Report-only assumptions never change checkout prices or historical order costs.
-function freeShippingAnalysis(orders, settings){
-  const amount=(value)=>value!==null&&value!==undefined&&String(value).trim()!==''&&Number.isFinite(Number(value))&&Number(value)>=0?Number(value):null;
-  const cents=(value)=>Math.round((value+Number.EPSILON)*100)/100;
-  const start=settings.start?new Date(settings.start+'T00:00:00').getTime():null;
-  const end=settings.end?new Date(settings.end+'T00:00:00').getTime():null;
-  const endExclusive=end===null?null:new Date(new Date(end).setDate(new Date(end).getDate()+1)).getTime();
-  const packaging=amount(settings.packaging),feePercent=amount(settings.feePercent),feeFixed=amount(settings.feeFixed),fallback=amount(settings.postage),target=amount(settings.target);
-  const rows=orders.filter((order)=>{
-    const time=Date.parse(order.created_at);
-    return ['paid','processing','shipped','completed'].includes(String(order.status||'').toLowerCase())&&amount(order.shipping_amount)===0&&
-      (start===null||time>=start)&&(endExclusive===null||time<endExclusive);
-  }).map((order)=>{
-    const issues=[];
-    const subtotal=amount(order.subtotal),discount=amount(order.discount);
-    const sales=subtotal===null||discount===null?null:cents(Math.max(0,subtotal-discount));
-    if(sales===null)issues.push('Missing sales or discount');
-    const items=order.order_items||[];
-    const costKnown=items.length>0&&items.every((item)=>amount(item.cost_at_purchase)>0&&amount(item.quantity)>0);
-    const cost=costKnown?cents(items.reduce((sum,item)=>sum+Number(item.cost_at_purchase)*Number(item.quantity),0)):null;
-    if(cost===null)issues.push('Missing or unverified $0 item cost');
-    const recordedPostage=amount(order.shipping_cost);
-    const shipping=recordedPostage>0?recordedPostage:fallback;
-    if(shipping===null)issues.push('Missing or unverified $0 postage');
-    if(packaging===null||feePercent===null||feeFixed===null)issues.push('Enter packaging and payment-fee assumptions');
-    const charged=amount(order.total);
-    const fees=feePercent!==null&&feeFixed!==null&&(feePercent===0||charged!==null)?cents((charged||0)*feePercent/100+feeFixed):null;
-    if(fees===null&&feePercent>0)issues.push('Missing payment total');
-    const profit=[sales,cost,shipping,packaging,fees].every((value)=>value!==null)?cents(sales-cost-shipping-packaging-fees):null;
-    const threshold=amount(order.free_shipping_threshold);
-    return {id:order.id,date:order.created_at||'',threshold,sales,cost,shipping,fees,packaging,profit,
-      near:threshold!==null&&threshold>0&&sales!==null&&sales>=threshold&&sales<cents(threshold+5),
-      below:profit!==null&&target!==null?profit<target:null,
-      postageSource:recordedPostage>0?'Recorded checkout postage':shipping!==null?'Fallback estimate':'Unknown',
-      quality:issues.length?issues.join('; '):'Estimated: packaging, fees and checkout postage'};
-  }).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-  const summarize=(entries)=>{
-    const known=entries.filter((row)=>row.profit!==null);
-    const sum=(list,key)=>list.reduce((total,row)=>total+(row[key]||0),0);
-    const salesRows=entries.filter((row)=>row.sales!==null),postageRows=entries.filter((row)=>row.shipping!==null);
-    const profit=sum(known,'profit'),sales=sum(known,'sales');
-    return {count:entries.length,known:known.length,missing:entries.length-known.length,
-      averageSales:salesRows.length?sum(salesRows,'sales')/salesRows.length:null,
-      averageShipping:postageRows.length?sum(postageRows,'shipping')/postageRows.length:null,
-      averageProfit:known.length?profit/known.length:null,margin:known.length&&sales>0?profit/sales*100:null,
-      profit:known.length?profit:null,below:target===null?null:known.filter((row)=>row.below).length,
-      loss:known.filter((row)=>row.profit<0).length};
-  };
-  const groups=new Map();
-  rows.forEach((row)=>{const key=row.threshold;const group=groups.get(key)||{threshold:key,rows:[]};group.rows.push(row);groups.set(key,group);});
-  return {rows,groups:[...groups.values()].sort((a,b)=>(a.threshold??Infinity)-(b.threshold??Infinity)).map((group)=>({...group,...summarize(group.rows),near:summarize(group.rows.filter((row)=>row.near))})),totals:summarize(rows)};
-}
 function renderFreeShippingReport(view,orders,download){
-  const storageKey='beadDifferentShippingReportAssumptions';
-  let saved={};try{saved=JSON.parse(localStorage.getItem(storageKey)||'{}')||{};}catch(error){/* Defaults also work when storage is unavailable. */}
-  const field=(key,label,type='number')=>'<label>'+label+'<input data-shipping-setting="'+key+'" type="'+type+'" '+(type==='number'?'min="0" step="0.01" ':'')+'value="'+adminSafe(String(saved[key]??''))+'"></label>';
-  view.innerHTML='<div class="admin-heading"><div><p class="kicker">SHIPPING ANALYSIS</p><h3>Free-shipping profitability</h3><p>Compare money left per order and near the qualifying minimum.</p></div><button type="button" data-download-free-shipping>Download CSV</button></div>'+
-    '<form data-shipping-assumptions class="admin-card admin-form"><h4>Comparison settings</h4><div class="admin-form-grid">'+field('start','From (local date)','date')+field('end','Through (local date)','date')+field('target','Minimum profit target per order ($)')+field('packaging','Estimated packaging per order ($)')+field('feePercent','Estimated payment fee (%)')+field('feeFixed','Estimated fixed payment fee per order ($)')+field('postage','Fallback postage for missing / $0 costs ($)')+'</div><p>Enter your own packaging and fee estimates, including 0 if none. Leave unknown costs blank. Assumptions are saved in this browser only and do not change checkout.</p><button type="submit">Update comparison</button><p data-shipping-error role="status"></p></form>'+
-    '<p class="inventory-help">Estimated contribution profit = sales after discounts − item costs − postage − packaging − payment fees. Sales tax is excluded from revenue; percentage fees use the charged total, including tax. Only paid, processing, shipped and completed orders with a recorded $0 shipping charge are included. Cancelled and refunded orders are excluded; refund losses and overhead are not included.</p>'+
-    '<p class="inventory-help">Recorded postage comes from checkout and may differ from the purchased label. Missing or $0 historical item costs are unverified; those orders have no profit estimate. Missing or $0 postage needs a fallback estimate. Profit averages, margins and target counts use only orders with all required costs; sales and postage averages use their available values.</p>'+
-    '<div data-shipping-results></div><section class="admin-card"><h4>Which threshold increases overall profit?</h4><p>Profit per 100 visits: unavailable. Visits and paid-shipping orders are not currently attributed to the threshold shoppers saw. This report measures free-shipping order economics; it cannot measure conversion lift or declare the best threshold for total store profit. Compare similar dates, promotions and product mixes, and treat small samples cautiously.</p></section>';
-  const money=(value)=>value===null?'—':'$'+value.toFixed(2);
-  const percent=(value)=>value===null?'—':value.toFixed(1)+'%';
-  const label=(threshold)=>threshold===null?'Not recorded':threshold===0?'$0 (no minimum)':'$'+threshold.toFixed(2)+'+';
-  const table=(headers,body)=>'<div class="admin-table-wrap" tabindex="0" role="region" aria-label="Scrollable shipping comparison"><table class="admin-table free-shipping-table"><thead><tr>'+headers.map((header)=>'<th>'+header+'</th>').join('')+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+headers.length+'">No orders match these dates.</td></tr>')+'</tbody></table></div>';
+  const field=(key,label)=>'<label>'+label+'<input data-shipping-date="'+key+'" type="date"></label>';
+  view.innerHTML='<div class="admin-heading"><div><p class="kicker">SHIPPING</p><h3>Free shipping orders</h3><p>Recorded orders where the customer paid $0 shipping.</p></div><button type="button" data-download-free-shipping>Download CSV</button></div>'+
+    '<form data-shipping-dates class="admin-card admin-form"><h4>Filter by order date</h4><div class="admin-form-grid">'+field('start','From')+field('end','Through')+'</div><p data-shipping-error role="status"></p><button type="submit">Apply dates</button></form>'+
+    '<p class="inventory-help">This report shows recorded order information only. It does not estimate profit, packaging, payment fees, or postage costs. Paid, processing, shipped, and completed orders are included; cancelled and refunded orders are excluded.</p><div data-shipping-results></div>';
+  const money=(value)=>Number.isFinite(value)?'$'+value.toFixed(2):'—';
+  const dateLabel=(value)=>value?new Date(value).toLocaleDateString():'—';
+  const amount=(value)=>value!==null&&value!==undefined&&String(value).trim()!==''&&Number.isFinite(Number(value))&&Number(value)>=0?Number(value):null;
+  const table=(headers,body)=>'<div class="admin-table-wrap" tabindex="0" role="region" aria-label="Free shipping orders"><table class="admin-table free-shipping-table"><thead><tr>'+headers.map((header)=>'<th>'+header+'</th>').join('')+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+headers.length+'">No free-shipping orders match these dates.</td></tr>')+'</tbody></table></div>';
   const cells=(values)=>'<tr>'+values.map((value)=>'<td>'+adminSafe(String(value))+'</td>').join('')+'</tr>';
-  let report,settings;
+  let rows=[];
   const draw=()=>{
-    const form=view.querySelector('[data-shipping-assumptions]');if(!form.reportValidity())return;
-    const next=Object.fromEntries([...form.querySelectorAll('[data-shipping-setting]')].map((input)=>[input.dataset.shippingSetting,input.value]));
+    const form=view.querySelector('[data-shipping-dates]');
+    const startValue=form.querySelector('[data-shipping-date="start"]').value;
+    const endValue=form.querySelector('[data-shipping-date="end"]').value;
     const error=view.querySelector('[data-shipping-error]');
-    if(next.start&&next.end&&next.start>next.end){error.textContent='The end date must be on or after the start date.';return;}
-    if(Number(next.feePercent)>100){error.textContent='Payment fee percentage must be between 0 and 100.';return;}
-    error.textContent='';settings=next;
-    try{localStorage.setItem(storageKey,JSON.stringify(settings));}catch(storageError){error.textContent='Settings applied for this view; browser storage is unavailable.';}
-    report=freeShippingAnalysis(orders,settings);
-    const targetCount=(group)=>group.below===null?'Set a target':group.known?group.below+' / '+group.known+' ('+(group.below/group.known*100).toFixed(1)+'%)':'—';
-    const totals=report.totals;
-    view.querySelector('[data-shipping-results]').innerHTML='<div class="admin-stat-grid admin-report-summary"><div class="admin-stat-card"><b>'+totals.count+'</b><span>Free-shipping orders</span></div><div class="admin-stat-card"><b>'+money(totals.averageProfit)+'</b><span>Estimated profit per costed order</span></div><div class="admin-stat-card"><b>'+percent(totals.margin)+'</b><span>Estimated margin on costed orders</span></div><div class="admin-stat-card"><b>'+totals.missing+'</b><span>Orders missing required costs</span></div></div>'+
-      '<section class="admin-card"><h4>Compare thresholds</h4><p>Shown by threshold, not ranked by total sales. “Costed” means all inputs needed for an estimate are available; it does not mean audited actual profit.</p>'+table(['Threshold','Orders','Costed / total','Avg order value','Avg postage','Est. profit / order','Est. margin','Below target / costed','Loss-making / costed','Est. profit subtotal'],report.groups.map((group)=>cells([label(group.threshold),group.count,group.known+' / '+group.count,money(group.averageSales),money(group.averageShipping),money(group.averageProfit),percent(group.margin),targetCount(group),group.known?group.loss+' / '+group.known:'—',money(group.profit)])).join(''))+'</section>'+
-      '<section class="admin-card"><h4>Orders near the cutoff</h4><p>Net merchandise sales from the threshold up to, but excluding, $5 above it. Large baskets cannot hide the results of minimum qualifying orders.</p>'+table(['Threshold','Net sales band','Orders','Costed / total','Est. profit / order','Est. margin','Below target / costed'],report.groups.filter((group)=>group.threshold>0).map((group)=>cells([label(group.threshold),money(group.threshold)+'–'+money(group.threshold+4.99),group.near.count,group.near.known+' / '+group.near.count,money(group.near.averageProfit),percent(group.near.margin),targetCount(group.near)])).join(''))+'</section>'+
-      '<section class="admin-card"><h4>Order details</h4>'+table(['Order','Date','Threshold','Net item sales','Item cost','Postage','Est. packaging','Est. fees','Est. contribution profit','Below target','Cost status'],report.rows.map((row)=>cells([String(row.id).slice(0,8),row.date?new Date(row.date).toLocaleDateString():'—',label(row.threshold),money(row.sales),money(row.cost),money(row.shipping),money(row.packaging),money(row.fees),money(row.profit),row.below===null?'—':row.below?'Yes':'No',row.quality+'; '+row.postageSource])).join(''))+'</section>';
+    if(startValue&&endValue&&startValue>endValue){error.textContent='The end date must be on or after the start date.';return;}
+    error.textContent='';
+    const start=startValue?new Date(startValue+'T00:00:00').getTime():null;
+    const end=endValue?new Date(endValue+'T00:00:00').getTime():null;
+    const endExclusive=end===null?null:new Date(new Date(end).setDate(new Date(end).getDate()+1)).getTime();
+    rows=orders.filter((order)=>{
+      const time=Date.parse(order.created_at);
+      return ['paid','processing','shipped','completed'].includes(String(order.status||'').toLowerCase())&&amount(order.shipping_amount)===0&&
+        (start===null||time>=start)&&(endExclusive===null||time<endExclusive);
+    }).map((order)=>{
+      const subtotal=amount(order.subtotal),discount=amount(order.discount),total=amount(order.total);
+      return {id:order.order_number?publicOrderNumber(order):String(order.id||'').slice(0,8).toUpperCase(),date:order.created_at||'',status:order.status||'',
+        merchandiseTotal:subtotal===null||discount===null?null:Math.max(0,subtotal-discount),total,threshold:amount(order.free_shipping_threshold)};
+    }).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const sum=(key)=>{const values=rows.map((row)=>row[key]).filter(Number.isFinite);return values.length?values.reduce((total,value)=>total+value,0):null;};
+    view.querySelector('[data-shipping-results]').innerHTML='<div class="admin-stat-grid admin-report-summary"><div class="admin-stat-card"><b>'+rows.length+'</b><span>Orders</span></div><div class="admin-stat-card"><b>'+money(sum('merchandiseTotal'))+'</b><span>Merchandise after discounts</span></div><div class="admin-stat-card"><b>'+money(sum('total'))+'</b><span>Total charged</span></div></div>'+
+      '<section class="admin-card"><h4>Order list</h4>'+table(['Order','Date','Status','Merchandise after discount','Total charged','Free-shipping threshold'],rows.map((row)=>cells([row.id,dateLabel(row.date),row.status,money(row.merchandiseTotal),money(row.total),money(row.threshold)])).join(''))+'</section>';
   };
-  view.querySelector('[data-shipping-assumptions]').onsubmit=(event)=>{event.preventDefault();draw();};
+  view.querySelector('[data-shipping-dates]').onsubmit=(event)=>{event.preventDefault();draw();};
   view.querySelector('[data-download-free-shipping]').onclick=()=>{
-    if(!report)return;
-    download([['Free-shipping profitability — estimates, not net income'],['Filters and assumptions'],...Object.entries(settings),['Refunded and cancelled orders excluded; overhead and refund losses excluded'],['Profit metrics exclude orders with missing costs'],[],
-      ['Threshold','Orders','Costed orders','Missing costs','Average order value','Average postage','Estimated profit per order','Estimated margin %','Below target','Loss-making','Estimated profit subtotal','Near-cutoff orders','Near-cutoff costed','Near-cutoff avg profit','Near-cutoff margin %','Near-cutoff below target'],
-      ...report.groups.map((group)=>[label(group.threshold),group.count,group.known,group.missing,group.averageSales,group.averageShipping,group.averageProfit,group.margin,group.below,group.loss,group.profit,group.near.count,group.near.known,group.near.averageProfit,group.near.margin,group.near.below].map((value)=>value??'')),[],
-      ['Order','Date','Threshold','Net item sales','Item cost','Postage','Estimated packaging','Estimated fees','Estimated contribution profit','Below target','Near cutoff','Cost status','Postage source'],
-      ...report.rows.map((row)=>[row.id,row.date,label(row.threshold),row.sales,row.cost,row.shipping,row.packaging,row.fees,row.profit,row.below,row.near,row.quality,row.postageSource].map((value)=>value??''))],'free-shipping-profitability.csv');
+    const headers=['Order','Date','Status','Merchandise after discount','Total charged','Free-shipping threshold'];
+    download([headers,...rows.map((row)=>[row.id,row.date?new Date(row.date).toISOString():'',row.status,row.merchandiseTotal,row.total,row.threshold].map((value)=>value??''))],'free-shipping-orders.csv');
   };
   draw();
 }
