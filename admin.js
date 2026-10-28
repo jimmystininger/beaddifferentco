@@ -3847,7 +3847,7 @@ const installReliableProductEditorSave=(form,id)=>{
       const missingRequired=[...form.querySelectorAll('[required]')].find((field)=>!field.disabled&&!String(field.value||'').trim());
       if(missingRequired)throw new Error((missingRequired.labels?.[0]?.textContent||missingRequired.name||'Required field').replace(/\s+/g,' ').trim()+' is required.');
       const fields=Object.fromEntries(new FormData(form));
-      await saveCloudProductWithMappings(id,fields,form);
+      const savedProduct=await saveCloudProductWithMappings(id,fields,form);
       if(fields.finalize_inventory_setup==='on'&&window.beadSupabase){
         const values=JSON.parse(fields.sku_data||'[]').flatMap((option)=>option.values||[]);
         const skus=[...new Set(values.map((value)=>String(value.inventory_sku||value.sku||'').trim()).filter(Boolean))];
@@ -3856,7 +3856,7 @@ const installReliableProductEditorSave=(form,id)=>{
         const result=await withAdminEditorTimeout(cloudAdmin().rpc('finalize_inventory_sku_setup',{inventory_sku_ids:(lookup.data||[]).map((row)=>row.id)}),'Finalizing inventory setup');
         if(result.error)throw result.error;
       }
-      renderItems();
+      await openCloudItemForm(savedProduct.id);
     }catch(error){renderCloudError(error);}
   },true);
 };
