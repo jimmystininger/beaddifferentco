@@ -1621,7 +1621,7 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
    renderInitialShell();
   const ensureBulkSkuCreatorTab=()=>{const tabs=panel.querySelector('.inventory-tabs');if(!tabs||tabs.querySelector('[data-inventory-tab="bulk-create"]'))return;const button=document.createElement('button');button.type='button';button.dataset.inventoryTab='bulk-create';button.textContent='Bulk SKU creator';button.onclick=()=>void renderInventoryTools('bulk-create',false);tabs.append(button);};
   ensureBulkSkuCreatorTab();
-  const reportCatalog={low:['Low stock SKUs','SKUs at or below their configured reorder threshold.'],sales:['Sales by child SKU','Website and Etsy sales rolled into the physical canonical child SKU.'],packs:['Multi-pack sales','Recorded sales for recipe-based pack SKUs.'], 'free-shipping':['Free shipping orders','Orders where shipping was fully covered by the store.'],sku:['SKU search','Search the canonical inventory SKU and product-page links.'],manual:['Manual allocations','Imported sales waiting for child SKU allocation.'],'reassign-sales':['Reassign sales SKUs','Correct past sales references and choose the stock to restore and deduct.'],audit:['Year-end inventory audit','Download and apply the controlled inventory audit workbook.'],orphans:['SKUs without product pages','Canonical SKUs not present on any product page or product variant.'], 'missing-recipes':['Non-inventory SKUs without recipes','Non-inventory SKUs that do not have a saved recipe.'],'missing-cost-price':['SKUs missing cost or price','Find canonical inventory with a blank or zero cost or retail price.'],uncategorized:['Uncategorized products','Product pages missing a canonical category.']};
+  const reportCatalog={low:['Low stock SKUs','SKUs at or below their configured reorder threshold.'],sales:['Sales by child SKU','Website and Etsy sales rolled into the physical canonical child SKU.'],packs:['Multi-pack sales','Recorded sales for recipe-based pack SKUs.'], 'free-shipping':['Free shipping orders','Orders where shipping was fully covered by the store.'],sku:['SKU search','Search the canonical inventory SKU and product-page links.'],manual:['Manual allocations','Imported sales waiting for child SKU allocation.'],'reassign-sales':['Reassign sales SKUs','Correct past sales references and choose the stock to restore and deduct.'],audit:['Year-end inventory audit','Download and apply the controlled inventory audit workbook.'],orphans:['SKUs without product pages','Canonical SKUs not present on any product page or product variant.'], 'missing-recipes':['Non-inventory SKUs without recipes','Non-inventory SKUs that do not have a saved recipe.'],'missing-cost-price':['SKUs missing cost or price','Find canonical inventory with a blank or zero cost or retail price.'],uncategorized:['Uncategorized products','Product pages missing a canonical category.'],'shared-pages':['SKUs on multiple product pages','Find canonical SKUs that appear on more than one product page. Compare each page title, its complete SKU list, and direct page links side by side.']};
   const renderReportLauncher=()=>{const view=panel.querySelector('#inventory-view');if(!view)return;const entries=tab==='menu'?Object.entries(reportCatalog):[[tab,reportCatalog[tab]||['Inventory report','Run the selected inventory report.']]];view.innerHTML='<div class="admin-heading"><div><h3>'+ (tab==='menu'?'Inventory and reports':'Report ready to run') +'</h3><p>Choose a report, then click Run report. No report data is requested while this screen is open.</p></div></div><div class="admin-report-launch-list">'+entries.map(([key,detail])=>'<article class="admin-card admin-report-launch"><div><h4>'+adminSafe(detail[0])+'</h4><p>'+adminSafe(detail[1])+'</p></div><div class="admin-report-launch-actions"><button type="button" data-run-inventory-report="'+adminSafe(key)+'">Run report</button><button type="button" data-run-inventory-fresh="'+adminSafe(key)+'">Run fresh report</button></div></article>').join('')+'</div>';view.querySelectorAll('[data-run-inventory-report]').forEach((button)=>button.onclick=()=>void renderInventoryTools(button.dataset.runInventoryReport,true));view.querySelectorAll('[data-run-inventory-fresh]').forEach((button)=>button.onclick=()=>void renderInventoryTools(button.dataset.runInventoryFresh,true,true));};
   if(!runReport&&!['adjust','bulk-create','reassign-sales'].includes(tab)){renderReportLauncher();return;}
   const cloud=Boolean(await window.beadSupabaseReady||window.beadSupabase);
@@ -1818,7 +1818,7 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
      view.querySelectorAll('[data-manual-reapply]').forEach((button)=>button.onclick=async()=>{const card=button.closest('[data-manual-allocation]');const status=card?.querySelector('[data-manual-status]');if(!card||!status)return;if(!cloud){status.textContent='Stored-sale matching requires the connected store database.';return;}button.disabled=true;status.textContent='Matching and applying the stored Etsy sale…';const result=await cloudAdmin().rpc('reapply_etsy_unmatched_sales',{etsy_sku_value:card.dataset.manualParentSku});if(result.error){button.disabled=false;status.textContent='Stored sale was not applied: '+result.error.message;return;}const matchedLines=Number(result.data?.matched_lines)||0;if(matchedLines===0&&card.dataset.manualEtsyLine){const lineResult=await cloudAdmin().from('etsy_sale_lines').select('match_status,matched_inventory_sku,quantity,refunded_quantity,inventory_units_applied').eq('id',card.dataset.manualEtsyLine).maybeSingle();if(lineResult.error){button.disabled=false;status.textContent='No unmatched sale was found, and its existing match could not be verified: '+lineResult.error.message;return;}const line=lineResult.data;const quantity=Number(line?.quantity)||0;const refunded=Math.min(quantity,Number(line?.refunded_quantity)||0);const applied=Number(line?.inventory_units_applied)||0;if(line?.match_status==='matched'&&line.matched_inventory_sku&&applied===quantity-refunded){const closed=await cloudAdmin().from('inventory_manual_pack_allocations').update({status:'cancelled',note:'Closed stale allocation; its Etsy sale was already matched and inventory units were applied.'}).eq('id',card.dataset.manualAllocation).eq('status','pending').select('id').maybeSingle();if(closed.error){button.disabled=false;status.textContent='The sale is already matched, but its stale queue entry could not be closed: '+closed.error.message;return;}if(closed.data){status.textContent='This sale was already matched and applied. Closed the stale pending entry; inventory was not changed.';await renderInventoryTools('manual',true,true);return;}const allocationResult=await cloudAdmin().from('inventory_manual_pack_allocations').select('status').eq('id',card.dataset.manualAllocation).maybeSingle();if(allocationResult.error){button.disabled=false;status.textContent='The sale is already matched, but its allocation status could not be verified: '+allocationResult.error.message;return;}if(allocationResult.data?.status!=='pending'){status.textContent='This sale was already matched and applied; its allocation was already closed. Inventory was not changed.';await renderInventoryTools('manual',true,true);return;}}button.disabled=false;status.textContent='No unmatched Etsy sale line was found. The pending allocation remains open because its applied status could not be confirmed.';return;}status.textContent='Applied '+matchedLines+' stored Etsy sale line'+(matchedLines===1?'':'s')+' without contacting Etsy.';await renderInventoryTools('manual',true,true);});
     return;
   }
-   if(tab==='orphans'){await renderAdminSkuCoverageReport('orphans');return;}if(tab==='missing-recipes'){await renderAdminSkuCoverageReport('missing-recipes');return;}if(tab==='missing-cost-price'){await renderAdminMissingCostPriceReport();return;}if(tab==='uncategorized'){await renderAdminUncategorizedReportServer();return;}if(tab==='low'){
+   if(tab==='shared-pages'){await renderAdminSharedSkuPagesReport(false);return;}if(tab==='orphans'){await renderAdminSkuCoverageReport('orphans');return;}if(tab==='missing-recipes'){await renderAdminSkuCoverageReport('missing-recipes');return;}if(tab==='missing-cost-price'){await renderAdminMissingCostPriceReport();return;}if(tab==='uncategorized'){await renderAdminUncategorizedReportServer();return;}if(tab==='low'){
      if(!isCurrent())return;const mode='low';view.innerHTML='<div class="admin-heading"><div><h3>Low and out of stock SKUs</h3><p>All physical SKUs at or below their configured threshold are grouped by preferred vendor. Download each vendor’s sheet, enter order quantities, then print or save it as a PDF.</p></div></div><section class="admin-card" data-vendor-canonical-search><h3>Add a canonical SKU to this report</h3><p>Search by SKU or product name. The SKU is added temporarily under its saved preferred vendor and is not included in low-stock results next time.</p><label>Search canonical inventory<input type="search" data-vendor-sku-search placeholder="Type a SKU or product name" autocomplete="off" disabled><small data-vendor-sku-search-status role="status">Loading inventory report…</small></label><div data-vendor-sku-search-results></div></section><p data-low-status role="status">Loading inventory…</p><div class="admin-vendor-order-groups" data-low-vendor-groups></div>';
      const vendorGroupsForOrderForm=view.querySelector('[data-low-vendor-groups]');
 const canonicalSkuSearch=view.querySelector('[data-vendor-sku-search]');
@@ -2497,6 +2497,98 @@ const setupAdminExistingSkuLookup=(form)=>{
 const initializeAdminNonInventoryState=()=>{panel?.querySelectorAll('[data-variant-row]').forEach((row)=>{syncAdminNonInventoryFields(row);const type=row.querySelector('[data-variant-item-type]');if(type&&!type.dataset.nonInventoryStateReady){type.dataset.nonInventoryStateReady='true';type.addEventListener('change',()=>syncAdminNonInventoryFields(row));}});};
 new MutationObserver(()=>initializeAdminNonInventoryState()).observe(panel,{childList:true,subtree:true});
 const clearAdminCatalogCoverageCache=async()=>{clearAdminRowsCachePrefix('catalog-part:');await clearAdminReportCache('report:catalog-part:');};
+const renderAdminSharedSkuPagesReport=async(fresh=false)=>{
+  const view=panel.querySelector('#inventory-view');
+  if(!view)return;
+  const heading='SKUs on multiple product pages';
+  view.innerHTML='<div class="admin-heading"><div><h3>'+heading+'</h3><p>Each group shows a canonical SKU found on multiple product pages. Compare page titles, every SKU listed on each page, and open the admin page or live storefront.</p></div><button type="button" data-refresh-shared-pages>Refresh report</button><button type="button" data-download-shared-pages>Download CSV</button></div><label class="admin-shared-sku-search">Search report<input type="search" data-shared-pages-search placeholder="Search SKU, product title, or page SKU"></label><p data-shared-pages-status role="status">Loading product pages…</p><div class="admin-shared-sku-report-list" data-shared-pages-list></div><div class="admin-pagination" data-shared-pages-pagination></div>';
+  const status=view.querySelector('[data-shared-pages-status]');
+  const list=view.querySelector('[data-shared-pages-list]');
+  const pagination=view.querySelector('[data-shared-pages-pagination]');
+  const search=view.querySelector('[data-shared-pages-search]');
+  try{
+    if(!window.beadSupabase)throw new Error('The store database is unavailable.');
+    if(fresh)await clearAdminCatalogCoverageCache();
+    const result=await adminCatalogSnapshot('inventory:shared-sku-pages',true,true,false,false,true,true,true);
+    if(result.error)throw result.error;
+    const snapshot=adminCatalogSnapshotParts(result);
+    const inventorySkuById=new Map();
+    const inventorySkuByName=new Map();
+    snapshot.inventory.forEach((record)=>{
+      const sku=String(record.sku||'').trim();
+      if(!sku)return;
+      inventorySkuByName.set(sku.toLowerCase(),sku);
+      if(record.id)inventorySkuById.set(String(record.id),sku);
+    });
+    const productById=new Map(snapshot.products.map((product)=>[String(product.id||''),product]));
+    const pages=new Map();
+    snapshot.products.forEach((product)=>{
+      const id=String(product.id||'');
+      if(!id)return;
+      pages.set(id,{id,title:String(product.name||product.external_id||'Untitled product'),externalId:String(product.external_id||id),visible:product.visible===true,skuSet:new Set()});
+    });
+    const addPageSkus=(page,rawValue)=>{
+      String(rawValue||'').split(',').map((part)=>part.trim()).filter(Boolean).forEach((rawSku)=>{
+        const sku=inventorySkuByName.get(rawSku.toLowerCase())||rawSku;
+        page.skuSet.add(sku);
+      });
+    };
+    pages.forEach((page)=>addPageSkus(page,productById.get(page.id)?.sku));
+    snapshot.options.forEach((group)=>{
+      const page=pages.get(String(group.product_id||''));
+      if(!page)return;
+      (group.product_option_values||[]).forEach((option)=>{
+        const canonical=inventorySkuById.get(String(option.inventory_sku_id||''));
+        addPageSkus(page,canonical||option.inventory_sku||option.sku);
+      });
+    });
+    const pagesBySku=new Map();
+    pages.forEach((page)=>{
+      page.skus=[...page.skuSet].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
+      page.skuSet.forEach((sku)=>{
+        const key=sku.toLowerCase();
+        if(!pagesBySku.has(key))pagesBySku.set(key,{sku,pages:new Map()});
+        pagesBySku.get(key).pages.set(page.id,page);
+      });
+    });
+    const groups=[...pagesBySku.values()].filter((group)=>group.pages.size>1).map((group)=>({...group,pages:[...group.pages.values()].sort((a,b)=>a.title.localeCompare(b.title,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id))})).sort((a,b)=>a.sku.localeCompare(b.sku,undefined,{sensitivity:'base'}));
+    let currentPage=1;
+    const pageSize=20;
+    const filteredGroups=()=>{const query=search.value.trim().toLowerCase();if(!query)return groups;return groups.filter((group)=>group.sku.toLowerCase().includes(query)||group.pages.some((page)=>page.title.toLowerCase().includes(query)||page.skus.some((sku)=>sku.toLowerCase().includes(query))));};
+    const render=()=>{
+      const matches=filteredGroups();
+      const pageCount=Math.max(1,Math.ceil(matches.length/pageSize));
+      currentPage=Math.min(currentPage,pageCount);
+      const visible=matches.slice((currentPage-1)*pageSize,currentPage*pageSize);
+      list.innerHTML=visible.map((group)=>{
+        const pageCards=group.pages.map((page)=>{
+          const adminUrl='admin.html?edit='+encodeURIComponent(page.id);
+          const storefrontUrl='product.html?id='+encodeURIComponent(page.externalId);
+          return '<section class="admin-shared-sku-page"><div class="admin-shared-sku-page-heading"><h5>'+adminSafe(page.title)+'</h5><span>'+(page.visible?'Live':'Deactivated')+'</span></div><p><strong>SKUs on this page</strong></p><p class="admin-shared-sku-list">'+adminSafe(page.skus.join(', ')||'—')+'</p><div class="admin-shared-sku-links"><a href="'+adminSafe(adminUrl)+'" target="_blank" rel="noopener">Open admin page</a>'+(page.visible?'<a href="'+adminSafe(storefrontUrl)+'" target="_blank" rel="noopener">View storefront</a>':'')+'</div></section>';
+        }).join('');
+        return '<article class="admin-card admin-shared-sku-group"><div class="admin-shared-sku-group-heading"><h4>'+adminSafe(group.sku)+'</h4><span>'+group.pages.length+' product pages</span></div><div class="admin-shared-sku-pages">'+pageCards+'</div></article>';
+      }).join('')||'<div class="admin-empty"><h3>No shared SKUs found</h3><p>No canonical SKU appears on more than one product page'+(search.value.trim()?' matching this search.':'.')+'</p></div>';
+      status.textContent=groups.length+' canonical SKU'+(groups.length===1?'':'s')+' appear on multiple product pages across '+new Set(groups.flatMap((group)=>group.pages.map((page)=>page.id))).size+' pages. Showing '+visible.length+' of '+matches.length+' matching SKU groups.';
+      pagination.innerHTML='<button type="button" data-shared-pages-prev '+(currentPage===1?'disabled':'')+'>Previous</button><span>Page '+currentPage+' of '+pageCount+'</span><button type="button" data-shared-pages-next '+(currentPage===pageCount?'disabled':'')+'>Next</button>';
+      pagination.querySelector('[data-shared-pages-prev]').onclick=()=>{currentPage=Math.max(1,currentPage-1);render();};
+      pagination.querySelector('[data-shared-pages-next]').onclick=()=>{currentPage=Math.min(pageCount,currentPage+1);render();};
+    };
+    search.addEventListener('input',()=>{currentPage=1;render();});
+    view.querySelector('[data-download-shared-pages]').onclick=()=>{
+      const quote=(value)=>'"'+String(value??'').replace(/"/g,'""')+'"';
+      const csv=[['Shared SKU','Product page title','All SKUs on page','Admin page link','Storefront page link','Storefront status'],...groups.flatMap((group)=>group.pages.map((page)=>[group.sku,page.title,page.skus.join(', '),new URL('admin.html?edit='+encodeURIComponent(page.id),location.href).href,page.visible?new URL('product.html?id='+encodeURIComponent(page.externalId),location.href).href:'',page.visible?'Live':'Deactivated']))].map((row)=>row.map(quote).join(',')).join('\n');
+      const link=document.createElement('a');
+      link.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+      link.download='skus-on-multiple-product-pages.csv';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    };
+    view.querySelector('[data-refresh-shared-pages]').onclick=()=>void renderAdminSharedSkuPagesReport(true);
+    render();
+  }catch(error){
+    status.textContent='Unable to load '+heading.toLowerCase()+': '+(error.message||'Unknown error.');
+  }
+};
 const renderAdminSkuCoverageReport=async(kind='orphans',fresh=false)=>{
   const view=panel.querySelector('#inventory-view');
   if(!view)return;
