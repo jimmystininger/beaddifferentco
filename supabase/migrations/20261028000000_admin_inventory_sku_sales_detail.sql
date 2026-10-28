@@ -130,4 +130,3 @@ $$;
 
 revoke all on function public.admin_inventory_sku_sales_detail(text) from public, anon;
 grant execute on function public.admin_inventory_sku_sales_detail(text) to authenticated, service_role;
-
