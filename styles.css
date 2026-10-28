@@ -1127,5 +1127,3 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 
 .admin-sku-row .admin-sku-internal label.admin-toggle{display:flex;align-items:center;gap:8px;min-height:40px;line-height:1.3}
 .admin-sku-row .admin-sku-internal label.admin-toggle input[type="checkbox"][data-variant-taxable]{width:18px;height:18px;min-width:18px;margin:0;padding:0;flex:0 0 18px}
-
-.admin-sku-sales-lookup>label{display:grid;gap:6px;max-width:640px;font-weight:700}.admin-sku-sales-lookup input[data-sku-sales-search]{box-sizing:border-box;width:100%;min-height:42px;padding:9px 12px;border:1px solid #aaa;border-radius:7px;font:inherit}.admin-sku-sales-matches{display:grid;gap:6px;max-width:800px;margin-top:8px}.admin-sku-sales-matches button{display:flex;align-items:baseline;gap:12px;padding:9px 12px;border:1px solid #ded4db;border-radius:7px;background:#fff;text-align:left;cursor:pointer}.admin-sku-sales-matches button:hover,.admin-sku-sales-matches button:focus-visible{border-color:#e9943e;background:#fff8ef}.admin-sku-sales-lookup [data-sku-sales-results]{margin-top:14px}.admin-sku-sales-lookup .admin-stat-summary{margin-bottom:12px}
