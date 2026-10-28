@@ -425,7 +425,8 @@ async function renderStats(){
   const researchPeriod=panel.dataset.researchMetricsPeriod||'month';
   const accountingPeriod=panel.dataset.accountingMetricsPeriod||'month';
   const selectedPeriod=researchPeriod;
-  const end=new Date();
+  const serverNow=Number(window.beadSupabaseServerNow);
+  const end=new Date(Number.isFinite(serverNow)?serverNow:Date.now());
   const periodStart=(period)=>period==='week'?new Date(end.getTime()-7*24*60*60*1000):period==='year'?new Date(end.getFullYear(),0,1):period==='all'?null:new Date(end.getFullYear(),end.getMonth(),1);
   const start=periodStart(researchPeriod);
   const accountingStart=periodStart(accountingPeriod);
