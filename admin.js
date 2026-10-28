@@ -2539,7 +2539,7 @@ const renderAdminSharedSkuPagesReport=async(fresh=false)=>{
       if(!page)return;
       (group.product_option_values||[]).forEach((option)=>{
         const canonical=inventorySkuById.get(String(option.inventory_sku_id||''));
-        addPageSkus(page,canonical||option.inventory_sku||option.sku);
+        addPageSkus(page,option.sku||option.inventory_sku||canonical);
       });
     });
     const pagesBySku=new Map();
