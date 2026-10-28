@@ -735,7 +735,7 @@ async function renderStats(){
     report.querySelectorAll('[data-metrics-page]').forEach((button)=>button.onclick=()=>{report.dataset.page=Math.max(1,Math.min(pageCount,Number(report.dataset.page||1)+(button.dataset.metricsPage==='next'?1:-1)));redrawSorted();});
     report.querySelector('[data-download-metrics]').onclick=()=>{const sorted=sortedRows();download([headers,...sorted.map((row)=>[row.sku,row.productName,row.category,row.inventory,row.unitType,row.cost,row.price,row.vendor,row.views,row.searches,row.cartAdds,row.unitsSold,row.promoUnits,row.revenue,row.totalCost,row.marketplaceFees,row.netProfit,row.yoyUnits,row.yoyRevenue])],'metrics-'+selectedPeriod+'.csv');};
   };
-  panel.querySelector('[data-run-accounting]')?.addEventListener('click',()=>{panel.dataset.metricsAccountingRun='true';void renderStats();});
+  panel.querySelector('[data-run-accounting]')?.addEventListener('click',async()=>{await clearMetricsReportCache();panel.dataset.metricsAccountingRun='true';void renderStats();});
   panel.querySelector('[data-run-accounting-fresh]')?.addEventListener('click',async()=>{await clearMetricsReportCache();panel.dataset.metricsAccountingRun='true';void renderStats();});
   panel.querySelector('[data-accounting-period]').onchange=(event)=>{panel.dataset.accountingMetricsPeriod=event.target.value;panel.dataset.metricsAccountingRun='false';void renderStats();};
   panel.querySelector('[data-research-period]').onchange=(event)=>{panel.dataset.researchMetricsPeriod=event.target.value;panel.dataset.metricsResearchRun='false';researchPrompt();};
