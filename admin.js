@@ -4528,6 +4528,103 @@ document.addEventListener('submit',(event)=>{if(event.target?.id==='settings-for
 // Replace the legacy client-side catalog renderer with the server-paginated
 // version. This assignment runs after all helpers are declared and before an
 // admin tab can invoke the route renderer.
+const duplicateAdminProductPage=async(sourceId)=>{
+  const db=cloudAdmin();
+  const sourceResult=await db.from('products').select('*').eq('id',sourceId).single();
+  if(sourceResult.error)throw sourceResult.error;
+  const source=sourceResult.data;
+  const baseTitle=String(source.name&&source.name!=='1'?source.name:source.external_id||source.sku||'Untitled product').trim();
+  let copyTitle=baseTitle+' (2)';
+  for(let suffix=3;;suffix++){
+    const titleCheck=await db.from('products').select('id').eq('name',copyTitle).limit(1).maybeSingle();
+    if(titleCheck.error)throw titleCheck.error;
+    if(!titleCheck.data)break;
+    copyTitle=baseTitle+' ('+suffix+')';
+  }
+  const sourceOptionsResult=await db.from('product_options').select('*').eq('product_id',sourceId).order('sort_order');
+  if(sourceOptionsResult.error)throw sourceOptionsResult.error;
+  const sourceOptions=sourceOptionsResult.data||[];
+  const optionIds=sourceOptions.map((option)=>option.id).filter(Boolean);
+  const [images,categories,assignments,values]=await Promise.all([
+    db.from('product_images').select('*').eq('product_id',sourceId).order('sort_order'),
+    db.from('product_categories').select('*').eq('product_id',sourceId).order('sort_order'),
+    db.from('product_filter_assignments').select('*').eq('product_id',sourceId),
+    optionIds.length?adminBatchRows(optionIds,(batch)=>db.from('product_option_values').select('*').in('option_id',batch)):Promise.resolve({data:[],error:null})
+  ]);
+  for(const result of [images,categories,assignments,values])if(result.error)throw result.error;
+  const now=new Date().toISOString();
+  const copy={...source};
+  delete copy.id;
+  copy.external_id='product-'+(window.crypto?.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2));
+  copy.name=copyTitle;
+  copy.seo_title=copyTitle;
+  copy.search_text=adminProductSearch({...source,name:copyTitle,seo_title:copyTitle});
+  copy.visible=false;
+  copy.featured=false;
+  copy.etsy_listing_id=null;
+  copy.sku_editor_locked=false;
+  copy.added_at=now;
+  copy.created_at=now;
+  copy.updated_at=now;
+  const created=await db.from('products').insert(copy).select('id').single();
+  if(created.error)throw created.error;
+  const copyId=created.data.id;
+  let newOptionIds=[];
+  const copiedInventoryIds=[];
+  try{
+    const imageRows=(images.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.id;delete row.created_at;return row;});
+    if(imageRows.length){const result=await db.from('product_images').insert(imageRows);if(result.error)throw result.error;}
+    const categoryRows=(categories.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.created_at;return row;});
+    if(categoryRows.length){const result=await db.from('product_categories').insert(categoryRows);if(result.error)throw result.error;}
+    const optionRows=sourceOptions.map((entry)=>{const row={...entry,product_id:copyId};delete row.id;return row;});
+    let insertedOptions=[];
+    if(optionRows.length){
+      const result=await db.from('product_options').insert(optionRows).select('id,name,sort_order');
+      if(result.error)throw result.error;
+      insertedOptions=result.data||[];
+      newOptionIds=insertedOptions.map((entry)=>entry.id);
+    }
+    const optionMap=new Map();
+    sourceOptions.forEach((entry)=>{const matching=insertedOptions.find((item)=>item.name===entry.name&&Number(item.sort_order)===Number(entry.sort_order));if(matching)optionMap.set(entry.id,matching.id);});
+    const valueRows=(values.data||[]).flatMap((entry)=>{const optionId=optionMap.get(entry.option_id);if(!optionId)return[];const row={...entry,option_id:optionId};delete row.id;return[row];});
+    if(valueRows.length){const result=await db.from('product_option_values').insert(valueRows);if(result.error)throw result.error;}
+    const assignmentRows=(assignments.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.id;delete row.created_at;delete row.updated_at;return row;});
+    if(assignmentRows.length){const result=await db.from('product_filter_assignments').insert(assignmentRows);if(result.error)throw result.error;}
+    const inventoryIds=[...new Set((values.data||[]).map((entry)=>entry.inventory_sku_id).filter(Boolean))];
+    if(inventoryIds.length){
+      const inventory=await adminBatchRows(inventoryIds,(batch)=>db.from('inventory_skus').select('id,source_metadata').in('id',batch));
+      if(inventory.error)throw inventory.error;
+      for(const entry of inventory.data||[]){
+        const metadata=entry.source_metadata&&typeof entry.source_metadata==='object'?entry.source_metadata:{};
+        const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?metadata.product_pages:{};
+        const page=pages[sourceId];
+        if(!page||typeof page!=='object')continue;
+        const result=await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:{...pages,[copyId]:{...page}}},updated_at:now}).eq('id',entry.id);
+        if(result.error)throw result.error;
+        copiedInventoryIds.push(entry.id);
+      }
+    }
+    return copyId;
+  }catch(error){
+    await db.from('product_filter_assignments').delete().eq('product_id',copyId);
+    await db.from('product_categories').delete().eq('product_id',copyId);
+    await db.from('product_images').delete().eq('product_id',copyId);
+    if(newOptionIds.length){
+      await db.from('product_option_values').delete().in('option_id',newOptionIds);
+      await db.from('product_options').delete().in('id',newOptionIds);
+    }
+    for(const inventoryId of copiedInventoryIds){
+      const result=await db.from('inventory_skus').select('source_metadata').eq('id',inventoryId).maybeSingle();
+      if(result.error||!result.data)continue;
+      const metadata=result.data.source_metadata&&typeof result.data.source_metadata==='object'?result.data.source_metadata:{};
+      const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?{...metadata.product_pages}:{};
+      delete pages[copyId];
+      await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:pages},updated_at:new Date().toISOString()}).eq('id',inventoryId);
+    }
+    await db.from('products').delete().eq('id',copyId);
+    throw error;
+  }
+};
 renderItems=async()=>{
   if(!cloudAdmin()){renderCloudError(new Error('Supabase is not connected.'));return;}
   try{
@@ -4538,7 +4635,15 @@ renderItems=async()=>{
     let products=[];
     const productTitle=(product)=>product.name&&product.name!=='1'?product.name:product.external_id||product.sku||'Untitled product';
     const leadImage=(product)=>window.storefrontCardImageUrl?.(product.lead_image_url)||product.lead_image_url||'product-mix.jpg';
-    const row=(product)=>'<tr><td><img class="admin-product-lead" loading="lazy" decoding="async" src="'+adminSafe(leadImage(product))+'" alt="'+adminSafe(productTitle(product))+'"></td><td><strong>'+adminSafe(productTitle(product))+'</strong></td><td>'+adminSafe(product.sku||'—')+'</td><td>$'+Number(product.price||0).toFixed(2)+'</td><td>'+ (Number(product.quantity)||0)+'</td><td><button data-toggle-visible="'+product.id+'">'+(product.visible?'ON':'OFF')+'</button></td><td><a href="admin.html?edit='+encodeURIComponent(product.id)+'">Edit</a></td></tr>';
+    const row=(product)=>'<tr>'+
+      '<td><img class="admin-product-lead" loading="lazy" decoding="async" src="'+adminSafe(leadImage(product))+'" alt="'+adminSafe(productTitle(product))+'"></td>'+
+      '<td><strong>'+adminSafe(productTitle(product))+'</strong></td>'+
+      '<td>'+adminSafe(product.sku||'—')+'</td>'+
+      '<td>$'+Number(product.price||0).toFixed(2)+'</td>'+
+      '<td>'+(Number(product.quantity)||0)+'</td>'+
+      '<td><button data-toggle-visible="'+adminSafe(product.id)+'">'+(product.visible?'ON':'OFF')+'</button></td>'+
+      '<td><a href="admin.html?edit='+encodeURIComponent(product.id)+'">Edit</a><br><button type="button" data-duplicate-product="'+adminSafe(product.id)+'">Duplicate</button></td>'+
+      '</tr>';
     const table=(title,items,total)=>'<section class="admin-card"><h3>'+title+' <span>('+total+')</span></h3><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Lead image</th><th>Product title</th><th>SKU</th><th>Price</th><th>Stock</th><th>Storefront</th><th></th></tr></thead><tbody>'+(items.map(row).join('')||'<tr><td colspan="7">No matching products.</td></tr>')+'</tbody></table></div></section>';
     panel.innerHTML='<div class="admin-heading"><div><p class="kicker">PRODUCT CATALOG</p><h2>Products/SKUs</h2><p>Every product is listed here, whether it is live or deactivated.</p></div><a class="cta" href="admin.html?new=item">Add a product page</a></div><div class="admin-form-grid"><label>Search products<input id="cloud-item-search" type="search" placeholder="Name, SKU, category, or description"></label><label>Filter<select id="cloud-item-filter"><option value="all">All products</option><option value="promo">Active promos</option><option value="clearance">Clearance</option><option value="in-stock">In stock</option><option value="low-stock">Low stock</option><option value="out-of-stock">Out of stock</option></select></label><label>Category<select id="cloud-item-category"><option value="all">All categories</option></select></label><label>Sort by<select id="cloud-item-sort"><option value="name">Name</option><option value="category">Category</option><option value="sku">SKU</option><option value="price">Price</option><option value="quantity">Stock</option><option value="updated">Recently added</option></select></label></div><div class="admin-tabs"><button type="button" data-items-tab="live" aria-selected="true">Live products</button><button type="button" data-items-tab="deactivated" aria-selected="false">Deactivated products</button></div><div id="cloud-items-lists"></div><div id="cloud-items-pagination" class="admin-pagination"></div>';
     void cloudCategoryRows().then((categoryRows)=>{
@@ -4557,6 +4662,21 @@ renderItems=async()=>{
         const result=await cloudAdmin().from('products').update({visible:!product.visible}).eq('id',product.id);
         if(result.error)return renderCloudError(result.error);
         void renderItems();
+      }));
+      panel.querySelectorAll('[data-duplicate-product]').forEach((button)=>button.addEventListener('click',async()=>{
+        const sourceId=button.dataset.duplicateProduct;
+        if(!sourceId)return;
+        button.disabled=true;
+        button.textContent='Copying…';
+        try{
+          const copyId=await duplicateAdminProductPage(sourceId);
+          window.location.href='admin.html?edit='+encodeURIComponent(copyId);
+        }catch(error){
+          console.error('Unable to duplicate product page',error);
+          button.disabled=false;
+          button.textContent='Duplicate';
+          renderCloudError(new Error('Product page was not copied: '+(error.message||'Unknown error.')));
+        }
       }));
     };
     const draw=async()=>{
