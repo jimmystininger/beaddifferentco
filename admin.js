@@ -2359,7 +2359,7 @@ const setupAdminExistingSkuLookup=(form)=>{
       setValue('[data-variant-inventory-sku]',record.sku);
       setValue('[data-variant-label]',productName||record.name||'');
       setValue('[data-variant-price]',Number(record.price||0).toFixed(2));
-      setValue('[data-variant-cost]',record.cost??'');
+      const costInput=row.querySelector('[data-variant-cost]');if(costInput){costInput.value=record.cost??'';costInput.dispatchEvent(new Event('input',{bubbles:true}));}
       setValue('[data-variant-unit-type]',record.unit_type||'Each');
       setValue('[data-variant-weight]',record.weight_value??'');
       setValue('[data-variant-weight-unit]',record.weight_unit||'oz');
