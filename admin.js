@@ -4538,7 +4538,15 @@ renderItems=async()=>{
     let products=[];
     const productTitle=(product)=>product.name&&product.name!=='1'?product.name:product.external_id||product.sku||'Untitled product';
     const leadImage=(product)=>window.storefrontCardImageUrl?.(product.lead_image_url)||product.lead_image_url||'product-mix.jpg';
-    const row=(product)=>'<tr><td><img class="admin-product-lead" loading="lazy" decoding="async" src="'+adminSafe(leadImage(product))+'" alt="'+adminSafe(productTitle(product))+'"></td><td><strong>'+adminSafe(productTitle(product))+'</strong></td><td>'+adminSafe(product.sku||'—')+'</td><td>
+    const row=(product)=>'<tr>'+
+      '<td><img class="admin-product-lead" loading="lazy" decoding="async" src="'+adminSafe(leadImage(product))+'" alt="'+adminSafe(productTitle(product))+'"></td>'+
+      '<td><strong>'+adminSafe(productTitle(product))+'</strong></td>'+
+      '<td>'+adminSafe(product.sku||'—')+'</td>'+
+      '<td>$'+Number(product.price||0).toFixed(2)+'</td>'+
+      '<td>'+(Number(product.quantity)||0)+'</td>'+
+      '<td><button data-toggle-visible="'+adminSafe(product.id)+'">'+(product.visible?'ON':'OFF')+'</button></td>'+
+      '<td><a href="admin.html?edit='+encodeURIComponent(product.id)+'">Edit</a><br><button type="button" data-duplicate-product="'+adminSafe(product.id)+'">Duplicate</button></td>'+
+      '</tr>';
     const table=(title,items,total)=>'<section class="admin-card"><h3>'+title+' <span>('+total+')</span></h3><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Lead image</th><th>Product title</th><th>SKU</th><th>Price</th><th>Stock</th><th>Storefront</th><th></th></tr></thead><tbody>'+(items.map(row).join('')||'<tr><td colspan="7">No matching products.</td></tr>')+'</tbody></table></div></section>';
     panel.innerHTML='<div class="admin-heading"><div><p class="kicker">PRODUCT CATALOG</p><h2>Products/SKUs</h2><p>Every product is listed here, whether it is live or deactivated.</p></div><a class="cta" href="admin.html?new=item">Add a product page</a></div><div class="admin-form-grid"><label>Search products<input id="cloud-item-search" type="search" placeholder="Name, SKU, category, or description"></label><label>Filter<select id="cloud-item-filter"><option value="all">All products</option><option value="promo">Active promos</option><option value="clearance">Clearance</option><option value="in-stock">In stock</option><option value="low-stock">Low stock</option><option value="out-of-stock">Out of stock</option></select></label><label>Category<select id="cloud-item-category"><option value="all">All categories</option></select></label><label>Sort by<select id="cloud-item-sort"><option value="name">Name</option><option value="category">Category</option><option value="sku">SKU</option><option value="price">Price</option><option value="quantity">Stock</option><option value="updated">Recently added</option></select></label></div><div class="admin-tabs"><button type="button" data-items-tab="live" aria-selected="true">Live products</button><button type="button" data-items-tab="deactivated" aria-selected="false">Deactivated products</button></div><div id="cloud-items-lists"></div><div id="cloud-items-pagination" class="admin-pagination"></div>';
     void cloudCategoryRows().then((categoryRows)=>{
