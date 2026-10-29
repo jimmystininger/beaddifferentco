@@ -4528,6 +4528,103 @@ document.addEventListener('submit',(event)=>{if(event.target?.id==='settings-for
 // Replace the legacy client-side catalog renderer with the server-paginated
 // version. This assignment runs after all helpers are declared and before an
 // admin tab can invoke the route renderer.
+const duplicateAdminProductPage=async(sourceId)=>{
+  const db=cloudAdmin();
+  const sourceResult=await db.from('products').select('*').eq('id',sourceId).single();
+  if(sourceResult.error)throw sourceResult.error;
+  const source=sourceResult.data;
+  const baseTitle=String(source.name&&source.name!=='1'?source.name:source.external_id||source.sku||'Untitled product').trim();
+  let copyTitle=baseTitle+' (2)';
+  for(let suffix=3;;suffix++){
+    const titleCheck=await db.from('products').select('id').eq('name',copyTitle).limit(1).maybeSingle();
+    if(titleCheck.error)throw titleCheck.error;
+    if(!titleCheck.data)break;
+    copyTitle=baseTitle+' ('+suffix+')';
+  }
+  const sourceOptionsResult=await db.from('product_options').select('*').eq('product_id',sourceId).order('sort_order');
+  if(sourceOptionsResult.error)throw sourceOptionsResult.error;
+  const sourceOptions=sourceOptionsResult.data||[];
+  const optionIds=sourceOptions.map((option)=>option.id).filter(Boolean);
+  const [images,categories,assignments,values]=await Promise.all([
+    db.from('product_images').select('*').eq('product_id',sourceId).order('sort_order'),
+    db.from('product_categories').select('*').eq('product_id',sourceId).order('sort_order'),
+    db.from('product_filter_assignments').select('*').eq('product_id',sourceId),
+    optionIds.length?adminBatchRows(optionIds,(batch)=>db.from('product_option_values').select('*').in('option_id',batch)):Promise.resolve({data:[],error:null})
+  ]);
+  for(const result of [images,categories,assignments,values])if(result.error)throw result.error;
+  const now=new Date().toISOString();
+  const copy={...source};
+  delete copy.id;
+  copy.external_id='product-'+(window.crypto?.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2));
+  copy.name=copyTitle;
+  copy.seo_title=copyTitle;
+  copy.search_text=adminProductSearch({...source,name:copyTitle,seo_title:copyTitle});
+  copy.visible=false;
+  copy.featured=false;
+  copy.etsy_listing_id=null;
+  copy.sku_editor_locked=false;
+  copy.added_at=now;
+  copy.created_at=now;
+  copy.updated_at=now;
+  const created=await db.from('products').insert(copy).select('id').single();
+  if(created.error)throw created.error;
+  const copyId=created.data.id;
+  let newOptionIds=[];
+  const copiedInventoryIds=[];
+  try{
+    const imageRows=(images.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.id;delete row.created_at;return row;});
+    if(imageRows.length){const result=await db.from('product_images').insert(imageRows);if(result.error)throw result.error;}
+    const categoryRows=(categories.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.created_at;return row;});
+    if(categoryRows.length){const result=await db.from('product_categories').insert(categoryRows);if(result.error)throw result.error;}
+    const optionRows=sourceOptions.map((entry)=>{const row={...entry,product_id:copyId};delete row.id;return row;});
+    let insertedOptions=[];
+    if(optionRows.length){
+      const result=await db.from('product_options').insert(optionRows).select('id,name,sort_order');
+      if(result.error)throw result.error;
+      insertedOptions=result.data||[];
+      newOptionIds=insertedOptions.map((entry)=>entry.id);
+    }
+    const optionMap=new Map();
+    sourceOptions.forEach((entry)=>{const matching=insertedOptions.find((item)=>item.name===entry.name&&Number(item.sort_order)===Number(entry.sort_order));if(matching)optionMap.set(entry.id,matching.id);});
+    const valueRows=(values.data||[]).flatMap((entry)=>{const optionId=optionMap.get(entry.option_id);if(!optionId)return[];const row={...entry,option_id:optionId};delete row.id;return[row];});
+    if(valueRows.length){const result=await db.from('product_option_values').insert(valueRows);if(result.error)throw result.error;}
+    const assignmentRows=(assignments.data||[]).map((entry)=>{const row={...entry,product_id:copyId};delete row.id;delete row.created_at;delete row.updated_at;return row;});
+    if(assignmentRows.length){const result=await db.from('product_filter_assignments').insert(assignmentRows);if(result.error)throw result.error;}
+    const inventoryIds=[...new Set((values.data||[]).map((entry)=>entry.inventory_sku_id).filter(Boolean))];
+    if(inventoryIds.length){
+      const inventory=await adminBatchRows(inventoryIds,(batch)=>db.from('inventory_skus').select('id,source_metadata').in('id',batch));
+      if(inventory.error)throw inventory.error;
+      for(const entry of inventory.data||[]){
+        const metadata=entry.source_metadata&&typeof entry.source_metadata==='object'?entry.source_metadata:{};
+        const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?metadata.product_pages:{};
+        const page=pages[sourceId];
+        if(!page||typeof page!=='object')continue;
+        const result=await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:{...pages,[copyId]:{...page}}},updated_at:now}).eq('id',entry.id);
+        if(result.error)throw result.error;
+        copiedInventoryIds.push(entry.id);
+      }
+    }
+    return copyId;
+  }catch(error){
+    await db.from('product_filter_assignments').delete().eq('product_id',copyId);
+    await db.from('product_categories').delete().eq('product_id',copyId);
+    await db.from('product_images').delete().eq('product_id',copyId);
+    if(newOptionIds.length){
+      await db.from('product_option_values').delete().in('option_id',newOptionIds);
+      await db.from('product_options').delete().in('id',newOptionIds);
+    }
+    for(const inventoryId of copiedInventoryIds){
+      const result=await db.from('inventory_skus').select('source_metadata').eq('id',inventoryId).maybeSingle();
+      if(result.error||!result.data)continue;
+      const metadata=result.data.source_metadata&&typeof result.data.source_metadata==='object'?result.data.source_metadata:{};
+      const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?{...metadata.product_pages}:{};
+      delete pages[copyId];
+      await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:pages},updated_at:new Date().toISOString()}).eq('id',inventoryId);
+    }
+    await db.from('products').delete().eq('id',copyId);
+    throw error;
+  }
+};
 renderItems=async()=>{
   if(!cloudAdmin()){renderCloudError(new Error('Supabase is not connected.'));return;}
   try{
@@ -4557,113 +4654,6 @@ renderItems=async()=>{
       categorySelect.innerHTML='<option value="all">All categories</option>'+categories.map((category)=>'<option value="'+adminSafe(category)+'">'+adminSafe(category)+'</option>').join('');
       categorySelect.value=selected;
     }).catch((error)=>console.warn('Unable to load product categories',error));
-    const duplicateProductPage=async(sourceId)=>{
-      const db=cloudAdmin();
-      const sourceResult=await db.from('products').select('*').eq('id',sourceId).single();
-      if(sourceResult.error)throw sourceResult.error;
-      const source=sourceResult.data;
-      const baseTitle=String(productTitle(source)||'Product').trim();
-      let copyTitle=baseTitle+' (2)';
-      for(let suffix=3;;suffix++){
-        const titleCheck=await db.from('products').select('id').eq('name',copyTitle).limit(1).maybeSingle();
-        if(titleCheck.error)throw titleCheck.error;
-        if(!titleCheck.data)break;
-        copyTitle=baseTitle+' ('+suffix+')';
-      }
-      const sourceOptionsResult=await db.from('product_options').select('*').eq('product_id',sourceId).order('sort_order');
-      if(sourceOptionsResult.error)throw sourceOptionsResult.error;
-      const sourceOptions=sourceOptionsResult.data||[];
-      const sourceOptionIds=sourceOptions.map((option)=>option.id).filter(Boolean);
-      const [sourceImagesResult,sourceCategoriesResult,sourceAssignmentsResult,sourceValuesResult]=await Promise.all([
-        db.from('product_images').select('*').eq('product_id',sourceId).order('sort_order'),
-        db.from('product_categories').select('*').eq('product_id',sourceId).order('sort_order'),
-        db.from('product_filter_assignments').select('*').eq('product_id',sourceId),
-        sourceOptionIds.length?adminBatchRows(sourceOptionIds,(batch)=>db.from('product_option_values').select('*').in('option_id',batch)):Promise.resolve({data:[],error:null})
-      ]);
-      for(const result of [sourceImagesResult,sourceCategoriesResult,sourceAssignmentsResult,sourceValuesResult])if(result.error)throw result.error;
-      const sourceValues=sourceValuesResult.data||[];
-      const now=new Date().toISOString();
-      const copyProduct={...source};
-      delete copyProduct.id;
-      copyProduct.external_id='product-'+(window.crypto?.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2));
-      copyProduct.name=copyTitle;
-      copyProduct.seo_title=copyTitle;
-      copyProduct.search_text=adminProductSearch({...source,name:copyTitle,seo_title:copyTitle});
-      copyProduct.visible=false;
-      copyProduct.featured=false;
-      copyProduct.etsy_listing_id=null;
-      copyProduct.sku_editor_locked=false;
-      copyProduct.added_at=now;
-      copyProduct.created_at=now;
-      copyProduct.updated_at=now;
-      const created=await db.from('products').insert(copyProduct).select('id').single();
-      if(created.error)throw created.error;
-      const copyId=created.data.id;
-      let copyOptionIds=[];
-      let copiedInventoryIds=[];
-      try{
-        const media=(sourceImagesResult.data||[]).map((image)=>{const next={...image,product_id:copyId};delete next.id;delete next.created_at;return next;});
-        if(media.length){const result=await db.from('product_images').insert(media);if(result.error)throw result.error;}
-        const categories=(sourceCategoriesResult.data||[]).map((category)=>{const next={...category,product_id:copyId};delete next.created_at;return next;});
-        if(categories.length){const result=await db.from('product_categories').insert(categories);if(result.error)throw result.error;}
-        const optionRows=sourceOptions.map((option)=>{const next={...option,product_id:copyId};delete next.id;return next;});
-        let createdOptions=[];
-        if(optionRows.length){
-          const result=await db.from('product_options').insert(optionRows).select('id,name,sort_order');
-          if(result.error)throw result.error;
-          createdOptions=result.data||[];
-          copyOptionIds=createdOptions.map((option)=>option.id);
-        }
-        const optionIdMap=new Map();
-        for(const option of sourceOptions){
-          const match=createdOptions.find((entry)=>entry.name===option.name&&Number(entry.sort_order)===Number(option.sort_order));
-          if(match)optionIdMap.set(option.id,match.id);
-        }
-        const values=sourceValues.flatMap((value)=>{
-          const optionId=optionIdMap.get(value.option_id);
-          if(!optionId)return[];
-          const next={...value,option_id:optionId};
-          delete next.id;
-          return[next];
-        });
-        if(values.length){const result=await db.from('product_option_values').insert(values);if(result.error)throw result.error;}
-        const assignments=(sourceAssignmentsResult.data||[]).map((assignment)=>{const next={...assignment,product_id:copyId};delete next.id;delete next.created_at;delete next.updated_at;return next;});
-        if(assignments.length){const result=await db.from('product_filter_assignments').insert(assignments);if(result.error)throw result.error;}
-        const inventoryIds=[...new Set(sourceValues.map((value)=>value.inventory_sku_id).filter(Boolean))];
-        if(inventoryIds.length){
-          const inventoryResult=await adminBatchRows(inventoryIds,(batch)=>db.from('inventory_skus').select('id,source_metadata').in('id',batch));
-          if(inventoryResult.error)throw inventoryResult.error;
-          for(const inventory of inventoryResult.data||[]){
-            const metadata=inventory.source_metadata&&typeof inventory.source_metadata==='object'?inventory.source_metadata:{};
-            const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?metadata.product_pages:{};
-            const sourcePage=pages[sourceId];
-            if(!sourcePage||typeof sourcePage!=='object')continue;
-            const update=await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:{...pages,[copyId]:{...sourcePage}}},updated_at:now}).eq('id',inventory.id);
-            if(update.error)throw update.error;
-            copiedInventoryIds.push(inventory.id);
-          }
-        }
-        return copyId;
-      }catch(error){
-        await db.from('product_filter_assignments').delete().eq('product_id',copyId);
-        await db.from('product_categories').delete().eq('product_id',copyId);
-        await db.from('product_images').delete().eq('product_id',copyId);
-        if(copyOptionIds.length){
-          await db.from('product_option_values').delete().in('option_id',copyOptionIds);
-          await db.from('product_options').delete().in('id',copyOptionIds);
-        }
-        for(const inventoryId of copiedInventoryIds){
-          const inventory=await db.from('inventory_skus').select('source_metadata').eq('id',inventoryId).maybeSingle();
-          if(inventory.error||!inventory.data)continue;
-          const metadata=inventory.data.source_metadata&&typeof inventory.data.source_metadata==='object'?inventory.data.source_metadata:{};
-          const pages=metadata.product_pages&&typeof metadata.product_pages==='object'?{...metadata.product_pages}:{};
-          delete pages[copyId];
-          await db.from('inventory_skus').update({source_metadata:{...metadata,product_pages:pages},updated_at:new Date().toISOString()}).eq('id',inventoryId);
-        }
-        await db.from('products').delete().eq('id',copyId);
-        throw error;
-      }
-    };
     const bindRows=()=>{
       panel.querySelectorAll('[data-toggle-visible]').forEach((button)=>button.addEventListener('click',async()=>{
         const product=products.find((entry)=>entry.id===button.dataset.toggleVisible);
@@ -4679,7 +4669,7 @@ renderItems=async()=>{
         button.disabled=true;
         button.textContent='Copying…';
         try{
-          const copyId=await duplicateProductPage(sourceId);
+          const copyId=await duplicateAdminProductPage(sourceId);
           window.location.href='admin.html?edit='+encodeURIComponent(copyId);
         }catch(error){
           console.error('Unable to duplicate product page',error);
@@ -4687,105 +4677,6 @@ renderItems=async()=>{
           button.textContent='Duplicate';
           renderCloudError(new Error('Product page was not copied: '+(error.message||'Unknown error.')));
         }
-      }));
-    };
-    const draw=async()=>{
-      const thisRequest=++requestId;
-      const search=panel.querySelector('#cloud-item-search').value.trim();
-      const filter=panel.querySelector('#cloud-item-filter').value;
-      const category=panel.querySelector('#cloud-item-category').value;
-      const sort=panel.querySelector('#cloud-item-sort').value;
-      panel.querySelector('#cloud-items-lists').innerHTML='<div class="admin-empty admin-loading" role="status">Loading products…</div>';
-      const result=await cloudAdmin().rpc('admin_product_catalog_page',{p_search:search||null,p_filter:filter,p_category:category,p_visible:activeTab==='live',p_sort:sort,p_page:currentPage,p_page_size:pageSize});
-      if(thisRequest!==requestId)return;
-      if(result.error){renderCloudError(result.error);return;}
-      products=result.data||[];
-      const total=Number(products[0]?.total_count)||0;
-      const pageCount=Math.max(1,Math.ceil(total/pageSize));
-      if(currentPage>pageCount){currentPage=pageCount;return void draw();}
-      panel.querySelector('#cloud-items-lists').innerHTML=table(activeTab==='live'?'Live products':'Deactivated products',products,total);
-      panel.querySelector('#cloud-items-pagination').innerHTML='<button type="button" data-items-prev '+(currentPage===1?'disabled':'')+'>Previous</button><span>Page '+currentPage+' of '+pageCount+' · '+total+' products</span><button type="button" data-items-next '+(currentPage===pageCount?'disabled':'')+'>Next</button>';
-      panel.querySelectorAll('[data-items-tab]').forEach((button)=>{
-        button.setAttribute('aria-selected',button.dataset.itemsTab===activeTab?'true':'false');
-        button.onclick=()=>{activeTab=button.dataset.itemsTab;currentPage=1;void draw();};
-      });
-      panel.querySelector('[data-items-prev]').onclick=()=>{currentPage=Math.max(1,currentPage-1);void draw();};
-      panel.querySelector('[data-items-next]').onclick=()=>{currentPage=Math.min(pageCount,currentPage+1);void draw();};
-      bindRows();
-    };
-    let searchTimer=null;
-    for(const selector of ['#cloud-item-filter','#cloud-item-category','#cloud-item-sort'])panel.querySelector(selector).addEventListener('change',()=>{currentPage=1;void draw();});
-    panel.querySelector('#cloud-item-search').addEventListener('input',()=>{
-      currentPage=1;
-      clearTimeout(searchTimer);
-      searchTimer=setTimeout(()=>void draw(),250);
-    });
-    await draw();
-  }catch(error){renderCloudError(error);}
-};
-const installFeaturedBackgroundEditor=()=>{const form=document.querySelector('[data-content-form]');const richEditor=form?.querySelector('.featured-rich-editor');if(!form||!richEditor||form.querySelector('[data-featured-background-editor]'))return;const editor=document.createElement('div');editor.className='featured-background-editor';editor.dataset.featuredBackgroundEditor='true';editor.innerHTML='<label>Featured background image<input type="file" accept="image/*" data-featured-background-input><small>Use a 900 × 700 px image. Selecting a new image replaces the current Featured background.</small></label><p data-featured-background-status role="status"></p><img data-featured-background-preview alt="" hidden>';richEditor.after(editor);const input=editor.querySelector('[data-featured-background-input]');const status=editor.querySelector('[data-featured-background-status]');const preview=editor.querySelector('[data-featured-background-preview]');const current=()=>String(window.productStoreConfig?.featuredBackgroundImageUrl||'').trim();const render=(url=current())=>{preview.hidden=!url;preview.src=url||'';};input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;if(!file.type.startsWith('image/')){status.textContent='Choose an image file.';input.value='';return;}input.disabled=true;status.textContent='Uploading Featured background…';try{const url=await uploadAdminMedia(file,'storefront/featured-background',{canonicalKey:'featured-background'});const value=await loadAdminStoreSettings(true);const currentConfig=value.config&&typeof value.config==='object'?value.config:{};const currentAdmin=value.admin&&typeof value.admin==='object'?value.admin:{};const nextValue={...value,config:{...currentConfig,featuredBackgroundImageUrl:url},admin:{...currentAdmin,featuredBackgroundImageUrl:url}};const result=await patchAdminStoreSettings({config:{featuredBackgroundImageUrl:url},admin:{featuredBackgroundImageUrl:url}});clearAdminStoreSettingsCache();window.clearStorefrontSiteSettingsCache?.();window.productStoreConfig={...(window.productStoreConfig||{}),featuredBackgroundImageUrl:url};const local=adminData();saveAdminData({...local,settings:{...(local.settings||{}),featuredBackgroundImageUrl:url}});render(url);status.textContent='Featured background replaced and saved.';}catch(error){status.textContent='Featured background was not saved: '+(error.message||'Unknown error.');}finally{input.disabled=false;}});render();};const featuredBackgroundObserver=new MutationObserver(()=>installFeaturedBackgroundEditor());featuredBackgroundObserver.observe(document.body,{childList:true,subtree:true});installFeaturedBackgroundEditor();
-const normalizeAdminRichMarkup=()=>{document.querySelectorAll('[data-rich-editor]').forEach((editor)=>{const input=editor.closest('.admin-rich-editor')?.querySelector('[data-rich-value]');const text=editor.textContent||'';if(!/(<(?:h[1-6]|p|strong|em|u|ul|ol|li|blockquote)\b|<\/(?:h[1-6]|p|strong|em|u|ul|ol|li|blockquote)>)/i.test(text)||/<(?:h[1-6]|p|strong|em|u|ul|ol|li|blockquote)\b/i.test(editor.innerHTML))return;const safe=window.sanitizeRichText?window.sanitizeRichText(text):text;editor.innerHTML=safe;if(input)input.value=safe;});};const richMarkupObserver=new MutationObserver(()=>normalizeAdminRichMarkup());richMarkupObserver.observe(document.body,{childList:true,subtree:true});normalizeAdminRichMarkup();
-const featuredBackgroundUploadInProgress=false;
-const hydrateFeaturedBackgroundPreview=()=>{const editor=document.querySelector('[data-featured-background-editor]');if(!editor||editor.dataset.featuredBackgroundHydrated)return;editor.dataset.featuredBackgroundHydrated='true';window.setTimeout(async()=>{try{const value=await loadAdminStoreSettings();const config=value?.config&&typeof value.config==='object'?value.config:{};const admin=value?.admin&&typeof value.admin==='object'?value.admin:{};const url=String(config.featuredBackgroundImageUrl||admin.featuredBackgroundImageUrl||'').trim();const preview=editor.querySelector('[data-featured-background-preview]');const status=editor.querySelector('[data-featured-background-status]');if(url){window.productStoreConfig={...(window.productStoreConfig||{}),featuredBackgroundImageUrl:url};if(preview){preview.hidden=false;preview.src=url;}if(status)status.textContent='Current Featured background is loaded.';}}catch(error){console.warn('Featured background preview unavailable.',error);}},0);};const featuredBackgroundPreviewObserver=new MutationObserver(()=>hydrateFeaturedBackgroundPreview());if(document.body){featuredBackgroundPreviewObserver.observe(document.body,{childList:true,subtree:true});hydrateFeaturedBackgroundPreview();}else document.addEventListener('DOMContentLoaded',()=>{featuredBackgroundPreviewObserver.observe(document.body,{childList:true,subtree:true});hydrateFeaturedBackgroundPreview();});
-const mergeStorefrontContentCache=(source={})=>{try{const key=window.storefrontSiteSettingsCacheKey;if(!key)return;const record=JSON.parse(sessionStorage.getItem(key)||'null');if(!record?.data||typeof record.data!=='object')return;sessionStorage.setItem(key,JSON.stringify({...record,data:{...record.data,...source}}));}catch(error){}};window.mergeStorefrontContentCache=mergeStorefrontContentCache;window.__storeContentSaveInProgress=false;document.addEventListener('submit',(event)=>{if(event.target?.matches?.('[data-content-form]')){window.__storeContentSaveInProgress=true;window.setTimeout(()=>{window.__storeContentSaveInProgress=false;},15000);}},true);const installStoreContentCacheBridge=()=>{const current=window.applyStoreContent;if(typeof current!=='function'||current.__storeContentCacheBridge)return;const bridged=(source)=>{current(source);mergeStorefrontContentCache(source);};bridged.__storeContentCacheBridge=true;window.applyStoreContent=bridged;};window.setTimeout(installStoreContentCacheBridge,0);const currentStorefrontSettingsCacheClear=window.clearStorefrontSiteSettingsCache;
-let storeContentCacheBridgeAttempts=0;const storeContentCacheBridgeTimer=window.setInterval(()=>{installStoreContentCacheBridge();storeContentCacheBridgeAttempts+=1;if(window.applyStoreContent?.__storeContentCacheBridge||storeContentCacheBridgeAttempts>=20)window.clearInterval(storeContentCacheBridgeTimer);},250);
-document.addEventListener('click',async(event)=>{const button=event.target.closest('[data-order-refund-full],[data-order-refund-partial]');if(!button||!window.beadSupabase)return;event.preventDefault();event.stopImmediatePropagation();const orderId=button.dataset.orderRefundFull||button.dataset.orderRefundPartial;const full=Boolean(button.dataset.orderRefundFull);const card=button.closest('.admin-order-card');const input=card?.querySelector(`[data-order-refund-amount="${CSS.escape(orderId)}"]`);const amount=full?null:Number(input?.value||0);if(!full&&!(amount>0)){alert('Enter a partial refund amount first.');return;}if(full&&!confirm('Refund the remaining balance for this order?'))return;const reason=prompt('Refund reason:');if(reason===null)return;button.disabled=true;const requestId=button.dataset.refundRequestId||(button.dataset.refundRequestId=crypto.randomUUID());const status=card?.querySelector(`[data-order-action-status="${CSS.escape(orderId)}"]`);if(status)status.textContent='Submitting refund to Stripe…';try{const result=await window.beadSupabase.functions.invoke('stripe-payments',{body:{action:'refund_order',order_id:orderId,amount,full,reason,request_id:requestId}});if(result.error){let detail=null;try{detail=await result.error.context?.json();}catch(error){}throw new Error(detail?.error||result.error.message||'Refund failed.');}delete button.dataset.refundRequestId;if(status)status.textContent=result.data?.status==='pending'?`Refund submitted to Stripe: $${Number(result.data?.refund_amount||amount||0).toFixed(2)}. Inventory remains unchanged until confirmation.`:`Refund recorded: $${Number(result.data?.refund_amount||amount||0).toFixed(2)}.`;window.dispatchEvent(new CustomEvent('admin-order-changed',{detail:{orderId}}));setTimeout(()=>document.querySelector('[data-admin-tab="orders"]')?.click(),500);}catch(error){if(status)status.textContent='Refund failed: '+(error.message||'Unknown error.');button.disabled=false;}},true);
-(()=>{
-  const fallback='category.html?category=new-arrivals';
-  const injectHeroLinkEditor=()=>{
-    const form=[...document.querySelectorAll('form')].find((candidate)=>candidate.querySelector('[name="storyTitle"],[name="faqItems"],[name="contactEmail"]')&&!candidate.dataset.heroLinkEditor);
-    if(!form)return;
-    form.dataset.heroLinkEditor='true';
-    const current=String(window.siteContent?.heroLink||window.productStoreConfig?.heroLink||fallback).trim()||fallback;
-    const section=document.createElement('section');
-    section.className='admin-card admin-content-hero-link';
-    section.style.cssText='display:grid;gap:12px;margin-bottom:24px;padding:20px;border:1px solid #e4d8df;border-radius:14px;background:#fff9fb;max-width:720px;';
-    section.innerHTML=`<h3>Homepage hero button</h3><p>Keep the current hero image and set the canonical destination for its button.</p><label>Hero button link <input name="heroLink" type="text" inputmode="url" value="${current.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" placeholder="category.html?category=new-arrivals, sale.html, or https://example.com"></label><small>Saving this replaces the previous hero button link for future clicks.</small><button type="button" class="admin-button" data-save-hero-link>Save hero destination</button><p data-hero-link-status role="status"></p>`;
-    form.insertBefore(section,form.firstElementChild);
-    section.querySelector('label').style.cssText='display:grid;gap:6px;font-weight:600;';
-    section.querySelector('input').style.cssText='width:100%;box-sizing:border-box;padding:12px;border:1px solid #aaa;border-radius:8px;font:inherit;';
-    const input=section.querySelector('[name="heroLink"]');
-    const button=section.querySelector('[data-save-hero-link]');
-    const status=section.querySelector('[data-hero-link-status]');
-    button.addEventListener('click',async()=>{
-      const value=String(input.value||'').trim()||fallback;
-      button.disabled=true;
-      status.textContent='Saving…';
-      try{
-        let result;
-        if(typeof window.patchAdminStoreSettings==='function')result=await window.patchAdminStoreSettings({config:{heroLink:value},admin:{heroLink:value}});
-        else if(window.beadSupabase)result=await window.beadSupabase.rpc('admin_patch_store_settings',{p_patch:{config:{heroLink:value},admin:{heroLink:value}}});
-        if(result?.error)throw result.error;
-        window.siteContent={...(window.siteContent||{}),heroLink:value};
-        window.productStoreConfig={...(window.productStoreConfig||{}),heroLink:value};
-        window.clearStorefrontSiteSettingsCache?.();
-        status.textContent='Hero destination saved.';
-      }catch(error){status.textContent=error?.message||'Unable to save hero destination.';}
-      finally{button.disabled=false;}
-    });
-  };
-  const start=()=>{injectHeroLinkEditor();new MutationObserver(injectHeroLinkEditor).observe(document.body,{childList:true,subtree:true});};
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
-})();
-+Number(product.price||0).toFixed(2)+'</td><td>'+ (Number(product.quantity)||0)+'</td><td><button data-toggle-visible="'+product.id+'">'+(product.visible?'ON':'OFF')+'</button></td><td><a href="admin.html?edit='+encodeURIComponent(product.id)+'">Edit</a><br><button type="button" data-duplicate-product="'+adminSafe(product.id)+'">Duplicate</button></td></tr>';
-    const table=(title,items,total)=>'<section class="admin-card"><h3>'+title+' <span>('+total+')</span></h3><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Lead image</th><th>Product title</th><th>SKU</th><th>Price</th><th>Stock</th><th>Storefront</th><th></th></tr></thead><tbody>'+(items.map(row).join('')||'<tr><td colspan="7">No matching products.</td></tr>')+'</tbody></table></div></section>';
-    panel.innerHTML='<div class="admin-heading"><div><p class="kicker">PRODUCT CATALOG</p><h2>Products/SKUs</h2><p>Every product is listed here, whether it is live or deactivated.</p></div><a class="cta" href="admin.html?new=item">Add a product page</a></div><div class="admin-form-grid"><label>Search products<input id="cloud-item-search" type="search" placeholder="Name, SKU, category, or description"></label><label>Filter<select id="cloud-item-filter"><option value="all">All products</option><option value="promo">Active promos</option><option value="clearance">Clearance</option><option value="in-stock">In stock</option><option value="low-stock">Low stock</option><option value="out-of-stock">Out of stock</option></select></label><label>Category<select id="cloud-item-category"><option value="all">All categories</option></select></label><label>Sort by<select id="cloud-item-sort"><option value="name">Name</option><option value="category">Category</option><option value="sku">SKU</option><option value="price">Price</option><option value="quantity">Stock</option><option value="updated">Recently added</option></select></label></div><div class="admin-tabs"><button type="button" data-items-tab="live" aria-selected="true">Live products</button><button type="button" data-items-tab="deactivated" aria-selected="false">Deactivated products</button></div><div id="cloud-items-lists"></div><div id="cloud-items-pagination" class="admin-pagination"></div>';
-    void cloudCategoryRows().then((categoryRows)=>{
-      const categorySelect=panel.querySelector('#cloud-item-category');
-      if(!categorySelect)return;
-      const selected=categorySelect.value;
-      const categories=[...new Set(['uncategorized',...(categoryRows||[]).map((category)=>String(category.slug||'').trim()).filter(Boolean)])].sort();
-      categorySelect.innerHTML='<option value="all">All categories</option>'+categories.map((category)=>'<option value="'+adminSafe(category)+'">'+adminSafe(category)+'</option>').join('');
-      categorySelect.value=selected;
-    }).catch((error)=>console.warn('Unable to load product categories',error));
-    const bindRows=()=>{
-      panel.querySelectorAll('[data-toggle-visible]').forEach((button)=>button.addEventListener('click',async()=>{
-        const product=products.find((entry)=>entry.id===button.dataset.toggleVisible);
-        if(!product)return;
-        button.disabled=true;
-        const result=await cloudAdmin().from('products').update({visible:!product.visible}).eq('id',product.id);
-        if(result.error)return renderCloudError(result.error);
-        void renderItems();
       }));
     };
     const draw=async()=>{
