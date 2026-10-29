@@ -1129,25 +1129,25 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-sku-row .admin-sku-internal label.admin-toggle input[type="checkbox"][data-variant-taxable]{width:18px;height:18px;min-width:18px;margin:0;padding:0;flex:0 0 18px}
 
 /* Keep the product catalog inside its card and reserve a predictable action column. */
-body[data-page="Admin"] .admin-product-catalog-table{width:100%;max-width:100%;table-layout:fixed}
-body[data-page="Admin"] .admin-product-catalog-table th,
-body[data-page="Admin"] .admin-product-catalog-table td{box-sizing:border-box;overflow-wrap:anywhere}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(1),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(1){width:8%}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(2),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(2){width:18%}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(3),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(3){width:36%;word-break:break-word}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(4),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(4){width:8%}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(5),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(5){width:8%}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(6),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(6){width:10%}
-body[data-page="Admin"] .admin-product-catalog-table th:nth-child(7),
-body[data-page="Admin"] .admin-product-catalog-table td:nth-child(7){width:12%}
-body[data-page="Admin"] .admin-product-lead{max-width:100%;height:auto;aspect-ratio:1}
-body[data-page="Admin"] .admin-product-row-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
-body[data-page="Admin"] .admin-product-row-actions a,
-body[data-page="Admin"] .admin-product-row-actions button{box-sizing:border-box;display:block;width:100%;min-width:0;margin:0;padding:6px 8px;border:1px solid #aaa;border-radius:8px;background:#fff;color:inherit;font:inherit;font-size:13px;line-height:1.2;text-align:center;text-decoration:none;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
-@media(max-width:800px){body[data-page="Admin"] .admin-product-catalog-table{min-width:920px}}
+#cloud-items-lists .admin-product-catalog-table{width:100%;max-width:100%;table-layout:fixed}
+#cloud-items-lists .admin-product-catalog-table th,
+#cloud-items-lists .admin-product-catalog-table td{box-sizing:border-box;overflow-wrap:anywhere;white-space:normal}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(1),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(1){width:8%}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(2),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(2){width:18%}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(3),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(3){width:36%;word-break:break-word}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(4),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(4){width:8%}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(5),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(5){width:8%}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(6),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(6){width:10%}
+#cloud-items-lists .admin-product-catalog-table th:nth-child(7),
+#cloud-items-lists .admin-product-catalog-table td:nth-child(7){width:12%}
+#cloud-items-lists .admin-product-lead{max-width:100%;height:auto;aspect-ratio:1}
+#cloud-items-lists .admin-product-catalog-table .admin-product-row-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
+#cloud-items-lists .admin-product-catalog-table .admin-product-row-actions a,
+#cloud-items-lists .admin-product-catalog-table .admin-product-row-actions button{box-sizing:border-box;display:block;width:100%;min-width:0;margin:0;padding:6px 8px;border:1px solid #aaa;border-radius:8px;background:#fff;color:inherit;font:inherit;font-size:13px;line-height:1.2;text-align:center;text-decoration:none;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
+@media(max-width:900px){#cloud-items-lists .admin-product-catalog-table{min-width:920px;table-layout:auto}}
