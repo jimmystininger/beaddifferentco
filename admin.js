@@ -2355,6 +2355,8 @@ const setupAdminExistingSkuLookup=(form)=>{
     const hideSuggestions=()=>{suggestions.hidden=true;suggestions.replaceChildren();};
     const setValue=(selector,value)=>{const field=row.querySelector(selector);if(field&&value!==null&&value!==undefined)field.value=value;};
     const applyRecord=(record,productName='')=>{
+      clearTimeout(searchTimer);
+      requestId+=1;
       setValue('[data-variant-sku]',record.sku);
       setValue('[data-variant-inventory-sku]',record.sku);
       setValue('[data-variant-label]',productName||record.name||'');
