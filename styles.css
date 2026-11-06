@@ -1162,4 +1162,4 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 @media(max-width:700px){.admin-sku-row .admin-sku-internal>.admin-form-grid{grid-template-columns:minmax(0,1fr);gap:10px}}
 
 /* Theme-controlled badge text stays independent from header text. */
-body[data-theme-ready]:not([data-page="Admin"]) .product-badge{color:var(--site-badge-text-color,#111111)!important}
+:root .product-badge{color:var(--site-badge-text-color,#111111)!important}
