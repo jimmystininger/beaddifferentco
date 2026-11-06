@@ -548,7 +548,7 @@ body[data-page="Admin"] .admin-sku-filter-editor{grid-column:2 / span 8;grid-row
 .product-page-media>.product-page-badges .product-badge{position:static!important;inset:auto!important;transform:none!important;display:inline-flex;flex:0 1 auto;align-items:center;max-width:100%;min-width:0;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;line-height:1.2}
 .product-card-image-wrap .product-card-image{display:block;width:100%;height:auto;aspect-ratio:1/1;object-fit:contain}
 .product-page-stock-status-in-stock{display:none!important}
-.product-badge:not(.product-badge-on-sale):not(.product-badge-clearance):not(.product-badge-low-stock):not(.product-badge-out-of-stock):not(.badge-on-sale):not(.badge-clearance):not(.badge-low-stock):not(.badge-out-of-stock){background:var(--site-banner-color,#e482a4)!important;color:var(--site-header-text-color,#111)!important}
+.product-badge:not(.product-badge-on-sale):not(.product-badge-clearance):not(.product-badge-low-stock):not(.product-badge-out-of-stock):not(.badge-on-sale):not(.badge-clearance):not(.badge-low-stock):not(.badge-out-of-stock){background:var(--site-banner-color,#e482a4)!important;color:var(--site-badge-text-color,#111111)!important}
 .admin-badge-option:not(.admin-badge-option-on-sale):not(.admin-badge-option-clearance):not(.admin-badge-option-low-stock):not(.admin-badge-option-out-of-stock) .product-badge{background:var(--site-banner-color,#e482a4)!important;color:var(--site-header-text-color,#111)!important}
 .category-filter{display:inline-flex;align-items:center;gap:7px}
 .admin-category-filter-add{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:stretch}
@@ -1160,6 +1160,3 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle{display:flex;align-items:center;gap:8px;min-height:40px;white-space:nowrap}
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle input{width:18px;min-width:18px;margin:0;flex:0 0 18px}
 @media(max-width:700px){.admin-sku-row .admin-sku-internal>.admin-form-grid{grid-template-columns:minmax(0,1fr);gap:10px}}
-
-/* Theme-controlled badge text stays independent from header text. */
-:root .product-badge{color:var(--site-badge-text-color,#111111)!important}
