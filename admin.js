@@ -1428,13 +1428,11 @@ async function openInventorySkuEditor(inventorySkuId,onSaved=()=>{}){
   if(!window.beadSupabase){alert('Editing inventory SKUs requires the connected store database.');return;}
   const dialog=document.createElement('dialog');
   dialog.className='admin-inventory-sku-dialog';
-  dialog.innerHTML='<form class="admin-inventory-sku-editor"><button type="button" class="admin-dialog-close" data-close-sku-editor aria-label="Close">×</button><p class="kicker">CANONICAL INVENTORY</p><h2>Edit inventory SKU</h2><p class="admin-inventory-sku-identity">Loading SKU…</p><p class="admin-inventory-sku-note" data-sku-editor-note></p><div class="admin-inventory-sku-fields" data-sku-editor-fields></div><p class="admin-inventory-sku-status" data-sku-editor-status role="status">Loading SKU details…</p><div class="admin-actions"><button type="button" data-cancel-sku-editor>Cancel</button><button type="submit" class="cta" data-save-sku-editor disabled>Save SKU</button></div></form>';
+  dialog.innerHTML='<form class="admin-inventory-sku-editor"><button type="button" class="admin-dialog-close" data-close-sku-editor aria-label="Close">×</button><p class="kicker">CANONICAL INVENTORY</p><h2>Edit inventory SKU</h2><p class="admin-inventory-sku-identity">Loading SKU…</p><p class="admin-inventory-sku-note" data-sku-editor-note></p><div class="admin-inventory-sku-fields" data-sku-editor-fields></div><p class="admin-inventory-sku-status" data-sku-editor-status role="status">Loading SKU details…</p><div class="admin-actions"><button type="submit" class="cta" data-save-sku-editor disabled>Save SKU</button></div></form>';
   document.body.append(dialog);
   const close=()=>{if(dialog.open)dialog.close();dialog.remove();};
   dialog.querySelector('[data-close-sku-editor]').onclick=close;
-  dialog.querySelector('[data-cancel-sku-editor]').onclick=close;
-  dialog.addEventListener('cancel',(event)=>{event.preventDefault();close();});
-  dialog.addEventListener('click',(event)=>{if(event.target===dialog)close();});
+  dialog.addEventListener('cancel',(event)=>event.preventDefault());
   dialog.showModal();
   const status=dialog.querySelector('[data-sku-editor-status]');
   const saveButton=dialog.querySelector('[data-save-sku-editor]');
