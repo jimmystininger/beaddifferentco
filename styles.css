@@ -1160,4 +1160,3 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle{display:flex;align-items:center;gap:8px;min-height:40px;white-space:nowrap}
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle input{width:18px;min-width:18px;margin:0;flex:0 0 18px}
 @media(max-width:700px){.admin-sku-row .admin-sku-internal>.admin-form-grid{grid-template-columns:minmax(0,1fr);gap:10px}}
-
