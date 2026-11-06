@@ -323,7 +323,7 @@ body[data-page="Admin"] .admin-theme-category-row button{grid-column:3;grid-row:
 body[data-page="Admin"] .admin-theme-preview{display:grid;grid-template-columns:1fr max-content max-content max-content;gap:14px;align-items:center;padding:18px;border:1px solid #ddd;border-radius:12px;background:var(--theme-preview-page-background-color,#fffdfb);color:var(--theme-preview-header-text-color,#111);max-width:720px}
 body[data-page="Admin"] .admin-theme-preview [data-theme-preview-banner]{grid-column:1 / -1;padding:10px 14px;background:var(--theme-preview-banner-color,#e482a4);color:var(--theme-preview-header-text-color,#111);font-weight:700;text-align:center}
 body[data-page="Admin"] .admin-theme-preview [data-theme-preview-button]{padding:10px 16px;border:0;border-radius:22px;background:var(--theme-preview-button-color,#050505);color:var(--theme-preview-button-text-color,#fff);font-weight:700}
-body[data-page="Admin"] .admin-theme-preview [data-theme-preview-badge]{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--theme-preview-cart-badge-color,#e482a4);color:var(--theme-preview-button-text-color,#fff);font-weight:700}
+body[data-page="Admin"] .admin-theme-preview [data-theme-preview-badge]{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--theme-preview-cart-badge-color,#e482a4);color:var(--theme-preview-badge-text-color,#111);font-weight:700}
 body[data-page="Admin"] .admin-theme-preview [data-theme-preview-hero]{grid-column:1 / -1;min-height:100px;border-radius:8px;background:center/cover no-repeat url('hero.webp')}
 @media(max-width:900px){body[data-page="Admin"] .admin-theme-presets{grid-template-columns:repeat(2,minmax(0,1fr))}body[data-page="Admin"] .admin-theme-presets button{width:100%}}
 @media(max-width:600px){body[data-page="Admin"] .admin-theme-presets,body[data-page="Admin"] .admin-theme-colors,body[data-page="Admin"] .admin-theme-preview,body[data-page="Admin"] [data-theme-category-list]{grid-template-columns:1fr}body[data-page="Admin"] .admin-theme-category-row{grid-template-columns:1fr}body[data-page="Admin"] .admin-theme-category-row small,body[data-page="Admin"] .admin-theme-category-row button{grid-column:auto;grid-row:auto}body[data-page="Admin"] .admin-theme-preview [data-theme-preview-banner],body[data-page="Admin"] .admin-theme-preview [data-theme-preview-hero]{grid-column:auto}}
@@ -1160,3 +1160,6 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle{display:flex;align-items:center;gap:8px;min-height:40px;white-space:nowrap}
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle input{width:18px;min-width:18px;margin:0;flex:0 0 18px}
 @media(max-width:700px){.admin-sku-row .admin-sku-internal>.admin-form-grid{grid-template-columns:minmax(0,1fr);gap:10px}}
+
+/* Theme-controlled badge text stays independent from header text. */
+body[data-theme-ready]:not([data-page="Admin"]) .product-badge{color:var(--site-badge-text-color,#111111)!important}
