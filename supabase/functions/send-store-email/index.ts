@@ -393,8 +393,10 @@ async function sendContactResponse(contactId: string, responseBody: string) {
   const settingsResponse = await supabaseRequest("site_settings?key=eq.store&select=value");
   if (!settingsResponse.ok) throw new Error("Unable to load the support reply address from Store settings.");
   const settingsRows = await settingsResponse.json();
-  const replyTo = textValue(settingsRows?.[0]?.value?.admin?.supportEmail, 320).toLowerCase();
-  if (!emailPattern.test(replyTo)) throw new Error("Set a valid Support email in Store settings before replying to contact messages, so customers can reply back to you.");
+  const adminSettings = settingsRows?.[0]?.value?.admin || {};
+  const replyTo = textValue(adminSettings.supportEmail || adminSettings.contactEmail, 320).toLowerCase();
+  if (!emailPattern.test(replyTo)) throw new Error("Add a valid Support email in Admin → Store settings before replying. The reply will then go to that inbox, and the email will include the original customer message.");
+
   const existingResponse = await supabaseRequest(`admin_email_log?contact_id=eq.${encodeURIComponent(message.id)}&email_type=eq.contact_response&select=body&order=created_at.asc&limit=1`);
   const existingRows = await requireJsonArray(existingResponse, "Contact reply log");
   const priorReply = existingRows[0]?.body;
