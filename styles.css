@@ -1164,3 +1164,21 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle{display:flex;align-items:center;gap:8px;min-height:40px;white-space:nowrap}
 .admin-sku-row .admin-sku-internal .admin-form-grid>.admin-toggle input{width:18px;min-width:18px;margin:0;flex:0 0 18px}
 @media(max-width:700px){.admin-sku-row .admin-sku-internal>.admin-form-grid{grid-template-columns:minmax(0,1fr);gap:10px}}
+.expense-vendor-manager .admin-heading{align-items:flex-start}.expense-vendor-manager .admin-heading>button{flex:0 0 auto}.expense-vendor-manager-tools{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:18px 0 10px}.expense-vendor-manager-tools label{display:grid;gap:6px;width:min(100%,420px);font-weight:600}.expense-vendor-manager-tools input{width:100%}.expense-vendor-manager-tools>span{color:#666;padding-bottom:10px}.expense-vendor-add-form{display:flex;align-items:end;gap:14px;flex-wrap:wrap;padding:16px;margin-top:14px;background:#fff;border:1px solid #ddd;border-radius:10px}.expense-vendor-add-form label{display:grid;gap:6px;width:min(100%,420px);font-weight:600}.expense-vendor-pagination{display:flex;align-items:center;justify-content:center;gap:14px;padding:14px}.expense-vendor-pagination button{border:1px solid #aaa;background:#fff;border-radius:20px;padding:7px 13px;cursor:pointer}.expense-vendor-pagination button:disabled{opacity:.45;cursor:default}.expense-vendor-manager .admin-table td{vertical-align:middle}.expense-vendor-manager .admin-table td:first-child{width:min(60%,520px)}.expense-vendor-manager .admin-table input{max-width:100%}@media(max-width:640px){.expense-vendor-manager-tools{align-items:stretch;flex-direction:column}.expense-vendor-manager-tools>span{padding:0}.expense-vendor-add-form{align-items:stretch;flex-direction:column}.expense-vendor-add-form label{width:100%}}
+body[data-page="Admin"] .inventory-saved-order-sheets{display:grid;gap:12px;margin:18px 0;padding:16px;border:1px solid #ded6d9;border-radius:12px;background:#fff}
+body[data-page="Admin"] .inventory-saved-order-sheets h4{margin:0 0 4px;font-size:18px}
+body[data-page="Admin"] .inventory-saved-order-sheets .inventory-help{margin:0;color:#666}
+body[data-page="Admin"] .inventory-saved-order-list{max-height:320px;overflow:auto;border:1px solid #e4dcdf;border-radius:9px}
+body[data-page="Admin"] .inventory-saved-order-list>p{margin:0;padding:14px;color:#666}
+body[data-page="Admin"] .inventory-saved-order-row{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid #eee7e9;cursor:pointer}
+body[data-page="Admin"] .inventory-saved-order-row:last-child{border-bottom:0}
+body[data-page="Admin"] .inventory-saved-order-row:hover{background:#fbf6f0}
+body[data-page="Admin"] .inventory-saved-order-row>input{width:18px;height:18px;margin:0;accent-color:#873f5e}
+body[data-page="Admin"] .inventory-saved-order-row>span{display:grid;gap:2px;min-width:0}
+body[data-page="Admin"] .inventory-saved-order-row strong{font-size:14px}
+body[data-page="Admin"] .inventory-saved-order-row>span>span{font-size:14px}
+body[data-page="Admin"] .inventory-saved-order-row small{overflow-wrap:anywhere;color:#706872;font-size:12px}
+body[data-page="Admin"] .inventory-saved-order-sheets>.admin-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+body[data-page="Admin"] .inventory-saved-order-sheets [data-saved-order-status]{margin:0;color:#666}
+
+.expense-entry-heading{align-items:center}.expense-entry-heading h3{margin:0}.expense-vendor-dialog{width:min(900px,calc(100% - 32px));max-width:900px;max-height:min(88vh,900px);overflow:auto;padding:24px}.expense-vendor-dialog .expense-vendor-manager{margin:0;box-shadow:none}.expense-vendor-dialog .profile-dialog-close{position:sticky;float:right;top:0;z-index:2}
