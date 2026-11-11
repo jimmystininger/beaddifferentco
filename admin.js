@@ -163,6 +163,7 @@ async function renderPromos(){
   const endLabel=(value)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?'':date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});};
   const dateTimeLabel=(value,emptyLabel)=>{const date=new Date(value||'');return Number.isNaN(date.getTime())?emptyLabel:date.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});};
   const dateTimeLocalValue=(value)=>{const date=new Date(value||'');if(Number.isNaN(date.getTime()))return '';const pad=(number)=>String(number).padStart(2,'0');return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;};
+  const localDateTimeToIso=(value)=>{if(!value)return null;const date=new Date(value);if(Number.isNaN(date.getTime()))throw new Error('Enter a valid local start or end time.');return date.toISOString();};
   const draftBody=(promo)=>{const discount=promo.mode==='banner'?(promo.banner_text||'See the offer details on the homepage.'):discountLabel(promo);const end=endLabel(promo.ends_at);const access=promo.mode==='banner'?'See the offer details on the homepage.':promo.mode==='manual'&&promo.code?`Use code ${promo.code} at checkout.`:'Your discount will be applied automatically at checkout.';const extra=promo.details?`\n\nOffer details:\n${promo.details}`:'';const shopUrl=new URL('shop-all.html',window.location.href).href;return `${promo.title||'Special offer'} is now live!\n\n${discount}.${end?` This offer ends ${end}.`:''}${extra}\n\n${access}\n\nShop now: ${shopUrl}`;};
   const createEmailDraft=async(promo)=>{if(!cloud)throw new Error('Email drafts require the connected store database.');const {data:{user}}=await window.beadSupabase.auth.getUser();if(!user?.id)throw new Error('Your admin session has expired. Sign in again.');const result=await cloudAdmin().from('email_campaigns').insert({author_id:user.id,subject:`${promo.title||'Special offer'} — ${discountLabel(promo)}`,body:draftBody(promo),audience:'all_subscribers_optins',status:'draft'});if(result.error)throw result.error;};
   const draw=()=>{
@@ -205,6 +206,8 @@ async function renderPromos(){
       detailsInput.value=selectedPromo.details||'';
       bannerLinkInput.value=selectedPromo.banner_link||'';
     }
+    form.dataset.initialStartsAt=form.elements.starts_at.value;
+    form.dataset.initialEndsAt=form.elements.ends_at.value;
     const syncPromoMode=()=>{const banner=modeSelect.value==='banner';const freeShipping=form.elements.discount_type.value==='free_shipping';const codeLabel=form.elements.code.closest('label');const discountTypeLabel=form.elements.discount_type.closest('label');const valueLabel=form.elements.value.closest('label');if(codeLabel)codeLabel.hidden=banner;if(discountTypeLabel)discountTypeLabel.hidden=banner;if(valueLabel)valueLabel.hidden=banner||freeShipping;form.elements.code.disabled=banner;form.elements.discount_type.disabled=banner;form.elements.value.disabled=banner||freeShipping;form.elements.value.required=!banner&&!freeShipping;if(banner||freeShipping)form.elements.value.value='0';bannerTextLabel.hidden=!banner&&!form.elements.show_homepage_banner.checked;};
     modeSelect.addEventListener('change',syncPromoMode);
     form.elements.show_homepage_banner.addEventListener('change',syncPromoMode);
@@ -226,12 +229,18 @@ async function renderPromos(){
       if(!title||(!bannerOnly&&!freeShipping&&(!Number.isFinite(value)||value<0))){status.textContent=bannerOnly?'Enter a banner title.':'Enter a promotion title and a non-negative value.';return;}
       if(fields.mode==='manual'&&!code){status.textContent='Enter a code for a promotion customers enter at checkout.';return;}
       const existing=editingIndex===null?null:promos[editingIndex];
-      const promo={...(existing||{}),title,code:bannerOnly?null:code||null,discount_type:bannerOnly?'percent':fields.discount_type,value,mode:fields.mode,starts_at:fields.starts_at?new Date(fields.starts_at).toISOString():null,ends_at:fields.ends_at?new Date(fields.ends_at).toISOString():null,show_homepage_banner:fields.show_homepage_banner==='on',banner_text:bannerText,details,banner_link:bannerLink};
+      const startsAtChanged=!existing||fields.starts_at!==form.dataset.initialStartsAt;
+      const endsAtChanged=!existing||fields.ends_at!==form.dataset.initialEndsAt;
+      const promo={...(existing||{}),title,code:bannerOnly?null:code||null,discount_type:bannerOnly?'percent':fields.discount_type,value,mode:fields.mode,starts_at:startsAtChanged?localDateTimeToIso(fields.starts_at):existing?.starts_at??null,ends_at:endsAtChanged?localDateTimeToIso(fields.ends_at):existing?.ends_at??null,show_homepage_banner:fields.show_homepage_banner==='on',banner_text:bannerText,details,banner_link:bannerLink};
       status.textContent='Saving promo…';
       try{
         let campaignError='';
         if(editingIndex!==null&&existing){
           if(cloud){
+            const latest=await cloudAdmin().from('promo_codes').select('starts_at,ends_at').eq('id',existing.id).single();
+            if(latest.error)throw latest.error;
+            if(!startsAtChanged)promo.starts_at=latest.data.starts_at;
+            if(!endsAtChanged)promo.ends_at=latest.data.ends_at;
             const result=await cloudAdmin().from('promo_codes').update({title:promo.title,code:promo.code,discount_type:promo.discount_type,value:promo.value,mode:promo.mode,starts_at:promo.starts_at,ends_at:promo.ends_at,show_homepage_banner:promo.show_homepage_banner,banner_text:promo.banner_text,details:promo.details,banner_link:promo.banner_link}).eq('id',existing.id).select('id,title,code,discount_type,value,mode,active,starts_at,ends_at,show_homepage_banner,banner_text,details,banner_link,created_at').single();
             if(result.error)throw result.error;
             if(fields.create_email_draft==='on'){
