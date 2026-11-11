@@ -84,7 +84,7 @@ const orderTrackingUrl = (carrier: unknown, tracking: unknown) => {
   return "";
 };
 
-async function sendResendEmail(to: string, subject: string, body: string, idempotencyKey: string, html = textToHtml(body)) {
+async function sendResendEmail(to: string, subject: string, body: string, idempotencyKey: string, html = textToHtml(body), replyTo?: string) {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -98,6 +98,7 @@ async function sendResendEmail(to: string, subject: string, body: string, idempo
       subject,
       text: body,
       html: html,
+      ...(replyTo ? { reply_to: replyTo } : {}),
     }),
   });
   if (response.ok) return;
@@ -105,13 +106,13 @@ async function sendResendEmail(to: string, subject: string, body: string, idempo
   throw new Error(`Resend rejected the message${detail ? `: ${detail}` : "."}`);
 }
 
-async function sendToMany(emails: string[], subject: string, body: string, keyPrefix: string, html?: string) {
+async function sendToMany(emails: string[], subject: string, body: string, keyPrefix: string, html?: string, replyTo?: string) {
   let sent = 0;
   const sentRecipients: string[] = [];
   const failures: string[] = [];
   for (const email of emails) {
     try {
-      await sendResendEmail(email, subject, body, `${keyPrefix}/${encodeURIComponent(email)}`, html);
+      await sendResendEmail(email, subject, body, `${keyPrefix}/${encodeURIComponent(email)}`, html, replyTo);
       sent += 1;
       sentRecipients.push(email);
     } catch (error) {
@@ -374,7 +375,7 @@ async function sendRefundReceipt(payload: Record<string, unknown>) {
 }
 
 async function sendContactResponse(contactId: string, responseBody: string) {
-  const response = await supabaseRequest(`contact_messages?id=eq.${encodeURIComponent(contactId)}&select=id,email,name,subject,status`);
+  const response = await supabaseRequest(`contact_messages?id=eq.${encodeURIComponent(contactId)}&select=id,email,name,subject,message,status`);
   if (!response.ok) throw new Error("Unable to load the contact message.");
   const messages = await response.json();
   const message = messages[0];
@@ -385,8 +386,15 @@ async function sendContactResponse(contactId: string, responseBody: string) {
   if (!body) throw new Error("A reply message is required.");
   const subject = message.subject ? `Re: ${textValue(message.subject, 160)}` : "Reply from Bead Different Co.";
   const greeting = message.name ? `Hello ${textValue(message.name, 160)},` : "Hello,";
-  const fullBody = `${greeting}\n\n${body}\n\nThank you,\nBead Different Co.`;
-  const html = brandedHtml(subject, `<p>${escapeHtml(greeting)}</p><div style="padding:18px 20px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:12px;font-size:16px;line-height:1.7">${textToHtml(body)}</div>`);
+  const originalMessage = textValue(message.message, 10000);
+  const quoteMarker = "\n\nYour original message:\n";
+  const fullBody = `${greeting}\n\n${body}${originalMessage ? `${quoteMarker}${originalMessage.split(/\r?\n/).map((line: string) => `> ${line}`).join("\n")}` : ""}\n\nThank you,\nBead Different Co.`;
+  const html = brandedHtml(subject, `<p>${escapeHtml(greeting)}</p><div style="padding:18px 20px;background:#fbf6f8;border:1px solid #f0dce4;border-radius:12px;font-size:16px;line-height:1.7">${textToHtml(body)}</div>${originalMessage ? `<div style="margin-top:22px;padding:18px 20px;background:#f7f3f1;border-left:3px solid #c9b9c2;font-size:14px;line-height:1.7"><p style="margin:0 0 10px;font-weight:700">Your original message</p>${textToHtml(originalMessage)}</div>` : ""}`);
+  const settingsResponse = await supabaseRequest("site_settings?key=eq.store&select=value");
+  if (!settingsResponse.ok) throw new Error("Unable to load the support reply address from Store settings.");
+  const settingsRows = await settingsResponse.json();
+  const replyTo = textValue(settingsRows?.[0]?.value?.admin?.supportEmail, 320).toLowerCase();
+  if (!emailPattern.test(replyTo)) throw new Error("Set a valid Support email in Store settings before replying to contact messages, so customers can reply back to you.");
   const existingResponse = await supabaseRequest(`admin_email_log?contact_id=eq.${encodeURIComponent(message.id)}&email_type=eq.contact_response&select=body&order=created_at.asc&limit=1`);
   const existingRows = await requireJsonArray(existingResponse, "Contact reply log");
   const priorReply = existingRows[0]?.body;
@@ -396,13 +404,15 @@ async function sendContactResponse(contactId: string, responseBody: string) {
     const prefix = `${greeting}\n\n`;
     const suffix = "\n\nThank you,\nBead Different Co.";
     if (priorReply.startsWith(prefix) && priorReply.endsWith(suffix)) {
-      sentBody = priorReply.slice(prefix.length, -suffix.length);
+      const savedReply = priorReply.slice(prefix.length, -suffix.length);
+      const quoteIndex = savedReply.indexOf(quoteMarker);
+      sentBody = quoteIndex >= 0 ? savedReply.slice(0, quoteIndex) : savedReply;
     }
     alreadySent = true;
   } else {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
     const bodyKey = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    const result = await sendToMany([email], subject, fullBody, `contact-response/${message.id}/${bodyKey}`, html);
+    const result = await sendToMany([email], subject, fullBody, `contact-response/${message.id}/${bodyKey}`, html, replyTo);
     if (result.failures.length) throw new Error(result.failures[0]);
     if (!await saveSentEmail({ contactId: message.id, emailType: "contact_response", recipient: email, subject, body: fullBody })) {
       throw new Error("The reply was sent, but its sent status could not be recorded. Check the Sent emails log before trying again.");
