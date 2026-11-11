@@ -6,6 +6,7 @@ const etsyKey = Deno.env.get('ETSY_API_KEY') || '';
 const etsySecret = Deno.env.get('ETSY_SHARED_SECRET') || '';
 const callbackUrl = `${projectUrl}/functions/v1/etsy-connect/callback`;
 const scopes = 'shops_r listings_r transactions_r';
+const ignoredEtsyListingIds = new Set(['4545026780']);
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -1307,7 +1308,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
   let listingPageSnapshot: Record<string, any> | null = priorMetadata.listing_page_snapshot && typeof priorMetadata.listing_page_snapshot === 'object' ? priorMetadata.listing_page_snapshot : null;
   const createdPages: Record<string, any>[] = list(priorMetadata.created_pages);
   const existingPages: Record<string, any>[] = list(priorMetadata.existing_pages);
-  const priorFailedPages: Record<string, any>[] = list(priorMetadata.failed_pages);
+  const priorFailedPages: Record<string, any>[] = list(priorMetadata.failed_pages).filter((failure) => !ignoredEtsyListingIds.has(String(failure.listing_id || '').trim()));
   const uniqueFailures = new Map<string, Record<string, any>>();
   priorFailedPages.forEach((failure) => {
     const key = `${String(failure.listing_id || '')}\u0000${String(failure.error || '')}`;
@@ -1358,7 +1359,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
       const changedListings = reconciliationListings.filter((listing) => {
         const listingId = String(listing.listing_id || listing.id || '').trim();
         const products = productsByListing.get(listingId) || [];
-        if (!/^\d+$/.test(listingId) || processedIds.has(listingId) || products.length !== 1) return false;
+        if (!/^\d+$/.test(listingId) || ignoredEtsyListingIds.has(listingId) || processedIds.has(listingId) || products.length !== 1) return false;
         const localTimestamp = baselineByListing.get(listingId) || 0;
         const remoteNumber = Number(listing.updated_timestamp);
         const remoteTimestamp = Number.isFinite(remoteNumber) && remoteNumber > 0 ? remoteNumber : Date.parse(String(listing.updated_timestamp || '')) / 1000;
@@ -1442,7 +1443,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
     const processedIds = new Set(Number(priorMetadata.offset) === initialOffset && Array.isArray(priorMetadata.processed_listing_ids) ? priorMetadata.processed_listing_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean) : []);
     const actionableListings = newListings.filter((listing) => {
       const listingId = String(listing.listing_id || listing.id || '').trim();
-      if (!/^\d+$/.test(listingId) || processedIds.has(listingId)) return false;
+      if (!/^\d+$/.test(listingId) || ignoredEtsyListingIds.has(listingId) || processedIds.has(listingId)) return false;
       return !linkedProductsByListing.has(listingId);
     });
     const listingsThisRun = actionableListings.slice(0, 5);
