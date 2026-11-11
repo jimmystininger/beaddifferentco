@@ -334,7 +334,7 @@ const adminData=()=>{try{return {...adminDataDefaults,...JSON.parse(localStorage
 // into it when saving unrelated settings/content; that was reverting product names.
 const saveAdminData=(data)=>{localStorage.setItem(adminDataKey,JSON.stringify(data));};
 const adminSafe=(value)=>String(value??'').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
-const adminNetAvailable=(record)=>Number(record?.quantity_on_hand||0)-Number(record?.reserve_quantity||0);
+const adminNetAvailable=(record)=>Math.max(0,Number(record?.quantity_on_hand||0)-Number(record?.reserve_quantity||0));
 // Keep shipping addresses readable everywhere in admin. Supabase stores the
 // address as an object, but object key order is not a mailing-label format.
 const adminShippingAddressMarkup=(address,recipient='')=>{
