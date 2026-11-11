@@ -863,6 +863,10 @@ body[data-page="Admin"] [data-create-sku-form]>label.admin-toggle input[type="ch
 .admin-inventory-sku-grid .admin-inventory-sku-check{display:flex;align-items:center;gap:9px;min-height:42px}
 .admin-inventory-sku-check input{width:18px;height:18px;margin:0}
 .admin-inventory-sku-stock{padding:14px;border:1px solid #e2d9d5;border-radius:10px;background:#fffaf5}
+.admin-sku-audit-panel{margin-top:14px;padding:14px;border:1px solid #e2d9d5;border-radius:10px;background:#fff}
+.admin-sku-audit-panel h3{margin:0 0 12px}
+.admin-sku-audit-panel h4{margin:14px 0 8px}
+.admin-sku-audit-panel .admin-table-wrap{max-height:280px;overflow:auto;margin-bottom:14px}
 .admin-inventory-sku-dialog .admin-actions{justify-content:flex-end}
 .admin-inventory-sku-dialog .admin-delete-sku-button{margin-right:auto;color:#8b3333}
 .admin-inventory-sku-delete-confirmation{padding:14px;border:1px solid #b88b8b;border-radius:10px;background:#fff8f6}
