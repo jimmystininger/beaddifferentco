@@ -208,4 +208,3 @@ $$;
 
 revoke all on function public.import_inventory_purchase(jsonb) from public, anon, authenticated;
 grant execute on function public.import_inventory_purchase(jsonb) to authenticated;
-
