@@ -1673,7 +1673,7 @@ async function renderInventoryTools(tab='low',runReport=document.body.dataset.in
        auditInventoryResult,
        needsManualSalesData?reportRows('manual-sales-metrics',()=>window.beadSupabase.rpc('admin_manual_sales_metrics')):emptyResult(),
        needsManualSalesHistory?reportRows('manual-sales-history',()=>window.beadSupabase.rpc('admin_manual_sales_history')):emptyResult(),
-       needsManualSalesHistory?window.beadSupabase.from('manual_sales_channels').select('name,active').order('name'):emptyResult()
+       needsManualSalesHistory?window.beadSupabase.from('manual_sales_channels').select('name,active').eq('active',true).order('name'):emptyResult()
      ]);
      const catalogSnapshot=adminCatalogSnapshotParts(catalogSnapshotResult);
      const productResult={data:catalogSnapshot.products,error:catalogSnapshot.error};
