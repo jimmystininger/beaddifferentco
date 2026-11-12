@@ -24,6 +24,8 @@ The latest live ledger read reports 160 applied migrations; the repository now c
 
 This cannot be safely normalized from the current workspace: the Supabase CLI is not installed, and the available management result exposes the live ledger names but not the original SQL needed to reconstruct missing files. No migration was replayed, deleted, or marked repaired. The next safe action is to run the official `supabase migration repair`/`db pull` workflow from a credentialed environment, review the complete diff, and submit that as its own batch.
 
+A follow-up artifact check confirms the duplicate local versions are not missing live behavior: the live database already contains the promo/product-image/Etsy columns, normalized-SKU indexes, Etsy import function, and canonical storefront filter function defined by those files, while none of the three duplicate version numbers appears in the live ledger. This is consistent with renamed/rebased historical migrations and is further evidence not to replay or delete by filename alone.
+
 ### Storage — orphan report only
 
 The live `product-media` bucket contains 110 objects (24,638,363 bytes). 43 object names are referenced by current catalog, option, review, category, or site-setting records; 67 objects (15,944,214 bytes, about 15.2 MiB) are unreferenced by those records.
