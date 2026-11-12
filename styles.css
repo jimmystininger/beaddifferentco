@@ -1169,16 +1169,8 @@ a.admin-member-order-row:focus-visible,.admin-member-canonical-link:focus-visibl
 body[data-page="Admin"] .inventory-saved-order-sheets{display:grid;gap:12px;margin:18px 0;padding:16px;border:1px solid #ded6d9;border-radius:12px;background:#fff}
 body[data-page="Admin"] .inventory-saved-order-sheets h4{margin:0 0 4px;font-size:18px}
 body[data-page="Admin"] .inventory-saved-order-sheets .inventory-help{margin:0;color:#666}
-body[data-page="Admin"] .inventory-saved-order-list{max-height:320px;overflow:auto;border:1px solid #e4dcdf;border-radius:9px}
-body[data-page="Admin"] .inventory-saved-order-list>p{margin:0;padding:14px;color:#666}
-body[data-page="Admin"] .inventory-saved-order-row{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;align-items:center;padding:11px 14px;border-bottom:1px solid #eee7e9;cursor:pointer}
-body[data-page="Admin"] .inventory-saved-order-row:last-child{border-bottom:0}
-body[data-page="Admin"] .inventory-saved-order-row:hover{background:#fbf6f0}
-body[data-page="Admin"] .inventory-saved-order-row>input{width:18px;height:18px;margin:0;accent-color:#873f5e}
-body[data-page="Admin"] .inventory-saved-order-row>span{display:grid;gap:2px;min-width:0}
-body[data-page="Admin"] .inventory-saved-order-row strong{font-size:14px}
-body[data-page="Admin"] .inventory-saved-order-row>span>span{font-size:14px}
-body[data-page="Admin"] .inventory-saved-order-row small{overflow-wrap:anywhere;color:#706872;font-size:12px}
+body[data-page="Admin"] .inventory-saved-order-select{display:grid;gap:6px;font-weight:700}
+body[data-page="Admin"] .inventory-saved-order-select select{width:100%;min-height:44px;padding:8px 38px 8px 12px;border:1px solid #bdb5b8;border-radius:8px;background:var(--site-page-background-color,#fffdfb);color:var(--site-header-text-color,#111);font:inherit;cursor:pointer}
 body[data-page="Admin"] .inventory-saved-order-sheets>.admin-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 body[data-page="Admin"] .inventory-saved-order-sheets [data-saved-order-status]{margin:0;color:#666}
 .expense-entry-heading{align-items:center}.expense-entry-heading h3{margin:0}.expense-vendor-dialog{width:min(900px,calc(100% - 32px));max-width:900px;max-height:min(88vh,900px);overflow:auto;padding:24px}.expense-vendor-dialog .expense-vendor-manager{margin:0;box-shadow:none}.expense-vendor-dialog .profile-dialog-close{position:sticky;float:right;top:0;z-index:2}
