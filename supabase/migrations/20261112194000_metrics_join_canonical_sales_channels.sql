@@ -74,4 +74,3 @@ $$;
 
 revoke all on function public.admin_manual_sales_history() from public, anon;
 grant execute on function public.admin_manual_sales_history() to authenticated, service_role;
-

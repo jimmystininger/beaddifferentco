@@ -162,4 +162,3 @@ $$;
 
 revoke all on function public.admin_manage_manual_sales_channel(text, text, text) from public, anon;
 grant execute on function public.admin_manage_manual_sales_channel(text, text, text) to authenticated, service_role;
-
