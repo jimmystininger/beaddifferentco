@@ -11,7 +11,7 @@
     { "source": "/pen-supplies.html", "destination": "/category.html?category=beadable-pen-blanks", "permanent": true },
     { "source": "/mixes-kits.html", "destination": "/category.html?category=mixes-bundles-kits", "permanent": true },
     { "source": "/clearance.html", "destination": "/category.html?category=clearance-section", "permanent": true },
-    { "source": "/pink-heart-focal-bead.html", "destination": "/product.html?id=pink-heart-focal-bead", "permanent": true }
+    { "source": "/pink-heart-focal-bead.html", "destination": "/shop-all.html", "permanent": true }
   ],
   "rewrites": [
     { "source": "/sitemap.xml", "destination": "/api/sitemap" },
