@@ -269,10 +269,11 @@ async function loadCatalog(){
           withStoreTimeout(productQueryFor().eq('featured',true).order('added_at',{ascending:false}).range(0,23),'Featured products request')
         ]);
         data=recentResult.data||[];
+        if(recentResult.error&&!featuredResult.error)data=featuredResult.data||[];
         window.storefrontHomepageRecentIds=data.map((item)=>String(item.id||'')).filter(Boolean);
-        window.storefrontHomepageRecentTotal=Number(recentResult.count)||data.length;
+        window.storefrontHomepageRecentTotal=recentResult.error?data.length:Number(recentResult.count)||data.length;
         window.storefrontHomepagePageSize=24;
-        window.storefrontHomepageHasMore=window.storefrontHomepageRecentIds.length<window.storefrontHomepageRecentTotal;
+        window.storefrontHomepageHasMore=!recentResult.error&&window.storefrontHomepageRecentIds.length<window.storefrontHomepageRecentTotal;
         error=recentResult.error||null;
         if(!featuredResult.error){
           const existingIds=new Set(data.map((item)=>item.id));
@@ -284,7 +285,7 @@ async function loadCatalog(){
       }
     }
   }catch(requestError){error=requestError;window.storeCatalogError=requestError;}
-  if(error){catalog=[];window.storeCatalogError=error;return catalog;}
+  if(error){window.storeCatalogError=error;if(!homepage||!data?.length){catalog=[];return catalog;}}
   if(!data?.length){catalog=[];return catalog;}
   const mapRows=(sourceRows,imagesByProduct=new Map(),optionRows=[])=>sourceRows.map((item)=>{
     const media=imagesByProduct.get(item.id)||[];

@@ -54,6 +54,7 @@ const storefrontCategoryHref=(slug)=>slug==='shop-all'?'shop-all.html':`category
 const escapeHeaderHtml=(value)=>String(value??'').replace(/[&<>"']/g,(character)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));const applyHeaderCategories=(rows=[])=>{const data=Array.isArray(rows)?rows:[];const normalizedCategories=[['shop-all','Shop All'],...data.map((category)=>[category.slug,category.name]).filter((category,index,array)=>array.findIndex((entry)=>entry[0]===category[0])===index)];window.storeCategories=normalizedCategories;document.querySelectorAll('.store-nav').forEach((nav)=>{const links=categoryLayout?normalizedCategories.map(([slug,label])=>`<a href="${storefrontCategoryHref(slug)}" data-category-slug="${escapeHeaderHtml(slug)}"><span>${escapeHeaderHtml(label)}</span></a>`).join(''):normalizedCategories.map(([slug,label])=>`<a href="${storefrontCategoryHref(slug)}">${escapeHeaderHtml(label)}</a>`).join('');nav.replaceChildren();nav.insertAdjacentHTML('afterbegin',links);});document.querySelectorAll('.store-nav-select').forEach((select)=>{select.innerHTML='<option value="__browse_categories__" selected>Choose a category…</option>'+normalizedCategories.map(([slug,label])=>`<option value="${escapeHeaderHtml(slug)}">${escapeHeaderHtml(label)}</option>`).join('');const selected=new URLSearchParams(location.search).get('category')||'';select.value=normalizedCategories.some(([slug])=>slug===selected)?selected:'__browse_categories__';});const categoryGrid=document.querySelector('.category-grid');if(categoryGrid){categoryGrid.innerHTML=data.map((category)=>`<a href="${storefrontCategoryHref(category.slug)}" data-filter="${escapeHeaderHtml(category.slug)}"><img data-theme-default-src="${escapeHeaderHtml(safeThemeImageUrl(category.cover_photo)||'product-mix.jpg')}" alt="${escapeHeaderHtml(category.name)}" loading="lazy" decoding="async"><b>${escapeHeaderHtml(category.name)}</b></a>`).join('');}window.dispatchEvent(new CustomEvent('bead-categories-ready',{detail:{categories:normalizedCategories}}));};
 const hydrateCloudCategories=async()=>{
   const cacheKey='beadStoreCategoriesV1';
+  const readCachedCategories=()=>{try{const cached=JSON.parse(sessionStorage.getItem(cacheKey)||'null');return Array.isArray(cached?.data)&&cached.data.every((row)=>typeof row?.slug==='string'&&typeof row?.name==='string')?cached.data:null;}catch(error){return null;}};
   try{
     const bootstrap=document.getElementById('storefront-category-bootstrap');
     const rows=bootstrap?JSON.parse(bootstrap.textContent):null;
@@ -63,7 +64,8 @@ const hydrateCloudCategories=async()=>{
       return;
     }
   }catch(error){}
-  try{const cached=JSON.parse(sessionStorage.getItem(cacheKey)||'null');if(cached?.at&&Date.now()-Number(cached.at)<300000&&Array.isArray(cached.data)){applyHeaderCategories(cached.data);return;}}catch(error){}
+  const cached=readCachedCategories();
+  if(cached){try{const record=JSON.parse(sessionStorage.getItem(cacheKey)||'null');if(record?.at&&Date.now()-Number(record.at)<300000){applyHeaderCategories(cached);return;}}catch(error){}}
   const client=await window.beadSupabaseReady;
   const result=await client.from('categories').select('slug,name,cover_photo').eq('active',true).order('sort_order').order('name').range(0,99);
   if(result.error)throw result.error;
@@ -71,7 +73,7 @@ const hydrateCloudCategories=async()=>{
   try{sessionStorage.setItem(cacheKey,JSON.stringify({at:Date.now(),data:rows}));}catch(error){}
   applyHeaderCategories(rows);
 };
-const cloudCategoriesReady=categoryNavigationPage?hydrateCloudCategories().catch((error)=>{window.storeCategoryError=error;applyHeaderCategories([]);return[]}):Promise.resolve([]);
+const cloudCategoriesReady=categoryNavigationPage?hydrateCloudCategories().catch((error)=>{window.storeCategoryError=error;const cached=(()=>{try{const record=JSON.parse(sessionStorage.getItem('beadStoreCategoriesV1')||'null');return Array.isArray(record?.data)&&record.data.every((row)=>typeof row?.slug==='string'&&typeof row?.name==='string')?record.data:null;}catch(cacheError){return null;}})();if(cached){applyHeaderCategories(cached);return cached;}applyHeaderCategories([]);document.querySelectorAll('.store-nav-select').forEach((select)=>{const option=select.options[0];if(option)option.textContent='Categories unavailable — refresh to retry';});return[]}):Promise.resolve([]);
 const applyCloudSiteSettings=(value)=>{const settings=value&&typeof value==='object'?value:{};const config=window.productStoreConfig||{};Object.assign(config,settings);window.productStoreConfig=config;window.updateAnnouncementBar({freeShippingThreshold:settings.freeShippingThreshold,smallBusiness:settings.smallBusinessMessage,bigCreativity:settings.bigCreativityMessage});window.siteShippingSettings={shippingPolicy:settings.shippingPolicy||''};const policy=document.querySelector('[data-shipping-policy]');if(policy)policy.innerHTML=window.sanitizeRichText(window.siteShippingSettings.shippingPolicy||'Shipping options and delivery estimates are shown at checkout. Please contact us if your order arrives with a problem.');};
 const storefrontSiteSettingsScope=({'Home':'home','Our Story':'story','FAQ':'faq','Shipping & Returns':'returns'})[pageName]||'common';
 const storefrontSiteSettingsCacheKey=`beadStoreSiteSettingsV2:${storefrontSiteSettingsScope}`;
