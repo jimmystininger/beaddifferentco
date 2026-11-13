@@ -16,16 +16,20 @@ module.exports=async function bestSellers(request,response){
   try{
     const result=await fetch(`${supabaseUrl}/rest/v1/rpc/get_storefront_best_sellers`,{
       method:'POST',
-      headers:{apikey:supabasePublishableKey,'Content-Type':'application/json'},
+      headers:{apikey:supabasePublishableKey,Authorization:`Bearer ${supabasePublishableKey}`,'Content-Type':'application/json'},
       body:JSON.stringify({limit_count:25}),
       signal:AbortSignal.timeout(10000)
     });
-    if(!result.ok)throw new Error(`Best-seller request failed: ${result.status}`);
+    if(!result.ok){
+      const detail=(await result.text()).slice(0,500);
+      throw new Error(`Best-seller request failed: ${result.status} ${detail}`);
+    }
     const rows=await result.json();
     if(!Array.isArray(rows))throw new Error('Best-seller response was not a list.');
     const productIds=rows.map((row)=>String(row?.product_external_id||'').trim()).filter(Boolean);
     response.status(200).send(JSON.stringify({productIds}));
   }catch(error){
+    console.error('Best-seller request failed.',error);
     response.setHeader('Cache-Control','no-store');
     response.status(503).send(JSON.stringify({error:'Best sellers temporarily unavailable.'}));
   }
