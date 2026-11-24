@@ -101,6 +101,17 @@ async function refreshConnection(connection: Record<string, any>) {
 }
 const list = (value: unknown): Record<string, any>[] => Array.isArray(value) ? value.filter((item): item is Record<string, any> => Boolean(item) && typeof item === 'object') : [];
 const stringList = (value: unknown): string[] => Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
+const dedupeListingIssues = (issues: Record<string, any>[]) => {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    const listingId = String(issue?.listing_id || '').trim();
+    const error = String(issue?.error || '').trim();
+    const key = listingId || error ? `${listingId}\u0000${error}` : JSON.stringify(issue);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 const money = (value: unknown) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -1241,7 +1252,10 @@ async function processPendingEtsyInventoryEvents(batchId: string, connection: Re
   });
   let updatedCount = 0;
   let skippedUnlinked = 0;
-  for (const [listingId, events] of [...eventsByListing.entries()].slice(0, 5)) {
+  // Keep webhook reconciliation bounded, but process the full current backlog
+  // of distinct listings instead of leaving listings after the first five
+  // stranded until an unrelated future scan happens to reach them.
+  for (const [listingId, events] of [...eventsByListing.entries()].slice(0, 25)) {
     const products = await database(`products?etsy_listing_id=eq.${encodeURIComponent(listingId)}&select=id&limit=2`);
     if (!products.length) {
       skippedUnlinked += 1;
@@ -1403,6 +1417,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
       const endOfCatalog = !reconciliationListings.length || reconciliationListings.length < 100 || Number.isFinite(pageCount) && pageNextOffset >= pageCount;
       const reconciliationComplete = !unprocessed && endOfCatalog;
       const reconciliationNextOffset = unprocessed ? reconcileOffset : endOfCatalog ? 0 : pageNextOffset;
+      failedPages = dedupeListingIssues(failedPages);
       const metadata = { ...priorMetadata, action: 'listings', running: false, listing_scan_in_progress: true, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_in_progress: !reconciliationComplete, existing_listing_reconcile_complete: reconciliationComplete, existing_listing_reconcile_offset: reconciliationNextOffset, existing_listing_reconcile_processed_ids: unprocessed ? [...processedOnPage] : [], existing_listing_reconcile_snapshot: !unprocessed && !endOfCatalog ? null : reconciliationSnapshot, existing_listing_reconcile_count: (Number(priorMetadata.existing_listing_reconcile_count) || 0) + (!unprocessed ? reconciliationListings.length : 0), existing_listing_reconcile_updated: (Number(priorMetadata.existing_listing_reconcile_updated) || 0) + repairedIds.size, new_listing_cutoff_timestamp: cutoffTimestamp, run_id: runId, offset: 0, next_offset: 0, listing_page_snapshot: null, processed_listing_ids: [], sku_update_count: skuUpdateCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, processed_count: rows + reconciled.length + webhookUpdates.updatedCount, unchanged_count: unchangedCount, inactive: true };
       delete metadata.existing_listing_reconcile_debug;
       await updateImportBatch(batchId, { import_type: 'listings', status: failedPages.length ? 'failed' : 'staged', row_count: Number(metadata.processed_count), matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { reconciled: Number(metadata.existing_listing_reconcile_updated), failed: failedPages.length } });
@@ -1527,6 +1542,7 @@ async function importEtsyListings(adminId: string, requestedRunId = '', requeste
       warning = 'Etsy stopped pagination before the importer reached its saved creation-date cutoff. No older listings were scanned.';
     }
     const processedListingIds = [...processedForPage];
+    failedPages = dedupeListingIssues(failedPages);
     const importWarning = [warning, skippedVariantCount ? `${skippedVariantCount} Etsy variation${skippedVariantCount === 1 ? '' : 's'} without a SKU were skipped.` : '', failedPages.length ? `${failedPages.length} listing${failedPages.length === 1 ? '' : 's'} need attention. Use Repair imported SKU families to review those listings; the scan continues past them.` : '', webhookUpdates.skippedUnlinked ? `${webhookUpdates.skippedUnlinked} queued SKU update${webhookUpdates.skippedUnlinked === 1 ? '' : 's'} await a linked product page.` : ''].filter(Boolean).join(' ');
     const metadata = { action: 'listings', running: false, listing_scan_in_progress: scanInProgress, incremental_listing_scan: true, full_catalog_scan: false, existing_listing_reconcile_complete: reconciliationWasCompleted, existing_listing_reconcile_count: Number(priorMetadata.existing_listing_reconcile_count) || 0, existing_listing_reconcile_updated: Number(priorMetadata.existing_listing_reconcile_updated) || 0, new_listing_cutoff_timestamp: cutoffTimestamp, new_listing_watermark_timestamp: scanWatermark, new_listing_scan_complete: scanComplete, run_id: runId, offset, next_offset: nextOffset, listing_page_snapshot: scanInProgress && Number(nextOffset) === offset ? listingPageSnapshot : null, processed_listing_ids: processedListingIds, processed_count: rows, unchanged_count: unchangedCount, sku_update_count: skuUpdateCount, skipped_variant_count: skippedVariantCount, created_pages: createdPages, existing_pages: existingPages, failed_pages: failedPages, repair_issues: repairIssues, inactive: true, truncated, scan_warning: warning || null, warning: importWarning || null };
     await updateImportBatch(batchId, { import_type: 'listings', status: failedPages.length || repairIssues.length ? 'failed' : 'staged', row_count: rows, matched_count: createdPages.length + existingPages.length, applied_count: createdPages.length, metadata, result: { created: createdPages.length, repaired: existingPages.length, unchanged: unchangedCount, failed: failedPages.length } });
